@@ -13,12 +13,24 @@ enum APIConfig {
               let url = URL(string: raw),
               // A non-nil URL is NOT enough. xcconfig eats everything after
               // "//" as a comment, so "http://localhost:8000" arrives here as
-              // the string "http:". That parses cleanly into a URL with a
-              // scheme and no host, so the old `let url = URL(string:)` check
-              // passed and every request went to http://briefing/generate and
-              // died in DNS. Require an actual host.
-              let host = url.host(), !host.isEmpty
+              // "http:" — which parses cleanly into a URL with a scheme and
+              // no host. Requiring a host caught that, but not the next
+              // variant: a full URL pasted into the assembled form produced
+              // "http://https:", whose host is the literal string "https".
+              // Validate what a usable base URL actually looks like.
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              let host = url.host(), !host.isEmpty,
+              !["http", "https"].contains(host.lowercased())
         else {
+            // Silence here is what made both bugs expensive to find: requests
+            // simply went somewhere meaningless and failed as DNS errors.
+            print(
+                "[Mercury] API_BASE_URL is unusable; falling back to \(fallback). "
+                + "Set API_SCHEME and API_HOST separately in Secrets.xcconfig "
+                + "— never paste a full URL, since xcconfig treats // as a "
+                + "comment."
+            )
             return fallback
         }
         return url

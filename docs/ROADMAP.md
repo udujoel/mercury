@@ -46,6 +46,33 @@ iOS
 **Gate: you tap the greeting card and within ninety seconds two hosts are
 discussing your actual meetings and your actual inbox.**
 
+## Audio identity backlog (do before Phase 3)
+
+Phase 0's gate passed on Google Neural2 — good, not great. See ADR-006.
+
+- [ ] ElevenLabs Flash v2.5 behind the existing `TTSProvider` protocol,
+      one new file in `app/providers/`, no pipeline change
+- [ ] A/B the same script through Neural2 and ElevenLabs, listen to both
+      cold opens, keep the winner
+- [ ] Short intro stinger before the cold open, short outro under the sign-off
+- [ ] Offset every manifest timing by the intro duration — `synthesize_briefing`
+      currently assumes turn zero starts at 0ms, so transcript sync silently
+      drifts by the length of the intro if this is missed
+- [ ] Duck the music under the first and last turns rather than hard-cutting
+
+## UI refinement backlog
+
+Observed while testing the MVP on the simulator, none of it blocking:
+
+- [ ] Cards are semi-transparent, so the card behind bleeds through the
+      greeting text. PRD 3.3 specifies opaque over true black
+- [ ] Weather card shows a placeholder "San Francisco" and is not wired to the
+      Open-Meteo data the backend already fetches correctly
+- [ ] Card deck sits small and centred; PRD 3.3 wants roughly 0.62 of screen
+      width with the fanned offsets
+- [ ] Loading state is a bare spinner for the ~70s generation — it should say
+      what is happening
+
 ## Phase 2 — News, clustering, automation (weeks 8 to 11)
 
 - [ ] Week 8 — RSS aggregation, trafilatura extraction, schema normalisation

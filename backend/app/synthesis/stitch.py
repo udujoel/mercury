@@ -77,9 +77,23 @@ async def synthesize_briefing(
     combined = AudioSegment.silent(duration=0)
     cursor_ms = 0
 
+    # Only turns that actually made it into the audio belong in the manifest.
+    # A skipped turn keeps start_ms/end_ms as None, and the manifest's whole
+    # job is driving transcript sync — shipping a turn with no timing means
+    # the client either crashes decoding it (the iOS model types start_ms as
+    # a non-optional Int) or renders a sentence that is never spoken, which
+    # desyncs everything after it. Rule 7 says degrade gracefully, and the
+    # graceful degradation is a briefing missing one line, not a manifest
+    # that lies about its own audio.
+    rendered: list[Turn] = []
+
     for idx, (turn, clip) in enumerate(zip(turns, clips, strict=True)):
         if clip is None:
-            log.error("turn %d failed to synthesize, skipping", idx)
+            log.error(
+                "turn %d failed to synthesize; dropping it from the manifest "
+                "so transcript sync stays aligned: %.60s",
+                idx, turn.text,
+            )
             continue
 
         clip = _normalize_loudness(clip)
@@ -96,6 +110,7 @@ async def synthesize_briefing(
 
         turn.start_ms = cursor_ms
         turn.end_ms = cursor_ms + len(clip)
+        rendered.append(turn)
         combined += clip
         cursor_ms = turn.end_ms
 
@@ -106,8 +121,8 @@ async def synthesize_briefing(
         generated_at=datetime.now(UTC),
         duration_ms=len(combined),
         audio_url=audio_url_for(audio_format),
-        segments=_segment_offsets(turns),
-        turns=turns,
+        segments=_segment_offsets(rendered),
+        turns=rendered,
         sources=sources,
     )
 
@@ -175,8 +190,16 @@ async def _synthesize_all(
                 return AudioSegment.from_file(
                     io.BytesIO(raw), format=_sniff_format(raw)
                 )
-            except Exception:
-                log.exception("TTS failed for turn: %.60s", turn.text)
+            except Exception as exc:
+                # Log the cause inline, not just a traceback: these failures
+                # are intermittent (2 of 43 turns on a live run, both
+                # speakers, ordinary text lengths), so the message is the
+                # only way to tell a rate limit from a bad payload.
+                log.error(
+                    "TTS failed for turn (%s, %d chars) [%s: %s]: %.60s",
+                    turn.speaker, len(turn.text),
+                    type(exc).__name__, exc, turn.text,
+                )
                 return None
 
     return await asyncio.gather(*(one(t) for t in turns))

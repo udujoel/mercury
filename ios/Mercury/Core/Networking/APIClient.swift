@@ -30,8 +30,19 @@ final class APIClient: APIClientProtocol {
     private let session: URLSession
     private let decoder: JSONDecoder
 
-    init(session: URLSession = .shared) {
-        self.session = session
+    init(session: URLSession? = nil) {
+        // URLSession's default request timeout is 60 seconds. A real live
+        // generation — two Gemini passes plus a TTS call per turn — measured
+        // 71 seconds end to end, so the default would cancel the request just
+        // before the briefing was ready and surface as an opaque network
+        // error. The PRD budgets 90 seconds for tap-to-audio; allow well
+        // past that so a slow morning degrades into a wait, not a failure.
+        self.session = session ?? {
+            let config = URLSessionConfiguration.default
+            config.timeoutIntervalForRequest = 180
+            config.timeoutIntervalForResource = 300
+            return URLSession(configuration: config)
+        }()
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         self.decoder = decoder

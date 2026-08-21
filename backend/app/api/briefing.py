@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+from app.core.config import get_settings
 from app.core.schemas import BriefingLength, BriefingManifest
 from app.pipeline.generate import generate_briefing
 from app.providers.fake import FakeLLMProvider
@@ -32,10 +33,33 @@ router = APIRouter()
 FIXTURES_DIR = Path(__file__).resolve().parents[2] / "tests" / "fixtures"
 
 
+def _credentials_configured() -> bool:
+    """Whether a live run is actually possible on this machine."""
+    s = get_settings()
+    if not s.gemini_api_key:
+        return False
+    creds = Path(s.google_tts_credentials)
+    if not creds.is_absolute():
+        creds = (Path(__file__).resolve().parents[2] / creds).resolve()
+    return creds.is_file()
+
+
 class GenerateRequest(BaseModel):
     length: BriefingLength = BriefingLength.STANDARD
-    offline: bool = True
+    # Default to a real briefing when the machine can produce one, and to
+    # fixtures when it cannot. Hardcoding offline=True meant that once
+    # credentials existed, tapping the greeting card still played a canned
+    # briefing about people who do not exist — which looks like success and
+    # is the least useful possible failure. A client can still force either
+    # mode explicitly.
+    offline: bool | None = None
     briefing_id: str | None = None
+
+    @property
+    def resolved_offline(self) -> bool:
+        if self.offline is not None:
+            return self.offline
+        return not _credentials_configured()
 
 
 class GenerateResponse(BaseModel):
@@ -62,20 +86,22 @@ async def generate(
     request: GenerateRequest | None = None,
 ) -> GenerateResponse:
     # Every field on GenerateRequest has a default, so "no body" is a
-    # meaningful request: generate a standard-length offline briefing.
+    # meaningful request: a standard-length briefing, live if this
+    # machine has credentials and fixture-backed if it does not.
     # Requiring the body made a bodyless POST fail with a 422 that says
     # nothing useful to a client that just wants the default.
     request = request or GenerateRequest()
+    offline = request.resolved_offline
     try:
-        llm, tts = _build_providers(request.offline)
+        llm, tts = _build_providers(offline)
     except RuntimeError as exc:
         # Missing credentials for a live run — a client error, not a server
         # bug, and the message already names the exact fix.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    gmail_fixture = FIXTURES_DIR / "gmail_messages.json" if request.offline else None
+    gmail_fixture = FIXTURES_DIR / "gmail_messages.json" if offline else None
     calendar_fixture = (
-        FIXTURES_DIR / "calendar_events.json" if request.offline else None
+        FIXTURES_DIR / "calendar_events.json" if offline else None
     )
 
     try:

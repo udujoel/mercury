@@ -3,14 +3,42 @@ import Foundation
 /// One speaker turn in the generated script.
 ///
 /// Mirrors `backend/app/core/schemas.py::Turn`. `id` is a computed property
-/// (not part of the JSON) so decoding stays a plain `Codable` synthesis —
-/// no custom `init(from:)` needed.
+/// (not part of the JSON). Decoding is hand-written only to tolerate null
+/// timings — see `startMs`.
 struct Turn: Codable, Identifiable, Equatable, Hashable {
     let speaker: String
     let segment: String
     let text: String
+    // Decoded leniently. The backend now drops un-synthesised turns from the
+    // manifest, so these should always be present — but a turn whose TTS
+    // failed carries null timing in the Python schema (`int | None`), and
+    // modelling them as non-optional here meant ONE such turn failed the
+    // entire briefing with "Expected value of type Int but found null".
+    // A briefing missing a line beats a briefing that will not decode.
     let startMs: Int
     let endMs: Int
+
+    // Writing init(from:) suppresses the synthesized memberwise init, which
+    // previews and tests construct Turns with. Declare it explicitly.
+    init(speaker: String, segment: String, text: String, startMs: Int, endMs: Int) {
+        self.speaker = speaker
+        self.segment = segment
+        self.text = text
+        self.startMs = startMs
+        self.endMs = endMs
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        speaker = try c.decode(String.self, forKey: .speaker)
+        segment = try c.decode(String.self, forKey: .segment)
+        text = try c.decode(String.self, forKey: .text)
+        startMs = try c.decodeIfPresent(Int.self, forKey: .startMs) ?? -1
+        endMs = try c.decodeIfPresent(Int.self, forKey: .endMs) ?? -1
+    }
+
+    /// A turn that never made it into the audio. Filtered out on load.
+    var isRendered: Bool { startMs >= 0 && endMs > startMs }
 
     enum CodingKeys: String, CodingKey {
         case speaker, segment, text
@@ -92,7 +120,14 @@ extension BriefingManifest {
     /// Returns `nil` for a position that falls in a gap between turns (no
     /// turn covers it), and for a position before the first turn or after
     /// the last. O(log n), safe to call from the 20 Hz playback tick.
+    /// Turns that actually exist in the audio. The backend excludes
+    /// un-synthesised turns, so this is normally just `turns`; the filter is
+    /// the client-side half of that guarantee, so a stale or hand-edited
+    /// manifest cannot desync the transcript.
+    var renderedTurns: [Turn] { turns.filter(\.isRendered) }
+
     func turn(containing ms: Int) -> Turn? {
+        let turns = renderedTurns
         guard !turns.isEmpty else { return nil }
 
         var lo = 0

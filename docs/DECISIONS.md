@@ -55,3 +55,35 @@ AVAudioEngine gives sample-accurate frame positions.
 
 Cost: we implement seek, rate control and Now Playing integration ourselves.
 Worth it — the transcript is the visual composition of the player screen.
+
+## ADR-006 — Google Neural2 now, ElevenLabs next; music is part of the product
+
+**Status:** accepted
+
+The Phase 0 gate passed. Real Google Cloud TTS Neural2 output cleared the ten
+second test — Joel's verdict was "the audio is good, but can be better", which
+is a pass, not an endorsement.
+
+So Neural2 stays for now and ElevenLabs is the planned upgrade rather than an
+emergency swap. That is exactly the case ADR-004 exists for: `TTSProvider` in
+`app/core/providers.py` is already satisfied by `GoogleTTSProvider`, so the
+migration is one new file in `app/providers/` plus an env change, with no
+pipeline edit.
+
+What changes with ElevenLabs, and why it is worth the roughly 22 USD a month:
+prosody and disfluency are native to the model, which is precisely the quality
+CLAUDE.md rule 1 says we buy from the TTS engine rather than write into the
+script. Flash v2.5 is also sub-300ms per turn, which matters for the Phase 3
+voice interrupt where the whole latency budget is 2.5 seconds.
+
+**Intro and outro music.** A briefing that starts cold on a voice sounds like a
+file playing. A short stinger before the cold open and under the sign-off is
+what makes it sound like a show, and it is the cheapest identity the product
+can have. Constraints: a few seconds only, ducked well under the voice, and the
+timing manifest must account for its duration or every transcript offset shifts
+by the length of the intro. That last point is the real engineering content
+here — `synthesize_briefing` currently assumes turn zero starts at 0ms.
+
+Rejected: generating music per briefing. It is slow, expensive, non-deterministic
+and nobody wants a different theme every morning. Two fixed audio files, chosen
+once.
