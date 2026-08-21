@@ -16,10 +16,12 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 from pydub import AudioSegment
 from pydub.effects import normalize
+from pydub.utils import which
 
 from app.core.providers import TTSProvider
 from app.core.schemas import (
@@ -37,16 +39,36 @@ GAP_SAME_SPEAKER_MS = 80
 TARGET_DBFS = -16.0
 MAX_CONCURRENT_TTS = 8
 
+# pydub's mp4/aac export shells out to ffmpeg. Machines without it (this one,
+# for example) can only export formats pydub/audioop handle natively — WAV
+# chief among them. Detect availability once per call rather than assuming.
+COMPRESSED_FORMAT = "mp4"
+COMPRESSED_EXTENSION = "m4a"
+FALLBACK_FORMAT = "wav"
+
+
+def ffmpeg_available() -> bool:
+    return which("ffmpeg") is not None
+
 
 async def synthesize_briefing(
     turns: list[Turn],
     *,
     tts: TTSProvider,
     briefing_id: str,
-    audio_url: str,
+    audio_url_for: Callable[[str], str],
     sources: list[SourceRef],
-) -> tuple[bytes, BriefingManifest]:
-    """Synthesise every turn, stitch, and emit the timing manifest."""
+) -> tuple[bytes, BriefingManifest, str]:
+    """Synthesise every turn, stitch, and emit the timing manifest.
+
+    `audio_url_for` is called with the audio format actually produced
+    ("m4a" if ffmpeg is available, "wav" if it fell back) and must return
+    the URL/path the manifest should point at — callers decide that once
+    they know the real extension, since it's typically the storage layer
+    that names the file.
+
+    Returns (audio_bytes, manifest, audio_format).
+    """
 
     clips = await _synthesize_all(turns, tts)
 
@@ -75,26 +97,55 @@ async def synthesize_briefing(
         combined += clip
         cursor_ms = turn.end_ms
 
-    buf = io.BytesIO()
-    combined.export(buf, format="mp4", codec="aac", bitrate="64k",
-                    parameters=["-ac", "1"])
-    audio_bytes = buf.getvalue()
+    audio_bytes, audio_format = _export(combined)
 
     manifest = BriefingManifest(
         briefing_id=briefing_id,
         generated_at=datetime.now(UTC),
         duration_ms=len(combined),
-        audio_url=audio_url,
+        audio_url=audio_url_for(audio_format),
         segments=_segment_offsets(turns),
         turns=turns,
         sources=sources,
     )
 
-    log.info("synthesized %s: %d turns, %.1fs, %.1fKB",
+    log.info("synthesized %s: %d turns, %.1fs, %.1fKB, format=%s",
              briefing_id, len(turns), len(combined) / 1000,
-             len(audio_bytes) / 1024)
+             len(audio_bytes) / 1024, audio_format)
 
-    return audio_bytes, manifest
+    return audio_bytes, manifest, audio_format
+
+
+def _export(combined: AudioSegment) -> tuple[bytes, str]:
+    """Export the stitched audio, preferring compressed m4a/aac but falling
+    back to WAV — loudly — when ffmpeg isn't available or the export fails.
+    Never crashes the run over an audio format; a briefing with WAV audio
+    beats no briefing at all."""
+
+    if ffmpeg_available():
+        try:
+            buf = io.BytesIO()
+            combined.export(
+                buf, format=COMPRESSED_FORMAT, codec="aac", bitrate="64k",
+                parameters=["-ac", "1"],
+            )
+            return buf.getvalue(), COMPRESSED_EXTENSION
+        except Exception:
+            log.exception(
+                "ffmpeg is installed but m4a/aac export failed; falling "
+                "back to WAV"
+            )
+    else:
+        log.warning(
+            "ffmpeg not found on this machine — pydub cannot export "
+            "compressed audio (mp4/aac) without it. Falling back to WAV. "
+            "Install ffmpeg to produce smaller, streamable audio in "
+            "production."
+        )
+
+    buf = io.BytesIO()
+    combined.export(buf, format=FALLBACK_FORMAT)
+    return buf.getvalue(), FALLBACK_FORMAT
 
 
 async def _synthesize_all(
@@ -107,12 +158,26 @@ async def _synthesize_all(
             voice = tts.voice_a if turn.speaker == "A" else tts.voice_b
             try:
                 raw = await tts.synthesize(turn.text, voice)
-                return AudioSegment.from_file(io.BytesIO(raw))
+                return AudioSegment.from_file(
+                    io.BytesIO(raw), format=_sniff_format(raw)
+                )
             except Exception:
                 log.exception("TTS failed for turn: %.60s", turn.text)
                 return None
 
     return await asyncio.gather(*(one(t) for t in turns))
+
+
+def _sniff_format(raw: bytes) -> str | None:
+    """Best-effort container sniffing so WAV clips (FakeTTSProvider's
+    output, produced with the stdlib `wave` module) can be decoded by
+    pydub's native WAV path — which needs neither ffmpeg nor ffprobe —
+    instead of falling through to the ffmpeg-backed generic path. Returns
+    None (auto-detect via ffmpeg/ffprobe) for anything that isn't WAV,
+    which is what live providers' MP3 output already requires."""
+    if raw[:4] == b"RIFF" and raw[8:12] == b"WAVE":
+        return "wav"
+    return None
 
 
 def _normalize_loudness(clip: AudioSegment) -> AudioSegment:

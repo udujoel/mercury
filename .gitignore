@@ -40,3 +40,4 @@ build/
 
 # iOS spike secrets
 ios/Spikes/OAuthSpike/Secrets.xcconfig
+ios/Mercury/Secrets.xcconfig

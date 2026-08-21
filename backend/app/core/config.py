@@ -34,6 +34,10 @@ class Settings(BaseSettings):
 
     # User
     user_name: str = "there"
+    # The Google account the OAuth token is issued for. Used to decide
+    # whether the user is a direct "To" recipient when scoring email
+    # priority. Empty means that signal is simply unavailable.
+    user_email: str = ""
     user_timezone: str = "Europe/Lisbon"
     user_lat: float = 40.6405
     user_lon: float = -8.6538

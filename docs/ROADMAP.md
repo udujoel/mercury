@@ -26,14 +26,14 @@ Gmail plus Calendar in, briefing out. No news, no clustering, no automation,
 no voice. Resist every temptation to add.
 
 Backend
-- [ ] FastAPI skeleton: health, auth callback, generate
-- [ ] Gmail ingestion producing `Item`
-- [ ] Calendar ingestion producing `CalendarEvent`
-- [ ] Heuristic priority scoring (no embeddings yet)
-- [ ] Two-pass script chain: outline then draft
-- [ ] Parallel TTS with pacing and loudness rules
-- [ ] Timing manifest generation
-- [ ] Object storage for audio (Cloudflare R2)
+- [~] FastAPI skeleton: health and generate done; auth callback not yet
+- [x] Gmail ingestion producing `Item`
+- [x] Calendar ingestion producing `CalendarEvent`
+- [x] Heuristic priority scoring (no embeddings yet)
+- [x] Two-pass script chain: outline then draft
+- [x] Parallel TTS with pacing and loudness rules
+- [x] Timing manifest generation
+- [~] Object storage for audio — local filesystem for now, R2 not yet
 
 iOS
 - [ ] Onboarding: welcome, Google connect, wake time, length

@@ -4,6 +4,7 @@ import logging
 
 from fastapi import FastAPI
 
+from app.api import briefing
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -22,7 +23,7 @@ async def health() -> dict[str, str]:
 
 
 # Routers get mounted here as they land.
-# from app.api import auth, briefing, voice
-# app.include_router(auth.router,     prefix="/auth")
-# app.include_router(briefing.router, prefix="/briefing")
-# app.include_router(voice.router,    prefix="/voice")
+app.include_router(briefing.router, prefix="/briefing", tags=["briefing"])
+# from app.api import auth, voice
+# app.include_router(auth.router,  prefix="/auth")
+# app.include_router(voice.router, prefix="/voice")

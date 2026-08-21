@@ -1,0 +1,244 @@
+"""
+Calendar ingestion.
+
+Ports the timezone/all-day/recurrence/declined-event handling proven in
+`scripts/spike_03_calendar.py` into a proper pipeline module. See that
+file's docstring for the reasoning — lifted verbatim rather than
+reinvented.
+
+CLAUDE.md rule 4: read-only scopes only (calendar.readonly). This module
+never creates, modifies or deletes calendar entries.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import sys
+from datetime import date, datetime, timedelta
+from pathlib import Path
+from typing import Any
+from zoneinfo import ZoneInfo
+
+from app.core.config import get_settings
+from app.core.schemas import CalendarEvent
+
+# ──────────────────────────────────────────────────────────────
+# Video-conference boilerplate stripping
+# ──────────────────────────────────────────────────────────────
+
+JOIN_URL_RE = re.compile(
+    r"https://(meet\.google\.com|zoom\.us|teams\.microsoft\.com)\S*"
+)
+BOILERPLATE_LINE_RE = re.compile(
+    r"^.*(join with google meet|join zoom meeting|join microsoft teams|"
+    r"or dial|meeting id|passcode|one tap mobile)\b.*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+PREP_KEYWORDS = ["agenda", "please review", "prep", "bring", "read ahead", "prepare"]
+DOC_LINK_RE = re.compile(r"https://docs\.google\.com/\S+")
+
+
+def extract_join_url(
+    description: str, conference_data: dict[str, Any] | None
+) -> str | None:
+    if conference_data:
+        for entry in conference_data.get("entryPoints", []):
+            if entry.get("entryPointType") == "video" and entry.get("uri"):
+                return entry["uri"]
+    match = JOIN_URL_RE.search(description or "")
+    return match.group(0) if match else None
+
+
+def strip_conference_boilerplate(description: str) -> str:
+    text = BOILERPLATE_LINE_RE.sub("", description)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    return text
+
+
+def needs_prep(description: str, attendee_count: int) -> bool:
+    """True if the event has an agenda/doc link, 3+ attendees, or the
+    description contains prep-signalling language. Any one signal is
+    enough — meetings rarely need more than one reason to warrant prep."""
+    if DOC_LINK_RE.search(description or ""):
+        return True
+    if attendee_count >= 3:
+        return True
+    lowered = (description or "").lower()
+    return any(keyword in lowered for keyword in PREP_KEYWORDS)
+
+
+# ──────────────────────────────────────────────────────────────
+# Time handling
+# ──────────────────────────────────────────────────────────────
+
+
+def parse_event_time(time_obj: dict[str, str], tz: ZoneInfo) -> tuple[datetime, bool]:
+    """Returns (datetime in the user's timezone, is_all_day)."""
+    if "date" in time_obj:
+        d = date.fromisoformat(time_obj["date"])
+        return datetime(d.year, d.month, d.day, tzinfo=tz), True
+    dt = datetime.fromisoformat(time_obj["dateTime"])
+    return dt.astimezone(tz), False
+
+
+# ──────────────────────────────────────────────────────────────
+# Normalisation
+# ──────────────────────────────────────────────────────────────
+
+
+def extract_attendees(raw_attendees: list[dict[str, Any]]) -> list[str]:
+    out = []
+    for a in raw_attendees:
+        if a.get("self"):
+            continue  # the user themself isn't a useful "attendee" to display
+        out.append(a.get("displayName") or a.get("email", ""))
+    return [a for a in out if a]
+
+
+def user_declined(raw_attendees: list[dict[str, Any]]) -> bool:
+    return any(
+        a.get("self") and a.get("responseStatus") == "declined" for a in raw_attendees
+    )
+
+
+def event_to_calendar_event(raw: dict[str, Any], tz: ZoneInfo) -> CalendarEvent | None:
+    if raw.get("status") == "cancelled":
+        return None
+
+    attendees_raw = raw.get("attendees", [])
+    if user_declined(attendees_raw):
+        return None
+
+    start_raw = raw.get("start")
+    end_raw = raw.get("end")
+    if not start_raw or not end_raw:
+        raise ValueError(f"event {raw.get('id')} missing start/end")
+
+    start, _ = parse_event_time(start_raw, tz)
+    end, _ = parse_event_time(end_raw, tz)
+
+    description = raw.get("description", "") or ""
+    conference_data = raw.get("conferenceData")
+    join_url = extract_join_url(description, conference_data)
+    clean_description = strip_conference_boilerplate(description)
+    if join_url and join_url not in clean_description:
+        clean_description = (clean_description + f"\n\nJoin: {join_url}").strip()
+
+    attendee_names = extract_attendees(attendees_raw)
+
+    return CalendarEvent(
+        id=raw["id"],
+        title=raw.get("summary", "(no title)"),
+        start=start,
+        end=end,
+        location=raw.get("location"),
+        description=clean_description or None,
+        attendees=attendee_names,
+        needs_prep=needs_prep(description, len(attendee_names) + 1),
+    )
+
+
+# ──────────────────────────────────────────────────────────────
+# Fetch paths
+# ──────────────────────────────────────────────────────────────
+
+
+def _load_fixture(
+    fixture: Path,
+) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+    data = json.loads(fixture.read_text())
+    calendars = data["calendarList"]["items"]
+    events_by_cal = {
+        cal_id: payload["items"] for cal_id, payload in data["eventsByCalendar"].items()
+    }
+    return calendars, events_by_cal
+
+
+def _fetch_live(
+    time_min: datetime, time_max: datetime
+) -> tuple[list[dict], dict[str, list[dict]]]:
+    try:
+        from googleapiclient.discovery import build
+    except ImportError as exc:
+        raise RuntimeError(
+            "google-api-python-client is not installed; cannot fetch Calendar "
+            "live. Install it or pass fixture= for the offline path."
+        ) from exc
+
+    scripts_dir = Path(__file__).resolve().parents[3] / "scripts"
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    from _google_auth import MissingCredentialsError, get_credentials
+
+    try:
+        creds = get_credentials()
+    except MissingCredentialsError as exc:
+        raise RuntimeError(str(exc)) from exc
+
+    service = build("calendar", "v3", credentials=creds)
+
+    calendars = service.calendarList().list().execute().get("items", [])
+
+    events_by_cal: dict[str, list[dict]] = {}
+    for cal in calendars:
+        cal_id = cal["id"]
+        events: list[dict] = []
+        page_token = None
+        while True:
+            resp = (
+                service.events()
+                .list(
+                    calendarId=cal_id,
+                    timeMin=time_min.isoformat(),
+                    timeMax=time_max.isoformat(),
+                    singleEvents=True,
+                    orderBy="startTime",
+                    pageToken=page_token,
+                )
+                .execute()
+            )
+            events.extend(resp.get("items", []))
+            page_token = resp.get("nextPageToken")
+            if not page_token:
+                break
+        events_by_cal[cal_id] = events
+
+    return calendars, events_by_cal
+
+
+async def fetch_events(
+    *, fixture: Path | None = None, hours_ahead: int = 72
+) -> list[CalendarEvent]:
+    """Fetch and normalise upcoming Calendar events across all calendars.
+
+    fixture=<path> reads that JSON file instead of hitting the network.
+    fixture=None hits the live Calendar API and raises a clear, actionable
+    RuntimeError naming the exact missing credential if it cannot run.
+    """
+    settings = get_settings()
+    tz = ZoneInfo(settings.user_timezone)
+
+    if fixture is not None:
+        calendars, events_by_cal = _load_fixture(fixture)
+    else:
+        now = datetime.now(tz)
+        window_end = now + timedelta(hours=hours_ahead)
+        calendars, events_by_cal = _fetch_live(now, window_end)
+
+    all_events: list[CalendarEvent] = []
+    for cal in calendars:
+        cal_id = cal["id"]
+        for raw_event in events_by_cal.get(cal_id, []):
+            try:
+                event = event_to_calendar_event(raw_event, tz)
+            except Exception:
+                # A malformed event must never take down the whole run
+                # (CLAUDE.md rule 7 — graceful degradation).
+                continue
+            if event is not None:
+                all_events.append(event)
+
+    all_events.sort(key=lambda e: e.start)
+    return all_events
