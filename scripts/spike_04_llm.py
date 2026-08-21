@@ -251,6 +251,20 @@ _STOPWORDS = {
     "Fair", "Which", "Also", "Agreed", "Have", "Talk", "Nothing", "Bit",
     "Actually", "Might", "She", "He", "Worth", "Clean", "Enjoy",
     "Unrelated", "Weather", "Wait", "Hmm", "Wow", "Really", "Honestly",
+    # Common sentence-openers. English capitalises the first word of every
+    # sentence, so without these the gate reports "Looking", "Exactly" and
+    # "However" as unsourced proper nouns: 15 of 17 flags in one live run
+    # were exactly this, burying the one real catch ("Thompson", a name the
+    # model supplied from world knowledge that appears nowhere in the source).
+    # Filtering by vocabulary rather than by sentence position keeps a
+    # genuinely invented name flagged even when it opens a sentence.
+    "Looking", "Exactly", "Precisely", "However", "Indeed", "Okay", "Yes",
+    "Speaking", "Starting", "While", "From", "They", "Another", "Beyond",
+    "Doesn", "Isn", "Let", "Right", "Still", "Meanwhile", "Otherwise",
+    "Before", "After", "Given", "Because", "Though", "Although", "Just",
+    "Now", "Here", "There", "When", "Where", "What", "Why", "How", "If",
+    "It", "We", "You", "Your", "My", "Our", "Their", "His", "Her", "Its",
+    "For", "With", "About", "Into", "Over", "Under", "Between", "Across",
 }
 
 

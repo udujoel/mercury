@@ -17,12 +17,12 @@ modules on disk.
 
 from __future__ import annotations
 
-import wave
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
 
 import pytest
+from pydub import AudioSegment
 
 from app.core.schemas import (
     LENGTH_BUDGETS,
@@ -155,8 +155,12 @@ async def test_generate_briefing_end_to_end_produces_audio_and_valid_manifest(st
     audio_bytes, media_type = audio_result
     assert len(audio_bytes) > 0
 
-    with wave.open(BytesIO(audio_bytes), "rb") as wf:
-        real_duration_ms = round(1000 * wf.getnframes() / wf.getframerate())
+    # Decode with pydub rather than the `wave` module: the pipeline emits AAC
+    # when ffmpeg is installed and WAV when it is not, and this assertion is
+    # about manifest-vs-audio agreement, not about the container format.
+    fmt = "wav" if "wav" in media_type else "mp4"
+    decoded = AudioSegment.from_file(BytesIO(audio_bytes), format=fmt)
+    real_duration_ms = len(decoded)
 
     # duration_ms in the manifest matches the real audio length.
     assert manifest.duration_ms == real_duration_ms

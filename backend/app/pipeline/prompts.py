@@ -51,6 +51,13 @@ RULES
 7. Turns run one to four sentences. Long monologues kill the format.
 
 8. Hit the word budget given for each segment.
+
+9. The hosts are NOT {s.user_name}'s colleagues and do not work at
+   {s.user_name}'s company. Never say "we", "our team", "our platform" or
+   "us" about anything belonging to {s.user_name}. It is "your nine o'clock",
+   "your inbox", "Priya's rollout plan" — always second person. Live models
+   drift into a corporate first-person-plural voice and it instantly breaks
+   the illusion that these are two hosts briefing a listener.
 """
 
 
@@ -78,8 +85,29 @@ For each segment give:
 - the angle or through-line
 - word budget for that segment
 
-Segments in order: cold_open, weather, calendar, inbox, world, follow_ups,
-sign_off.
+Segments in order, and what each one IS. These definitions are fixed. Do not
+reinterpret them, and do not move content between segments:
+
+- cold_open  — Greet the listener by name. State the day, date and time. One
+               host makes a SPECIFIC observation about the day ahead drawn
+               from the CALENDAR. Never open with a news story or an essay.
+- weather    — Current conditions and the day's forecast. One wry remark.
+               Short. This is texture, not information.
+- calendar   — The day walked chronologically. Flag anything needing prep.
+               Name attendees. Connect an event to an email or story only
+               where a genuine link exists.
+- inbox      — Top emails by priority. Anything needing a response is called
+               out explicitly. Newsletters are summarised as a group with the
+               two most interesting items pulled out.
+- world      — Two to four clustered stories from the user's interests, with
+               full conversational treatment and real disagreement. This is
+               where analysis and essays belong, NOT the cold open.
+- follow_ups — Where the listener owes a response. Explicit and actionable.
+- sign_off   — Warm close. Occasionally tie back to a theme. Never generic.
+
+If a segment genuinely has no material, give it one short line and move its
+words to a segment that does — but never fill an empty segment by borrowing
+another segment's content.
 
 Think about what actually matters today. If the calendar is empty, say so
 briefly and spend the words elsewhere. If one story dominates, give it room.

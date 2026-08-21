@@ -11,6 +11,7 @@ import pytest
 
 from app.core.schemas import Segment, SourceRef, SourceType, Turn
 from app.providers.fake_tts import VOICE_A_ID, VOICE_B_ID, FakeTTSProvider
+from app.synthesis import stitch
 from app.synthesis.stitch import (
     FALLBACK_FORMAT,
     GAP_DIFFERENT_SPEAKER_MS,
@@ -70,7 +71,12 @@ async def test_fake_tts_voice_a_and_b_are_different_pitch():
 # ──────────────────────────────────────────────────────────────
 
 
-async def test_synthesize_briefing_produces_monotonic_non_overlapping_turns():
+async def test_synthesize_briefing_produces_monotonic_non_overlapping_turns(
+    monkeypatch,
+):
+    # Pin the export branch so this test asserts timing invariants, not
+    # whichever audio format this machine happens to be able to produce.
+    monkeypatch.setattr(stitch, "ffmpeg_available", lambda: False)
     turns = _turns()
     tts = FakeTTSProvider()
     sources = [
@@ -89,7 +95,9 @@ async def test_synthesize_briefing_produces_monotonic_non_overlapping_turns():
     )
 
     assert len(audio_bytes) > 0
-    assert audio_format == FALLBACK_FORMAT  # no ffmpeg on this machine
+    # Format is pinned by the fixture below, not read off the machine, so the
+    # manifest/URL agreement is asserted the same way on any dev box or in CI.
+    assert audio_format == FALLBACK_FORMAT
     assert manifest.audio_url.endswith(FALLBACK_FORMAT)
 
     prev_end = -1
@@ -165,17 +173,37 @@ async def test_synthesize_briefing_skips_failed_turn_without_failing_run():
     assert manifest.turns[2].start_ms is not None
 
 
-def test_ffmpeg_not_available_on_this_machine():
-    # Documents the environment this suite runs in: no ffmpeg, WAV fallback
-    # must be exercised, not skipped.
-    assert ffmpeg_available() is False
+async def test_falls_back_to_wav_when_ffmpeg_is_missing(monkeypatch):
+    """The fallback branch must be exercised on every machine.
 
+    This used to `assert ffmpeg_available() is False`, which asserted a fact
+    about the developer's laptop rather than about the code: installing
+    ffmpeg turned it red and silently stopped testing the fallback at all.
+    Force the branch instead.
+    """
+    monkeypatch.setattr(stitch, "ffmpeg_available", lambda: False)
 
-@pytest.mark.skipif(not ffmpeg_available(), reason="ffmpeg not installed")
-async def test_synthesize_briefing_uses_compressed_format_when_ffmpeg_present():
-    turns = _turns()
     _, manifest, audio_format = await synthesize_briefing(
-        turns, tts=FakeTTSProvider(), briefing_id="x",
+        turns=_turns(), tts=FakeTTSProvider(), briefing_id="x",
+        audio_url_for=lambda fmt: f"url.{fmt}", sources=[],
+    )
+    assert audio_format == FALLBACK_FORMAT
+    assert manifest.audio_url.endswith(FALLBACK_FORMAT)
+
+
+@pytest.mark.skipif(
+    not ffmpeg_available(),
+    reason="ffmpeg genuinely required: this asserts real AAC encoding",
+)
+async def test_synthesize_briefing_uses_compressed_format_when_ffmpeg_present():
+    """The compressed branch cannot be faked — it needs a real encoder.
+
+    Skipped where ffmpeg is absent, which is honest; the fallback test above
+    still runs everywhere.
+    """
+    _, manifest, audio_format = await synthesize_briefing(
+        turns=_turns(), tts=FakeTTSProvider(), briefing_id="x",
         audio_url_for=lambda fmt: f"url.{fmt}", sources=[],
     )
     assert audio_format != FALLBACK_FORMAT
+    assert manifest.audio_url.endswith(audio_format)
