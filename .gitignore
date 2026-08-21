@@ -15,6 +15,9 @@ venv/
 credentials.json
 token.json
 service-account*.json
+# The GCP TTS service-account key lands here. It is a private key —
+# the filename (gcp-tts.json) matched none of the patterns above.
+credentials/
 
 # Audio artifacts
 *.mp3
