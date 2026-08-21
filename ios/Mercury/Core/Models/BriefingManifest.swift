@@ -126,3 +126,21 @@ extension BriefingManifest {
         segments.first(where: { $0.id == id })?.startMs
     }
 }
+
+
+/// Mirrors `BriefingLength` in backend/app/core/schemas.py. Raw values must
+/// match exactly — they cross the wire as the `length` field of the generate
+/// request, and the backend maps them to LENGTH_BUDGETS word counts.
+enum BriefingLength: String, Codable, CaseIterable, Identifiable, Sendable {
+    case express, standard, full
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .express: return "Express (~3 min)"
+        case .standard: return "Standard (~7 min)"
+        case .full: return "Full (~15 min)"
+        }
+    }
+}

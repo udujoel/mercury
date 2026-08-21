@@ -5,19 +5,7 @@ struct ScheduleSetupView: View {
     @State private var wakeTime = Calendar.current.date(
         bySettingHour: 7, minute: 0, second: 0, of: .now
     ) ?? .now
-    @State private var length: BriefingLengthOption = .standard
-
-    enum BriefingLengthOption: String, CaseIterable, Identifiable {
-        case express, standard, full
-        var id: String { rawValue }
-        var label: String {
-            switch self {
-            case .express: return "Express (~3 min)"
-            case .standard: return "Standard (~7 min)"
-            case .full: return "Full (~15 min)"
-            }
-        }
-    }
+    @State private var length: BriefingLength = .standard
 
     var body: some View {
         ZStack {
@@ -34,7 +22,7 @@ struct ScheduleSetupView: View {
                     .labelsHidden()
 
                 Picker("Length", selection: $length) {
-                    ForEach(BriefingLengthOption.allCases) { option in
+                    ForEach(BriefingLength.allCases) { option in
                         Text(option.label).tag(option)
                     }
                 }

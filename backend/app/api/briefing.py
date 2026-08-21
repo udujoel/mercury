@@ -58,7 +58,14 @@ def _build_providers(offline: bool):
 
 
 @router.post("/generate", response_model=GenerateResponse)
-async def generate(request: GenerateRequest) -> GenerateResponse:
+async def generate(
+    request: GenerateRequest | None = None,
+) -> GenerateResponse:
+    # Every field on GenerateRequest has a default, so "no body" is a
+    # meaningful request: generate a standard-length offline briefing.
+    # Requiring the body made a bodyless POST fail with a 422 that says
+    # nothing useful to a client that just wants the default.
+    request = request or GenerateRequest()
     try:
         llm, tts = _build_providers(request.offline)
     except RuntimeError as exc:

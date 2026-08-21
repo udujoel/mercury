@@ -5,13 +5,23 @@ import Foundation
 /// Defaults to the local dev server so a fresh checkout builds and runs
 /// against `uvicorn` on localhost with zero configuration.
 enum APIConfig {
+    static let fallback = URL(string: "http://localhost:8000")!
+
     static var baseURL: URL {
-        if let raw = Bundle.main.object(forInfoDictionaryKey: "API_BASE_URL") as? String,
-           !raw.isEmpty,
-           let url = URL(string: raw) {
-            return url
+        guard let raw = Bundle.main.object(forInfoDictionaryKey: "API_BASE_URL") as? String,
+              !raw.isEmpty,
+              let url = URL(string: raw),
+              // A non-nil URL is NOT enough. xcconfig eats everything after
+              // "//" as a comment, so "http://localhost:8000" arrives here as
+              // the string "http:". That parses cleanly into a URL with a
+              // scheme and no host, so the old `let url = URL(string:)` check
+              // passed and every request went to http://briefing/generate and
+              // died in DNS. Require an actual host.
+              let host = url.host(), !host.isEmpty
+        else {
+            return fallback
         }
-        return URL(string: "http://localhost:8000")!
+        return url
     }
 }
 

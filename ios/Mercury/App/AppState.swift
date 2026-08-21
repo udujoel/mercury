@@ -31,12 +31,27 @@ final class AppState {
         set { UserDefaults.standard.set(newValue, forKey: Self.onboardingKey) }
     }
 
+    /// The length chosen during onboarding. Sent with every generate request
+    /// so the backend can apply the matching word budget (PRD F-18). Stored
+    /// rather than held in the onboarding view, which is torn down the moment
+    /// onboarding finishes.
+    var briefingLength: BriefingLength {
+        get {
+            guard let raw = UserDefaults.standard.string(forKey: Self.lengthKey),
+                  let value = BriefingLength(rawValue: raw)
+            else { return .standard }
+            return value
+        }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: Self.lengthKey) }
+    }
+
     var manifest: BriefingManifest?
     var loadState: LoadState = .idle
     let playback = PlaybackCoordinator()
 
     private let api: APIClientProtocol
     private static let onboardingKey = "mercury.hasCompletedOnboarding"
+    private static let lengthKey = "mercury.briefingLength"
 
     init(api: APIClientProtocol = APIClient()) {
         self.api = api
@@ -50,7 +65,7 @@ final class AppState {
     func playBriefing() async {
         loadState = .loading
         do {
-            let manifest = try await api.generateBriefing()
+            let manifest = try await api.generateBriefing(length: briefingLength)
             self.manifest = manifest
             let audioURL = try await api.downloadAudio(briefingId: manifest.briefingId)
             try playback.load(manifest: manifest, audioURL: audioURL)

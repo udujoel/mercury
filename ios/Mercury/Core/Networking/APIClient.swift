@@ -20,7 +20,7 @@ enum APIError: Error, LocalizedError {
 /// Thin `URLSession` wrapper. Async/await only, no completion handlers, no
 /// third-party dependency — the API surface is three endpoints.
 protocol APIClientProtocol {
-    func generateBriefing() async throws -> BriefingManifest
+    func generateBriefing(length: BriefingLength) async throws -> BriefingManifest
     func fetchManifest(briefingId: String) async throws -> BriefingManifest
     func downloadAudio(briefingId: String) async throws -> URL
 }
@@ -37,8 +37,8 @@ final class APIClient: APIClientProtocol {
         self.decoder = decoder
     }
 
-    func generateBriefing() async throws -> BriefingManifest {
-        try await requestGenerate()
+    func generateBriefing(length: BriefingLength) async throws -> BriefingManifest {
+        try await requestGenerate(length: length)
     }
 
     func fetchManifest(briefingId: String) async throws -> BriefingManifest {
@@ -87,10 +87,21 @@ final class APIClient: APIClientProtocol {
         let manifest: BriefingManifest
     }
 
-    private func requestGenerate() async throws -> BriefingManifest {
+    /// Body of `POST /briefing/generate`. Mirrors `GenerateRequest` in
+    /// backend/app/api/briefing.py.
+    private struct GenerateRequestBody: Encodable {
+        let length: BriefingLength
+    }
+
+    private func requestGenerate(length: BriefingLength) async throws -> BriefingManifest {
         var urlRequest = URLRequest(url: Endpoint.generate.url())
         urlRequest.httpMethod = Endpoint.generate.method
         urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+        // Sending no body at all made FastAPI reject this with a 422: the
+        // request model was a required parameter. The server now tolerates an
+        // empty body, but the client still has a real preference to send.
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.httpBody = try? JSONEncoder().encode(GenerateRequestBody(length: length))
 
         let data: Data
         let response: URLResponse
