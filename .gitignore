@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Secrets
+.env
+.env.local
+*.pem
+*.p8
+credentials.json
+token.json
+service-account*.json
+
+# Audio artifacts
+*.mp3
+*.m4a
+*.wav
+out/
+tmp/
+
+# macOS
+.DS_Store
+
+# Xcode
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
+*.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
+.swiftpm/
+
+# Editors
+.vscode/
+.idea/
