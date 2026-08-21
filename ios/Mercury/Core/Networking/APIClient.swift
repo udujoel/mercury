@@ -1,0 +1,155 @@
+import Foundation
+
+enum APIError: Error, LocalizedError {
+    case badStatus(Int, String)
+    case decoding(Error)
+    case transport(Error)
+
+    var errorDescription: String? {
+        switch self {
+        case .badStatus(let code, let body):
+            return "Backend returned \(code): \(body)"
+        case .decoding(let error):
+            return "Could not decode response: \(error)"
+        case .transport(let error):
+            return "Network error: \(error)"
+        }
+    }
+}
+
+/// Thin `URLSession` wrapper. Async/await only, no completion handlers, no
+/// third-party dependency — the API surface is three endpoints.
+protocol APIClientProtocol {
+    func generateBriefing() async throws -> BriefingManifest
+    func fetchManifest(briefingId: String) async throws -> BriefingManifest
+    func downloadAudio(briefingId: String) async throws -> URL
+}
+
+final class APIClient: APIClientProtocol {
+
+    private let session: URLSession
+    private let decoder: JSONDecoder
+
+    init(session: URLSession = .shared) {
+        self.session = session
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        self.decoder = decoder
+    }
+
+    func generateBriefing() async throws -> BriefingManifest {
+        try await requestGenerate()
+    }
+
+    func fetchManifest(briefingId: String) async throws -> BriefingManifest {
+        try await request(.manifest(briefingId: briefingId))
+    }
+
+    /// Downloads the briefing audio to a local temp file and returns its
+    /// URL. The file extension is derived from the response's `Content-Type`
+    /// (the backend may emit `.wav` when ffmpeg is unavailable, or `.m4a`
+    /// when it is) — never hardcoded, and never guessed from a filename the
+    /// server doesn't send.
+    func downloadAudio(briefingId: String) async throws -> URL {
+        let endpoint = Endpoint.audio(briefingId: briefingId)
+        var request = URLRequest(url: endpoint.url())
+        request.httpMethod = endpoint.method
+
+        do {
+            let (tempURL, response) = try await session.download(for: request)
+            try Self.validate(response)
+
+            let ext = Self.fileExtension(forMimeType: response.mimeType)
+            let destination = FileManager.default.temporaryDirectory
+                .appendingPathComponent("\(briefingId)-audio")
+                .appendingPathExtension(ext)
+
+            if FileManager.default.fileExists(atPath: destination.path) {
+                try FileManager.default.removeItem(at: destination)
+            }
+            try FileManager.default.moveItem(at: tempURL, to: destination)
+            return destination
+        } catch let error as APIError {
+            throw error
+        } catch {
+            throw APIError.transport(error)
+        }
+    }
+
+    // MARK: - Private
+
+    /// `POST /briefing/generate` wraps the manifest in `{status, manifest}`
+    /// (see `backend/app/api/briefing.py::GenerateResponse`), unlike the
+    /// other two endpoints which return the manifest directly. Decode the
+    /// wrapper, don't decode the manifest shape straight off the body.
+    private struct GenerateResponseBody: Decodable {
+        let status: String
+        let manifest: BriefingManifest
+    }
+
+    private func requestGenerate() async throws -> BriefingManifest {
+        var urlRequest = URLRequest(url: Endpoint.generate.url())
+        urlRequest.httpMethod = Endpoint.generate.method
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: urlRequest)
+        } catch {
+            throw APIError.transport(error)
+        }
+
+        try Self.validate(response, body: data)
+
+        do {
+            return try decoder.decode(GenerateResponseBody.self, from: data).manifest
+        } catch {
+            throw APIError.decoding(error)
+        }
+    }
+
+    /// Maps the response `Content-Type` to a file extension. Falls back to
+    /// `.m4a` (the intended production format) only when the server sends
+    /// no usable media type at all.
+    private static func fileExtension(forMimeType mimeType: String?) -> String {
+        switch mimeType {
+        case "audio/wav", "audio/x-wav", "audio/wave":
+            return "wav"
+        case "audio/mp4", "audio/m4a", "audio/aac":
+            return "m4a"
+        default:
+            return "m4a"
+        }
+    }
+
+    private func request(_ endpoint: Endpoint) async throws -> BriefingManifest {
+        var urlRequest = URLRequest(url: endpoint.url())
+        urlRequest.httpMethod = endpoint.method
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: urlRequest)
+        } catch {
+            throw APIError.transport(error)
+        }
+
+        try Self.validate(response, body: data)
+
+        do {
+            return try decoder.decode(BriefingManifest.self, from: data)
+        } catch {
+            throw APIError.decoding(error)
+        }
+    }
+
+    private static func validate(_ response: URLResponse, body: Data = Data()) throws {
+        guard let http = response as? HTTPURLResponse else { return }
+        guard (200..<300).contains(http.statusCode) else {
+            let text = String(data: body, encoding: .utf8) ?? ""
+            throw APIError.badStatus(http.statusCode, text)
+        }
+    }
+}

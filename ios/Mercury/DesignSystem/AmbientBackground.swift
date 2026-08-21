@@ -21,16 +21,45 @@ struct AmbientBackground: View {
 
     var body: some View {
         ZStack {
-            MeshGradient(
-                width: 3, height: 3,
-                points: Self.meshPoints,
-                colors: colors
-            )
+            if #available(iOS 18.0, *) {
+                MeshGradient(
+                    width: 3, height: 3,
+                    points: Self.meshPoints,
+                    colors: colors
+                )
+            } else {
+                fallbackGradient
+            }
             NoiseOverlay()
                 .blendMode(.overlay)
                 .opacity(0.06)
         }
         .drawingGroup()
+    }
+
+    /// iOS 17 fallback — MeshGradient is iOS 18+. A layered radial/linear
+    /// gradient approximates the same three-tone identity without it.
+    private var fallbackGradient: some View {
+        let (base, secondary, highlight) = palette
+        return ZStack {
+            LinearGradient(
+                colors: [highlight, base, secondary],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            RadialGradient(
+                colors: [highlight.opacity(0.6), .clear],
+                center: .topLeading,
+                startRadius: 0,
+                endRadius: 400
+            )
+            RadialGradient(
+                colors: [secondary.opacity(0.5), .clear],
+                center: .bottomTrailing,
+                startRadius: 0,
+                endRadius: 400
+            )
+        }
     }
 
     // MARK: - Palette

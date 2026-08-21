@@ -1,0 +1,26 @@
+{
+  "briefing_id": "2026-08-21",
+  "generated_at": "2026-08-21T07:00:00Z",
+  "duration_ms": 26000,
+  "audio_url": "https://cdn.example.com/briefings/2026-08-21/audio.wav",
+  "segments": [
+    { "id": "cold_open", "label": "Good morning", "start_ms": 0 },
+    { "id": "weather", "label": "Weather", "start_ms": 4000 },
+    { "id": "calendar", "label": "Your day", "start_ms": 12000 },
+    { "id": "inbox", "label": "Your inbox", "start_ms": 20000 }
+  ],
+  "turns": [
+    { "speaker": "A", "segment": "cold_open", "text": "Good morning. It's Friday, August 21st.", "start_ms": 0, "end_ms": 2000 },
+    { "speaker": "B", "segment": "cold_open", "text": "And you've got a fairly packed one today.", "start_ms": 2000, "end_ms": 4000 },
+    { "speaker": "A", "segment": "weather", "text": "It's 64 and partly cloudy in San Francisco.", "start_ms": 5000, "end_ms": 8000 },
+    { "speaker": "B", "segment": "weather", "text": "Bring a jacket for that afternoon fog.", "start_ms": 8000, "end_ms": 11500 },
+    { "speaker": "A", "segment": "calendar", "text": "Standup at nine, then a one on one with Priya at eleven.", "start_ms": 12000, "end_ms": 16000 },
+    { "speaker": "B", "segment": "calendar", "text": "And a design review at two you'll want to prep for.", "start_ms": 16000, "end_ms": 19800 },
+    { "speaker": "A", "segment": "inbox", "text": "Priya sent over the Q3 planning doc, she wants eyes on it before Thursday.", "start_ms": 20000, "end_ms": 24000 },
+    { "speaker": "B", "segment": "inbox", "text": "There's also an invoice due Friday, worth a quick glance.", "start_ms": 24000, "end_ms": 26000 }
+  ],
+  "sources": [
+    { "turn_index": 4, "title": "Standup", "url": null, "source_name": "Google Calendar", "source_type": "calendar", "cluster_size": 1 },
+    { "turn_index": 6, "title": "Q3 planning doc ready for review", "url": "https://mail.google.com/mail/thread/abc123", "source_name": "Priya Shah", "source_type": "email", "cluster_size": 1 }
+  ]
+}

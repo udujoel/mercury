@@ -36,12 +36,12 @@ Backend
 - [~] Object storage for audio — local filesystem for now, R2 not yet
 
 iOS
-- [ ] Onboarding: welcome, Google connect, wake time, length
-- [ ] Home: four-card stack
-- [ ] Player: content stage, chapter tabs, transport
-- [ ] AVAudioEngine playback, background audio, lock screen
-- [ ] Transcript sync from manifest
-- [ ] SwiftData persistence and resume position
+- [x] Onboarding: welcome, Google connect, wake time, length
+- [x] Home: four-card stack
+- [x] Player: content stage, chapter tabs, transport
+- [x] AVAudioEngine playback, background audio, lock screen
+- [x] Transcript sync from manifest
+- [x] SwiftData persistence and resume position
 
 **Gate: you tap the greeting card and within ninety seconds two hosts are
 discussing your actual meetings and your actual inbox.**
