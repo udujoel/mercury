@@ -1,0 +1,222 @@
+{
+  "messages": [
+    {
+      "id": "msg001",
+      "threadId": "thread001",
+      "labelIds": [
+        "INBOX",
+        "CATEGORY_UPDATES"
+      ],
+      "snippet": "This Week in Signals - Top story: the widget market grew...",
+      "payload": {
+        "mimeType": "multipart/alternative",
+        "headers": [
+          {
+            "name": "From",
+            "value": "Signals Weekly <newsletter@signalsweekly.com>"
+          },
+          {
+            "name": "To",
+            "value": "udujoel@gmail.com"
+          },
+          {
+            "name": "Subject",
+            "value": "This Week in Signals"
+          },
+          {
+            "name": "Date",
+            "value": "Wed, 19 Aug 2026 08:00:00 +0000"
+          },
+          {
+            "name": "List-Unsubscribe",
+            "value": "<https://example.com/unsub?u=abc123>, <mailto:unsub@signalsweekly.com>"
+          },
+          {
+            "name": "List-Id",
+            "value": "Signals Weekly <weekly.signalsweekly.com>"
+          },
+          {
+            "name": "Precedence",
+            "value": "bulk"
+          }
+        ],
+        "parts": [
+          {
+            "mimeType": "text/plain",
+            "headers": [
+              {
+                "name": "Content-Type",
+                "value": "text/plain; charset=UTF-8"
+              }
+            ],
+            "body": {
+              "size": 223,
+              "data": "VGhpcyBXZWVrIGluIFNpZ25hbHMKClRvcCBzdG9yeTogdGhlIHdpZGdldCBtYXJrZXQgZ3JldyA0JSBxdWFydGVyIG92ZXIgcXVhcnRlci4KUmVhZCBtb3JlIGF0IHRoZSBsaW5rIGJlbG93LgoKWW91J3JlIHJlY2VpdmluZyB0aGlzIGJlY2F1c2UgeW91IHN1YnNjcmliZWQgdG8gU2lnbmFscyBXZWVrbHkuClVuc3Vic2NyaWJlOiBodHRwczovL2V4YW1wbGUuY29tL3Vuc3ViP3U9YWJjMTIzCg"
+            }
+          },
+          {
+            "mimeType": "text/html",
+            "headers": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=UTF-8"
+              }
+            ],
+            "body": {
+              "size": 324,
+              "data": "PGh0bWw-PGJvZHk-PGgxPlRoaXMgV2VlayBpbiBTaWduYWxzPC9oMT48cD5Ub3Agc3Rvcnk6IHRoZSB3aWRnZXQgbWFya2V0IGdyZXcgNCUgcXVhcnRlciBvdmVyIHF1YXJ0ZXIuPC9wPjxpbWcgc3JjPSdodHRwczovL3RyYWNrLmV4YW1wbGUuY29tL3BpeGVsLmdpZicgd2lkdGg9JzEnIGhlaWdodD0nMSc-PHAgc3R5bGU9J2ZvbnQtc2l6ZToxMHB4Jz5Zb3UncmUgcmVjZWl2aW5nIHRoaXMgYmVjYXVzZSB5b3Ugc3Vic2NyaWJlZC4gPGEgaHJlZj0naHR0cHM6Ly9leGFtcGxlLmNvbS91bnN1Yj91PWFiYzEyMyc-VW5zdWJzY3JpYmU8L2E-PC9wPjwvYm9keT48L2h0bWw-"
+            }
+          }
+        ]
+      },
+      "internalDate": "1755590400000"
+    },
+    {
+      "id": "msg002",
+      "threadId": "thread002",
+      "labelIds": [
+        "INBOX",
+        "CATEGORY_PROMOTIONS"
+      ],
+      "snippet": "Flash Sale: 30% off everything",
+      "payload": {
+        "mimeType": "text/html",
+        "headers": [
+          {
+            "name": "From",
+            "value": "BrandCo Deals <noreply@brandco.com>"
+          },
+          {
+            "name": "To",
+            "value": "udujoel@gmail.com"
+          },
+          {
+            "name": "Subject",
+            "value": "Flash Sale: 30% off everything"
+          },
+          {
+            "name": "Date",
+            "value": "Wed, 19 Aug 2026 09:30:00 +0000"
+          }
+        ],
+        "body": {
+          "size": 187,
+          "data": "PGh0bWw-PGJvZHk-PGgyPkZsYXNoIFNhbGU6IDMwJSBvZmYgZXZlcnl0aGluZzwvaDI-PHA-VXNlIGNvZGUgU0FWRTMwIGF0IGNoZWNrb3V0LiBPZmZlciBlbmRzIHRvbmlnaHQuPC9wPjxpbWcgc3JjPSdodHRwczovL3RyYWNrLmJyYW5kY28uY29tL29wZW4uZ2lmJyB3aWR0aD0nMScgaGVpZ2h0PScxJz48L2JvZHk-PC9odG1sPg=="
+        }
+      },
+      "internalDate": "1755595800000"
+    },
+    {
+      "id": "msg003",
+      "threadId": "thread003",
+      "labelIds": [
+        "INBOX",
+        "IMPORTANT"
+      ],
+      "snippet": "Quick one - are you free to review the Q3 budget doc...",
+      "payload": {
+        "mimeType": "text/plain",
+        "headers": [
+          {
+            "name": "From",
+            "value": "Maria Chen <maria.chen@acmecorp.com>"
+          },
+          {
+            "name": "To",
+            "value": "udujoel@gmail.com"
+          },
+          {
+            "name": "Cc",
+            "value": "team-leads@acmecorp.com"
+          },
+          {
+            "name": "Subject",
+            "value": "Q3 budget review before Friday"
+          },
+          {
+            "name": "Date",
+            "value": "Thu, 20 Aug 2026 14:12:00 +0000"
+          }
+        ],
+        "body": {
+          "size": 156,
+          "data": "SGV5LAoKUXVpY2sgb25lIC0gYXJlIHlvdSBmcmVlIHRvIHJldmlldyB0aGUgUTMgYnVkZ2V0IGRvYyBiZWZvcmUgRnJpZGF5J3MgbWVldGluZz8gTGV0IG1lIGtub3cgaWYgdGhlIG51bWJlcnMgb24gc2xpZGUgNCBsb29rIHJpZ2h0IHRvIHlvdS4KClRoYW5rcywKTWFyaWEK"
+        }
+      },
+      "internalDate": "1755698280000"
+    },
+    {
+      "id": "msg004",
+      "threadId": "thread003",
+      "labelIds": [
+        "INBOX"
+      ],
+      "snippet": "Sounds good, I'll send the updated deck tomorrow morning.",
+      "payload": {
+        "mimeType": "multipart/mixed",
+        "headers": [
+          {
+            "name": "From",
+            "value": "Maria Chen <maria.chen@acmecorp.com>"
+          },
+          {
+            "name": "To",
+            "value": "udujoel@gmail.com"
+          },
+          {
+            "name": "Subject",
+            "value": "Re: Q3 budget review before Friday"
+          },
+          {
+            "name": "Date",
+            "value": "Thu, 20 Aug 2026 16:05:00 +0000"
+          }
+        ],
+        "parts": [
+          {
+            "mimeType": "multipart/alternative",
+            "parts": [
+              {
+                "mimeType": "text/plain",
+                "headers": [
+                  {
+                    "name": "Content-Type",
+                    "value": "text/plain; charset=UTF-8"
+                  }
+                ],
+                "body": {
+                  "size": 365,
+                  "data": "U291bmRzIGdvb2QsIEknbGwgc2VuZCB0aGUgdXBkYXRlZCBkZWNrIHRvbW9ycm93IG1vcm5pbmcuCgpPbiBXZWQsIEF1ZyAxOSwgMjAyNiBhdCAzOjQ1IFBNIERhdmUgUGFyayA8ZGF2ZS5wYXJrQGFjbWVjb3JwLmNvbT4gd3JvdGU6Cj4gQ2FuIHlvdSByZXNlbmQgdGhlIGRlY2sgd2l0aCB0aGUgdXBkYXRlZCBudW1iZXJzPwo-IEFsc28gbG9vcCBpbiBmaW5hbmNlIHRoaXMgdGltZS4KPgo-IE9uIFdlZCwgQXVnIDE5LCAyMDI2IGF0IDI6MDAgUE0gTWFyaWEgQ2hlbiB3cm90ZToKPiA-IEhlcmUgaXMgdGhlIGZpcnN0IGRyYWZ0IG9mIHRoZSBkZWNrLgoKLS0gCk1hcmlhIENoZW4KSGVhZCBvZiBPcHMsIEFjbWUgQ29ycAorMSA1NTUtMDEwMAo"
+                }
+              }
+            ]
+          },
+          {
+            "mimeType": "application/pdf",
+            "filename": "budget_draft.pdf",
+            "headers": [
+              {
+                "name": "Content-Type",
+                "value": "application/pdf; name=budget_draft.pdf"
+              }
+            ],
+            "body": {
+              "attachmentId": "attach001",
+              "size": 40231
+            }
+          }
+        ]
+      },
+      "internalDate": "1755705900000"
+    },
+    {
+      "id": "msg005",
+      "threadId": "thread005",
+      "labelIds": [
+        "INBOX"
+      ],
+      "snippet": "",
+      "internalDate": "1755706000000"
+    }
+  ]
+}

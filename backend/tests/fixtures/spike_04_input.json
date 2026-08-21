@@ -1,0 +1,94 @@
+{
+  "date": "2026-08-21",
+  "weather": {
+    "temperature_c": 16.0,
+    "condition": "clear",
+    "high_c": 24.0,
+    "low_c": 15.0,
+    "location_name": "Aveiro"
+  },
+  "calendar": [
+    {
+      "id": "cal-001",
+      "title": "Provider upgrade review with platform team",
+      "start": "2026-08-21T09:00:00+01:00",
+      "end": "2026-08-21T09:45:00+01:00",
+      "location": "Meeting Room 3 / Zoom",
+      "description": "Review the Q3 provider upgrade rollout plan and sign off on the migration window.",
+      "attendees": ["priya@platform.mercury.dev", "udujoel@gmail.com", "sam@platform.mercury.dev"],
+      "needs_prep": true
+    },
+    {
+      "id": "cal-002",
+      "title": "1:1 with Sam",
+      "start": "2026-08-21T14:00:00+01:00",
+      "end": "2026-08-21T14:30:00+01:00",
+      "location": null,
+      "description": "Regular weekly check-in.",
+      "attendees": ["sam@platform.mercury.dev", "udujoel@gmail.com"],
+      "needs_prep": false
+    }
+  ],
+  "emails": [
+    {
+      "id": "email-001",
+      "source_type": "email",
+      "source_name": "Priya Nair",
+      "title": "Provider upgrade rollout plan — please review before Thursday",
+      "body": "Hi Joel, attached is the rollout plan for the provider upgrade we discussed. It touches every module your team owns, so I'd like your sign-off before the 9am review Thursday. The migration window is proposed for the night of August 27th. Let me know if that conflicts with anything.",
+      "url": null,
+      "author": "priya@platform.mercury.dev",
+      "timestamp": "2026-08-20T16:40:00+01:00",
+      "requires_response": true,
+      "priority": "high"
+    },
+    {
+      "id": "email-002",
+      "source_type": "email",
+      "source_name": "GitHub",
+      "title": "[mercury/backend] 3 new pull requests opened",
+      "body": "Three pull requests were opened overnight in mercury/backend: #412 fix flaky ingestion test, #413 add retry backoff to embedding client, #414 bump lxml to 5.3.1.",
+      "url": "https://github.com/mercury/backend/pulls",
+      "author": "notifications@github.com",
+      "timestamp": "2026-08-21T05:12:00+01:00",
+      "requires_response": false,
+      "priority": "low"
+    },
+    {
+      "id": "email-003",
+      "source_type": "email",
+      "source_name": "Aveiro City Council Newsletter",
+      "title": "Water maintenance notice for Glicínias district, August 22",
+      "body": "The municipal water utility will perform scheduled maintenance in the Glicínias district on August 22 between 09:00 and 13:00. Some interruption to water pressure is expected.",
+      "url": "https://cm-aveiro.pt/notices/water-aug22",
+      "author": "newsletter@cm-aveiro.pt",
+      "timestamp": "2026-08-20T18:00:00+01:00",
+      "requires_response": false,
+      "priority": "low"
+    },
+    {
+      "id": "email-004",
+      "source_type": "email",
+      "source_name": "Sam Okafor",
+      "title": "Re: 1:1 agenda — quick topics for today",
+      "body": "Hey, for our 1:1 today can we cover: my Q3 goals draft, and whether I should join the provider upgrade review this morning too. Nothing urgent, whenever works.",
+      "url": null,
+      "author": "sam@platform.mercury.dev",
+      "timestamp": "2026-08-21T07:05:00+01:00",
+      "requires_response": true,
+      "priority": "medium"
+    },
+    {
+      "id": "email-005",
+      "source_type": "email",
+      "source_name": "Stratechery",
+      "title": "The Bundling of Everything",
+      "body": "This week's essay looks at how AI assistants are becoming the new aggregation point for services that used to be separately bundled, and what that means for platform owners.",
+      "url": "https://stratechery.com/2026/the-bundling-of-everything/",
+      "author": "ben@stratechery.com",
+      "timestamp": "2026-08-20T22:00:00+01:00",
+      "requires_response": false,
+      "priority": "medium"
+    }
+  ]
+}

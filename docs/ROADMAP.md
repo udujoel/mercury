@@ -9,10 +9,10 @@ knowledge, not code.
 
 - [ ] Google Cloud project: enable Gmail API, Calendar API, Cloud TTS
 - [ ] OAuth consent screen in testing mode, your account as sole test user
-- [ ] Spike 1 — iOS OAuth via ASWebAuthenticationSession, token to Keychain
-- [ ] Spike 2 — Gmail fetch, yesterday's messages, plain text extraction
-- [ ] Spike 3 — Calendar fetch, today plus 72 hours, all calendars
-- [ ] Spike 4 — Gemini 2.5 Flash, fake data in, two-host JSON script out
+- [x] Spike 1 — iOS OAuth via ASWebAuthenticationSession, token to Keychain
+- [x] Spike 2 — Gmail fetch, yesterday's messages, plain text extraction
+- [x] Spike 3 — Calendar fetch, today plus 72 hours, all calendars
+- [x] Spike 4 — Gemini 2.5 Flash, fake data in, two-host JSON script out
 - [ ] Spike 5 — TTS synthesis and stitching, `scripts/spike_05_tts.py`
 - [ ] Spike 6 — AVAudioEngine playback with millisecond position at 20 Hz
 - [ ] Spike 7 — BGProcessingTask on a physical device, triggered via LLDB

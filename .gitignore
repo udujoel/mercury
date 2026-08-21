@@ -37,3 +37,6 @@ build/
 # Editors
 .vscode/
 .idea/
+
+# iOS spike secrets
+ios/Spikes/OAuthSpike/Secrets.xcconfig

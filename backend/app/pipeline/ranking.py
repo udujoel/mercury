@@ -7,7 +7,7 @@ The LLM cannot receive everything. This decides what makes the cut.
 from __future__ import annotations
 
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 
@@ -24,7 +24,7 @@ def score_stories(
 ) -> list[Story]:
     """Score every story and return sorted descending."""
     s = get_settings()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     attendee_names = {
         a.lower()
@@ -76,7 +76,7 @@ def score_stories(
 
 
 def _aware(dt: datetime) -> datetime:
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
 def topic_centroid(topic_embeddings: list[list[float]]) -> np.ndarray | None:

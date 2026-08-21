@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>GOOGLE_IOS_CLIENT_ID</key>
+	<string>$(GOOGLE_IOS_CLIENT_ID)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<!--
+		Populated at build time by the "Inject Google URL Scheme" Run Script
+		build phase (see project.pbxproj), which derives the reverse-DNS
+		callback scheme from GOOGLE_IOS_CLIENT_ID via PlistBuddy so it can
+		never drift out of sync with the client id in Secrets.xcconfig.
+		This placeholder entry keeps the array key present so the script
+		phase's PlistBuddy calls have something to overwrite even before a
+		real client id is configured.
+		-->
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.unconfigured</string>
+			</array>
+		</dict>
+	</array>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+	</dict>
+</dict>
+</plist>

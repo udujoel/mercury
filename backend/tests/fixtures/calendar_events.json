@@ -1,0 +1,207 @@
+{
+  "calendarList": {
+    "items": [
+      {
+        "id": "udujoel@gmail.com",
+        "summary": "udujoel@gmail.com",
+        "primary": true
+      },
+      {
+        "id": "work_cal_id@group.calendar.google.com",
+        "summary": "Work"
+      },
+      {
+        "id": "family_cal_id@group.calendar.google.com",
+        "summary": "Family"
+      }
+    ]
+  },
+  "eventsByCalendar": {
+    "udujoel@gmail.com": {
+      "items": [
+        {
+          "id": "evt_allday_001",
+          "status": "confirmed",
+          "summary": "Company Offsite (All Day)",
+          "start": {
+            "date": "2026-08-22"
+          },
+          "end": {
+            "date": "2026-08-23"
+          },
+          "attendees": [
+            {
+              "email": "udujoel@gmail.com",
+              "responseStatus": "accepted",
+              "self": true
+            }
+          ]
+        },
+        {
+          "id": "evt_declined_001",
+          "status": "confirmed",
+          "summary": "Optional Design Review",
+          "start": {
+            "dateTime": "2026-08-21T15:00:00+01:00",
+            "timeZone": "Europe/Lisbon"
+          },
+          "end": {
+            "dateTime": "2026-08-21T15:30:00+01:00",
+            "timeZone": "Europe/Lisbon"
+          },
+          "attendees": [
+            {
+              "email": "udujoel@gmail.com",
+              "responseStatus": "declined",
+              "self": true
+            },
+            {
+              "email": "designer@acmecorp.com",
+              "responseStatus": "accepted",
+              "displayName": "Priya Singh"
+            }
+          ]
+        },
+        {
+          "id": "evt_cancelled_001",
+          "status": "cancelled",
+          "summary": "Cancelled Standup",
+          "start": {
+            "dateTime": "2026-08-21T09:00:00+01:00"
+          },
+          "end": {
+            "dateTime": "2026-08-21T09:15:00+01:00"
+          }
+        }
+      ]
+    },
+    "work_cal_id@group.calendar.google.com": {
+      "items": [
+        {
+          "id": "evt_recurring_20260821",
+          "status": "confirmed",
+          "summary": "Daily Standup",
+          "recurringEventId": "evt_recurring_series",
+          "start": {
+            "dateTime": "2026-08-21T09:30:00+01:00",
+            "timeZone": "Europe/Lisbon"
+          },
+          "end": {
+            "dateTime": "2026-08-21T09:45:00+01:00",
+            "timeZone": "Europe/Lisbon"
+          },
+          "attendees": [
+            {
+              "email": "udujoel@gmail.com",
+              "responseStatus": "accepted",
+              "self": true
+            },
+            {
+              "email": "dave.park@acmecorp.com",
+              "responseStatus": "accepted",
+              "displayName": "Dave Park"
+            }
+          ]
+        },
+        {
+          "id": "evt_crosstz_001",
+          "status": "confirmed",
+          "summary": "Sync with NYC Team",
+          "start": {
+            "dateTime": "2026-08-21T09:00:00-04:00",
+            "timeZone": "America/New_York"
+          },
+          "end": {
+            "dateTime": "2026-08-21T09:30:00-04:00",
+            "timeZone": "America/New_York"
+          },
+          "attendees": [
+            {
+              "email": "udujoel@gmail.com",
+              "responseStatus": "accepted",
+              "self": true
+            },
+            {
+              "email": "ny.lead@acmecorp.com",
+              "responseStatus": "accepted",
+              "displayName": "Jordan Lee"
+            }
+          ],
+          "hangoutLink": "https://meet.google.com/abc-defg-hij",
+          "description": "Weekly sync.\n\nJoin with Google Meet: https://meet.google.com/abc-defg-hij\nOr dial: +1 555-0123\n\nAgenda: review NYC launch metrics."
+        },
+        {
+          "id": "evt_bigmeeting_001",
+          "status": "confirmed",
+          "summary": "Q3 Budget Review",
+          "start": {
+            "dateTime": "2026-08-21T16:00:00+01:00",
+            "timeZone": "Europe/Lisbon"
+          },
+          "end": {
+            "dateTime": "2026-08-21T17:00:00+01:00",
+            "timeZone": "Europe/Lisbon"
+          },
+          "location": "Conference Room 4B",
+          "description": "Agenda doc: https://docs.google.com/document/d/1AbCdEfGhIjKlMnOpQrStUvWxYz/edit\n\nPlease review slide 4 numbers before the meeting.",
+          "attendees": [
+            {
+              "email": "udujoel@gmail.com",
+              "responseStatus": "accepted",
+              "self": true
+            },
+            {
+              "email": "maria.chen@acmecorp.com",
+              "responseStatus": "accepted",
+              "displayName": "Maria Chen"
+            },
+            {
+              "email": "dave.park@acmecorp.com",
+              "responseStatus": "accepted",
+              "displayName": "Dave Park"
+            },
+            {
+              "email": "finance@acmecorp.com",
+              "responseStatus": "accepted",
+              "displayName": "Finance Team"
+            },
+            {
+              "email": "cfo@acmecorp.com",
+              "responseStatus": "accepted",
+              "displayName": "Alex Rivera"
+            }
+          ],
+          "conferenceData": {
+            "conferenceSolution": {
+              "name": "Zoom Meeting"
+            },
+            "entryPoints": [
+              {
+                "entryPointType": "video",
+                "uri": "https://zoom.us/j/1234567890"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "family_cal_id@group.calendar.google.com": {
+      "items": [
+        {
+          "id": "evt_family_001",
+          "status": "confirmed",
+          "summary": "Kids Dentist Appointment",
+          "start": {
+            "dateTime": "2026-08-23T10:00:00+01:00",
+            "timeZone": "Europe/Lisbon"
+          },
+          "end": {
+            "dateTime": "2026-08-23T10:30:00+01:00",
+            "timeZone": "Europe/Lisbon"
+          },
+          "location": "Cl\u00ednica Dent\u00e1ria Lisboa"
+        }
+      ]
+    }
+  }
+}

@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from pydub import AudioSegment
 from pydub.effects import normalize
@@ -82,7 +82,7 @@ async def synthesize_briefing(
 
     manifest = BriefingManifest(
         briefing_id=briefing_id,
-        generated_at=datetime.now(timezone.utc),
+        generated_at=datetime.now(UTC),
         duration_ms=len(combined),
         audio_url=audio_url,
         segments=_segment_offsets(turns),
