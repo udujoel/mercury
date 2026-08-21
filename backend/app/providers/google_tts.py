@@ -34,12 +34,33 @@ MAX_ATTEMPTS = 5
 BASE_DELAY_S = 1.5
 
 
+# The backend package root (…/backend), i.e. the directory .env lives in.
+_BACKEND_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _resolve_credentials_path(raw: str) -> Path:
+    """Resolve a credentials path relative to backend/, not the cwd.
+
+    .env ships `GOOGLE_TTS_CREDENTIALS=./credentials/gcp-tts.json`, which is
+    written relative to backend/ because that is where .env sits. Resolving it
+    against the process cwd meant the provider worked when launched from
+    backend/ and failed everywhere else — including from the repo root, from a
+    cron entry, and from any deployment whose working directory differs. The
+    error it raised ("not set to a valid service account JSON key file") sent
+    you looking at your credentials instead of your working directory.
+    """
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        return path
+    return (_BACKEND_ROOT / path).resolve()
+
+
 class GoogleTTSProvider:
     """TTSProvider backed by google-cloud-texttospeech."""
 
     def __init__(self) -> None:
         settings = get_settings()
-        creds_path = Path(settings.google_tts_credentials)
+        creds_path = _resolve_credentials_path(settings.google_tts_credentials)
         if not creds_path.is_file():
             raise RuntimeError(
                 "GOOGLE_TTS_CREDENTIALS is not set to a valid service account "

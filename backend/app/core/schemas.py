@@ -95,6 +95,33 @@ class CalendarEvent(BaseModel):
     attendees: list[str] = Field(default_factory=list)
     needs_prep: bool = False
 
+    all_day: bool = False
+    calendar_id: str | None = None
+    # False for subscribed calendars the user only reads — holidays, week
+    # numbers, contact birthdays, religious calendars. A real Google account
+    # carries dozens of these; see `is_background`.
+    owned: bool = True
+
+    @property
+    def is_background(self) -> bool:
+        """Ambient context rather than something on the user's schedule.
+
+        A live account here had 73 calendars and 10 of 14 events in the
+        window were all-day entries from subscribed calendars ("Week 35 of
+        2026", "10 Elul 5786", "Day of Remembrance for Victims of Communism
+        and Nazism"). Walking those chronologically buries the two real
+        appointments. They are not deleted — the PRD asks for all calendars —
+        they are demoted to a single closing line.
+
+        Birthdays need no special case: on a real account they live on the
+        user's OWN calendar (calendar_id == their address), so `owned` already
+        keeps them in the foreground, while "The Prophet's Birthday" sits on
+        en.islamic#holiday and is correctly demoted. A title regex for
+        "birthday" was tried first and promoted exactly that holiday — a
+        heuristic compensating for a signal that was already available.
+        """
+        return self.all_day and not self.owned
+
 
 class Weather(BaseModel):
     temperature_c: float

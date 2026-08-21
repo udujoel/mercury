@@ -145,14 +145,34 @@ def _format_weather(weather: Weather | None) -> str:
     )
 
 
-def _format_calendar(events: list[CalendarEvent]) -> str:
-    if not events:
-        return "(no events)"
+def _format_calendar(
+    events: list[CalendarEvent],
+    background: list[CalendarEvent] | None = None,
+) -> str:
     lines = []
-    for ev in events:
+    if events:
+        for ev in events:
+            lines.append(
+                f"- {ev.title} ({ev.start.isoformat()} to {ev.end.isoformat()}) "
+                f"@ {ev.location or 'no location'}: {ev.description or ''}"
+            )
+    else:
+        lines.append("(no scheduled events)")
+
+    if background:
+        # Ranked down, not dropped. These are all-day entries from subscribed
+        # calendars — holidays, week numbers, religious dates. The PRD asks
+        # for all calendars, but walking them chronologically buries the real
+        # appointments, so they are handed to the model explicitly labelled
+        # as ambient with an instruction about how much airtime they get.
+        titles = ", ".join(ev.title for ev in background)
+        lines.append("")
         lines.append(
-            f"- {ev.title} ({ev.start.isoformat()} to {ev.end.isoformat()}) "
-            f"@ {ev.location or 'no location'}: {ev.description or ''}"
+            "BACKGROUND (ambient observances and all-day entries from "
+            "subscribed calendars — do NOT walk these chronologically and do "
+            "NOT give them their own turns; mention them collectively in at "
+            "most one short clause, or skip them entirely if the day is "
+            f"otherwise busy): {titles}"
         )
     return "\n".join(lines)
 
@@ -346,7 +366,8 @@ async def generate_script(
     llm: LLMProvider,
     emails: list[Item],
     events: list[CalendarEvent],
-    weather: Weather | None,
+    background_events: list[CalendarEvent] | None = None,
+    weather: Weather | None = None,
     length: BriefingLength,
     date: datetime,
 ) -> tuple[list[Turn], list[SourceRef]]:
@@ -362,7 +383,7 @@ async def generate_script(
         date=date.isoformat(),
         weather=_format_weather(weather),
         n_events=len(events),
-        calendar=_format_calendar(events),
+        calendar=_format_calendar(events, background_events),
         n_emails=len(emails),
         emails=_format_emails(emails),
         n_stories=0,

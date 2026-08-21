@@ -81,7 +81,14 @@ def _fake_select_for_briefing(
 
 
 async def _fake_generate_script(
-    *, llm, emails: list[Item], events: list[CalendarEvent], weather, length, date
+    *,
+    llm,
+    emails: list[Item],
+    events: list[CalendarEvent],
+    weather,
+    length,
+    date,
+    background_events: list[CalendarEvent] | None = None,
 ) -> tuple[list[Turn], list[SourceRef]]:
     # Exercise the injected LLM (as the real script chain would) without
     # depending on its exact prompt-dispatch behaviour.

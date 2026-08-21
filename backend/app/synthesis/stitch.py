@@ -16,8 +16,10 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import tempfile
 from collections.abc import Callable
 from datetime import UTC, datetime
+from pathlib import Path
 
 from pydub import AudioSegment
 from pydub.effects import normalize
@@ -124,12 +126,24 @@ def _export(combined: AudioSegment) -> tuple[bytes, str]:
 
     if ffmpeg_available():
         try:
-            buf = io.BytesIO()
-            combined.export(
-                buf, format=COMPRESSED_FORMAT, codec="aac", bitrate="64k",
-                parameters=["-ac", "1"],
-            )
-            return buf.getvalue(), COMPRESSED_EXTENSION
+            # Export to a real .m4a file rather than a BytesIO buffer. pydub
+            # hands a buffer to ffmpeg as an extensionless temp file, and the
+            # mp4 muxer needs a seekable, identifiable target — it fails there
+            # with a bare "error code: -5" and no message. The "ipod" muxer is
+            # ffmpeg's m4a writer and is the reliable path for AAC-in-MP4.
+            with tempfile.NamedTemporaryFile(suffix=".m4a", delete=False) as tmp:
+                tmp_path = Path(tmp.name)
+            try:
+                combined.export(
+                    str(tmp_path), format="ipod", codec="aac", bitrate="64k",
+                    parameters=["-ac", "1"],
+                )
+                data = tmp_path.read_bytes()
+            finally:
+                tmp_path.unlink(missing_ok=True)
+            if not data:
+                raise RuntimeError("ffmpeg produced an empty m4a file")
+            return data, COMPRESSED_EXTENSION
         except Exception:
             log.exception(
                 "ffmpeg is installed but m4a/aac export failed; falling "

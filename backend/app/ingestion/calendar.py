@@ -103,7 +103,13 @@ def user_declined(raw_attendees: list[dict[str, Any]]) -> bool:
     )
 
 
-def event_to_calendar_event(raw: dict[str, Any], tz: ZoneInfo) -> CalendarEvent | None:
+def event_to_calendar_event(
+    raw: dict[str, Any],
+    tz: ZoneInfo,
+    *,
+    calendar_id: str | None = None,
+    owned: bool = True,
+) -> CalendarEvent | None:
     if raw.get("status") == "cancelled":
         return None
 
@@ -116,7 +122,7 @@ def event_to_calendar_event(raw: dict[str, Any], tz: ZoneInfo) -> CalendarEvent 
     if not start_raw or not end_raw:
         raise ValueError(f"event {raw.get('id')} missing start/end")
 
-    start, _ = parse_event_time(start_raw, tz)
+    start, start_all_day = parse_event_time(start_raw, tz)
     end, _ = parse_event_time(end_raw, tz)
 
     description = raw.get("description", "") or ""
@@ -137,6 +143,9 @@ def event_to_calendar_event(raw: dict[str, Any], tz: ZoneInfo) -> CalendarEvent 
         description=clean_description or None,
         attendees=attendee_names,
         needs_prep=needs_prep(description, len(attendee_names) + 1),
+        all_day=start_all_day,
+        calendar_id=calendar_id,
+        owned=owned,
     )
 
 
@@ -230,9 +239,17 @@ async def fetch_events(
     all_events: list[CalendarEvent] = []
     for cal in calendars:
         cal_id = cal["id"]
+        # Google reports accessRole per calendar. Subscribed holiday, week
+        # number, religious and contact-birthday calendars come back as
+        # "reader" or "freeBusyReader"; calendars the user actually keeps a
+        # schedule on are "owner" or "writer". That distinction is what lets
+        # ambient entries be ranked down instead of walked chronologically.
+        owned = cal.get("accessRole") in ("owner", "writer")
         for raw_event in events_by_cal.get(cal_id, []):
             try:
-                event = event_to_calendar_event(raw_event, tz)
+                event = event_to_calendar_event(
+                    raw_event, tz, calendar_id=cal_id, owned=owned
+                )
             except Exception:
                 # A malformed event must never take down the whole run
                 # (CLAUDE.md rule 7 — graceful degradation).

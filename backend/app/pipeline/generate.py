@@ -31,6 +31,7 @@ import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from app.core.config import get_settings
 from app.core.providers import LLMProvider, TTSProvider
@@ -138,6 +139,7 @@ async def generate_briefing(
         llm=llm,
         emails=selection["emails"],
         events=selection["events"],
+        background_events=selection.get("background_events", []),
         weather=weather,
         length=length,
         date=briefing_date,
@@ -246,7 +248,16 @@ def _parse_briefing_date(briefing_id: str) -> datetime:
     docstring in app/core/schemas.py), but `generate_script`'s `date`
     parameter is typed as a real `datetime`. Parse it back out; fall back
     to now() for a caller-supplied id that isn't date-shaped."""
+    # The date must be resolved in the USER's timezone, never UTC. Generated
+    # at 00:11 in Europe/Lisbon (UTC+1), datetime.now(UTC) still reads as the
+    # previous day — so the cold open announced "Friday, August 21st" while
+    # the calendar segment, built from real events, talked about the 22nd.
+    # The hosts contradicted each other inside one briefing.
     try:
-        return datetime.strptime(briefing_id, "%Y-%m-%d").replace(tzinfo=UTC)
+        tz = ZoneInfo(get_settings().user_timezone)
+    except Exception:
+        tz = UTC
+    try:
+        return datetime.strptime(briefing_id, "%Y-%m-%d").replace(tzinfo=tz)
     except ValueError:
-        return datetime.now(UTC)
+        return datetime.now(tz)

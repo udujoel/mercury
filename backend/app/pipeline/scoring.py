@@ -67,8 +67,14 @@ def select_for_briefing(
 
     sorted_events = sorted(events, key=lambda e: e.start)
 
+    # Keep everything, rank it down: subscribed all-day noise stays in the
+    # briefing but as one closing line rather than a chronological walk.
+    foreground = [e for e in sorted_events if not e.is_background]
+    background = [e for e in sorted_events if e.is_background]
+
     return {
         "emails": selected_emails,
-        "events": sorted_events,
+        "events": foreground,
+        "background_events": background,
         "aggregated_count": aggregated_count,
     }
