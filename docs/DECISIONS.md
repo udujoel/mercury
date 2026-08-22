@@ -87,3 +87,44 @@ here — `synthesize_briefing` currently assumes turn zero starts at 0ms.
 Rejected: generating music per briefing. It is slow, expensive, non-deterministic
 and nobody wants a different theme every morning. Two fixed audio files, chosen
 once.
+
+## ADR-007 — Free provisioning is the target; APNs is optional, not required
+
+**Status:** accepted
+
+Joel does not intend to buy an Apple Developer Program membership. That is a
+constraint on the design, not a gap in it.
+
+Exactly one capability is genuinely blocked: **APNs remote push**, which needs
+the Push Notifications entitlement. Everything the product actually depends on
+works on a free personal team — on-device `SFSpeechRecognizer`, microphone,
+background audio, `BGProcessingTask`, and local notifications.
+
+An earlier note in this project claimed the paid account also blocked the
+Phase 3 voice gate. It does not. Speech recognition needs no entitlement; it
+needs a physical device, which free signing provides. Getting that wrong would
+have pushed a working feature into a "blocked" bucket for no reason.
+
+So the three-layer delivery strategy in ADR-001 keeps its shape, minus its top
+layer:
+
+    PRIMARY    server cron -> APNs silent push      unavailable when free
+    SECONDARY  BGProcessingTask prefetch            works
+    FALLBACK   foreground fetch on launch           works
+
+and `PushService` arms a repeating **local** notification at the wake time
+whenever APNs registration fails, carrying the same "Play" action (PRD F-17).
+The APNs code stays: it is already written and tested behind a `PushProvider`
+protocol, and it starts working the day a membership exists without a rewrite.
+
+What is lost: the wake notification fires on the device clock rather than when
+the server actually finished. Since generation runs hours before the wake time,
+that difference is usually invisible.
+
+What is deferred rather than solved: TestFlight distribution (Phase 5) needs a
+membership, and the 7-day provisioning expiry means re-running from Xcode
+weekly. Neither blocks daily personal use.
+
+Rejected: dropping the APNs code. It costs nothing to keep, it is the correct
+architecture per ADR-001, and deleting working tested code to match a temporary
+account tier would have to be undone later.

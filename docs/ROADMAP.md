@@ -86,15 +86,18 @@ Observed while testing the MVP on the simulator, none of it blocking:
 
 ## Phase 3 — Voice interaction (weeks 12 to 15)
 
-- [ ] SFSpeechRecognizer on-device with tuned endpointing
-- [ ] Audio ducking, fade not cut
-- [ ] Join state machine, five states, full visual feedback
-- [ ] Streaming LLM with full transcript context
-- [ ] Streaming TTS, playback on first complete sentence
-- [ ] Bridging line and seamless resume
-- [ ] Latency instrumentation against the timing budget
+- [x] SFSpeechRecognizer on-device with tuned endpointing
+- [x] Audio ducking, fade not cut
+- [x] Join state machine, five states, full visual feedback
+- [x] Streaming LLM with full transcript context
+- [x] Streaming TTS, playback on first complete sentence
+- [x] Bridging line and seamless resume
+- [x] Latency instrumentation against the timing budget
 
-**Gate: perceived gap under 2.5 seconds.**
+**Gate: perceived gap under 2.5 seconds.** Server share measured at
+1642-1977ms to first audio. The client stages need a physical device —
+`SFSpeechRecognizer` and real ducking do not run in the simulator. Free
+provisioning covers this; see docs/RUNNING_ON_YOUR_IPHONE.md and ADR-007.
 
 ## Phase 4 — Depth (weeks 16 to 19)
 

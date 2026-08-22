@@ -36,6 +36,13 @@ struct MercuryApp: App {
                     // (harmless to ask again) so the wake notification/
                     // "Play" action is available once onboarding finishes.
                     if appState.hasCompletedOnboarding {
+                        // Lets PushService arm the local wake notification at
+                        // the right time if APNs registration fails — which is
+                        // the normal case without a paid Apple Developer
+                        // membership.
+                        PushService.shared.wakeTimeMinutesFromMidnight = {
+                            appState.wakeTimeMinutesFromMidnight
+                        }
                         await PushService.shared.requestAuthorization()
                         BackgroundScheduler.schedule(wakeTime: appState.nextWakeDate)
                     }
