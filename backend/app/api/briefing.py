@@ -13,17 +13,15 @@ there's no job queue in the Phase 1 MVP.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-<<<<<<< HEAD
-from app.core.config import get_settings
-=======
 from app.core.auth import require_api_token
->>>>>>> main
+from app.core.config import get_settings
 from app.core.schemas import BriefingLength, BriefingManifest
 from app.pipeline.generate import generate_briefing
 from app.providers.fake import FakeLLMProvider
@@ -41,14 +39,37 @@ FIXTURES_DIR = Path(__file__).resolve().parents[2] / "tests" / "fixtures"
 
 
 def _credentials_configured() -> bool:
-    """Whether a live run is actually possible on this machine."""
+    """Whether a live run can actually produce a real briefing.
+
+    Gemini and TTS alone are NOT enough. Gmail and Calendar ingestion go
+    through the separate Google *user* OAuth token, and without it a "live"
+    run either drops both primary sources — shipping a weather-only briefing
+    that looks like the real thing — or, when only the client file exists,
+    tries to start an interactive consent flow from inside an API request and
+    hangs there. Both failure modes are worse than falling back to fixtures,
+    because they present as success.
+    """
     s = get_settings()
     if not s.gemini_api_key:
         return False
-    creds = Path(s.google_tts_credentials)
-    if not creds.is_absolute():
-        creds = (Path(__file__).resolve().parents[2] / creds).resolve()
-    return creds.is_file()
+
+    tts_creds = Path(s.google_tts_credentials)
+    if not tts_creds.is_absolute():
+        tts_creds = (Path(__file__).resolve().parents[2] / tts_creds).resolve()
+    if not tts_creds.is_file():
+        return False
+
+    # A cached user token, not just the OAuth client: the client file alone is
+    # what triggers the interactive flow.
+    return _google_user_token_present()
+
+
+def _google_user_token_present() -> bool:
+    repo_root = Path(__file__).resolve().parents[3]
+    token_path = Path(
+        os.environ.get("GOOGLE_TOKEN_FILE", repo_root / "token.json")
+    )
+    return token_path.is_file()
 
 
 class GenerateRequest(BaseModel):

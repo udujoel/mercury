@@ -86,6 +86,8 @@ async def synthesize_briefing(
     # graceful degradation is a briefing missing one line, not a manifest
     # that lies about its own audio.
     rendered: list[Turn] = []
+    # Old index -> new index, for remapping SourceRefs after compaction.
+    index_map: dict[int, int] = {}
 
     for idx, (turn, clip) in enumerate(zip(turns, clips, strict=True)):
         if clip is None:
@@ -110,6 +112,7 @@ async def synthesize_briefing(
 
         turn.start_ms = cursor_ms
         turn.end_ms = cursor_ms + len(clip)
+        index_map[idx] = len(rendered)
         rendered.append(turn)
         combined += clip
         cursor_ms = turn.end_ms
@@ -123,7 +126,7 @@ async def synthesize_briefing(
         audio_url=audio_url_for(audio_format),
         segments=_segment_offsets(rendered),
         turns=rendered,
-        sources=sources,
+        sources=_remap_source_refs(sources, index_map),
     )
 
     log.info("synthesized %s: %d turns, %.1fs, %.1fKB, format=%s",
@@ -131,6 +134,33 @@ async def synthesize_briefing(
              len(audio_bytes) / 1024, audio_format)
 
     return audio_bytes, manifest, audio_format
+
+
+def _remap_source_refs(
+    sources: list[SourceRef], index_map: dict[int, int]
+) -> list[SourceRef]:
+    """Rebase SourceRef.turn_index onto the compacted turn list.
+
+    `_build_source_refs` numbers refs against the ORIGINAL script, but turns
+    whose TTS failed are dropped from the manifest. Passing the refs through
+    unchanged meant a ref for a dropped turn attached to whatever unrelated
+    turn now occupies that index, and every later ref was off by one or
+    pointed past the end — so tapping a show-notes entry would seek to the
+    wrong moment, or the wrong source would be credited for a claim. That is
+    a grounding failure (rule 3), not a cosmetic one: the audit trail would
+    confidently cite the wrong thing.
+    """
+    remapped: list[SourceRef] = []
+    for ref in sources:
+        new_index = index_map.get(ref.turn_index)
+        if new_index is None:
+            log.debug(
+                "dropping source ref for un-synthesised turn %d (%s)",
+                ref.turn_index, ref.title[:60],
+            )
+            continue
+        remapped.append(ref.model_copy(update={"turn_index": new_index}))
+    return remapped
 
 
 def _export(combined: AudioSegment) -> tuple[bytes, str]:
