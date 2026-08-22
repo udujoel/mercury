@@ -8,7 +8,7 @@ import SwiftUI
 /// reporting is not precise enough to keep large on-screen text in sync with
 /// speech. AVAudioEngine gives sample-accurate frame positions.
 @Observable
-final class PlaybackCoordinator: VoiceInterruptiblePlayback {
+final class PlaybackCoordinator {
 
     private(set) var currentTurn: Turn?
     private(set) var currentSegment: BriefingSegment?

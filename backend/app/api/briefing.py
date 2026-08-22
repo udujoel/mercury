@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+from app.api import jobs
 from app.core.auth import require_api_token
 from app.core.config import get_settings
 from app.core.schemas import BriefingLength, BriefingManifest
@@ -36,6 +37,19 @@ log = logging.getLogger(__name__)
 router = APIRouter(dependencies=[Depends(require_api_token)])
 
 FIXTURES_DIR = Path(__file__).resolve().parents[2] / "tests" / "fixtures"
+
+
+def _today_briefing_id() -> str:
+    """Today in the USER's timezone — matches how the scheduler names
+    briefings, so a manual tap and the cron agree on the same id."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    try:
+        tz = ZoneInfo(get_settings().user_timezone)
+    except Exception:
+        tz = ZoneInfo("UTC")
+    return datetime.now(tz).strftime("%Y-%m-%d")
 
 
 def _credentials_configured() -> bool:
@@ -91,8 +105,18 @@ class GenerateRequest(BaseModel):
 
 
 class GenerateResponse(BaseModel):
+    """202 response. The manifest is NOT here — fetch it from
+    GET /briefing/{id} once the status says ready."""
+
     status: str
-    manifest: BriefingManifest
+    briefing_id: str
+
+
+class StatusResponse(BaseModel):
+    briefing_id: str
+    status: str  # generating | ready | failed | unknown
+    elapsed_s: float | None = None
+    error: str | None = None
 
 
 def _build_providers(offline: bool):
@@ -109,15 +133,26 @@ def _build_providers(offline: bool):
     return GeminiProvider(), GoogleTTSProvider()
 
 
-@router.post("/generate", response_model=GenerateResponse)
+@router.post("/generate", response_model=GenerateResponse, status_code=202)
 async def generate(
     request: GenerateRequest | None = None,
 ) -> GenerateResponse:
+    """Start generation and return IMMEDIATELY. Poll GET /briefing/{id}/status.
+
+    This used to run the whole pipeline inside the request and return the
+    finished manifest. That works on localhost and fails through any proxy: a
+    full live run takes minutes and Cloudflare's tunnel enforces a hard
+    120-second read timeout, so the phone got `Error 524
+    origin_response_timeout` while the server carried on generating a briefing
+    nobody was waiting for.
+
+    ADR-001 already says the phone should never wait on generation. Holding the
+    connection open was a Phase 1 shortcut; polling removes the timeout class
+    of failure rather than raising a limit until it breaks somewhere else.
+    """
     # Every field on GenerateRequest has a default, so "no body" is a
-    # meaningful request: a standard-length briefing, live if this
-    # machine has credentials and fixture-backed if it does not.
-    # Requiring the body made a bodyless POST fail with a 422 that says
-    # nothing useful to a client that just wants the default.
+    # meaningful request: a standard-length briefing, live if this machine has
+    # credentials and fixture-backed if it does not.
     request = request or GenerateRequest()
     offline = request.resolved_offline
     try:
@@ -128,25 +163,47 @@ async def generate(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     gmail_fixture = FIXTURES_DIR / "gmail_messages.json" if offline else None
-    calendar_fixture = (
-        FIXTURES_DIR / "calendar_events.json" if offline else None
-    )
+    calendar_fixture = FIXTURES_DIR / "calendar_events.json" if offline else None
 
-    try:
-        manifest = await generate_briefing(
-            briefing_id=request.briefing_id,
+    briefing_id = request.briefing_id or _today_briefing_id()
+    storage = LocalFilesystemStorage()
+
+    # Already generated: hand it back without spending money regenerating it.
+    existing = storage.load_manifest(briefing_id)
+    if existing is not None:
+        return GenerateResponse(status="ready", briefing_id=briefing_id)
+
+    jobs.start(
+        briefing_id,
+        generate_briefing(
+            briefing_id=briefing_id,
             length=request.length,
             llm=llm,
             tts=tts,
             gmail_fixture=gmail_fixture,
             calendar_fixture=calendar_fixture,
             weather_fixture=None,
-        )
-    except Exception as exc:
-        log.exception("briefing generation failed")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+            storage=storage,
+        ),
+    )
+    return GenerateResponse(status="generating", briefing_id=briefing_id)
 
-    return GenerateResponse(status="ok", manifest=manifest)
+
+@router.get("/{briefing_id}/status", response_model=StatusResponse)
+async def status(briefing_id: str) -> StatusResponse:
+    """Where a generation has got to. Cheap enough to poll every second."""
+    if LocalFilesystemStorage().load_manifest(briefing_id) is not None:
+        return StatusResponse(briefing_id=briefing_id, status="ready")
+
+    job = jobs.get(briefing_id)
+    if job is None:
+        return StatusResponse(briefing_id=briefing_id, status="unknown")
+    return StatusResponse(
+        briefing_id=briefing_id,
+        status=job.state.value,
+        elapsed_s=round(job.elapsed_s, 1),
+        error=job.error,
+    )
 
 
 @router.get("/{briefing_id}", response_model=BriefingManifest)

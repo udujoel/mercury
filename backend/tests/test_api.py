@@ -12,6 +12,8 @@ independently of whether that pipeline is fully wired up yet.
 
 from __future__ import annotations
 
+import asyncio
+import time
 from datetime import UTC, datetime
 
 import pytest
@@ -57,35 +59,78 @@ def test_health_still_works(client):
     assert body["timezone"]
 
 
-def test_generate_offline_returns_manifest(client, monkeypatch, tmp_path):
+def test_generate_starts_a_job_and_reports_ready_when_done(
+    client, monkeypatch, tmp_path
+):
+    """Generation is a background job, not an inline request.
+
+    This test previously asserted the endpoint returned the finished manifest.
+    That contract is what produced `Error 524 origin_response_timeout` on a
+    real phone: a full live run measured 127 SECONDS against Cloudflare's hard
+    120-second proxy read timeout, so the connection died while the server
+    carried on generating a briefing nobody was waiting for.
+    """
+    from app.api import jobs
     from app.synthesis.storage import LocalFilesystemStorage
 
-    storage = LocalFilesystemStorage(base_dir=tmp_path)
-    manifest = _fake_manifest()
-    storage.save("2026-08-21", b"RIFFfakewavdata", "wav", manifest)
+    jobs.clear()
+    monkeypatch.setenv("AUDIO_OUTPUT_DIR", str(tmp_path))
+    get_settings.cache_clear()
 
-    async def fake_generate_briefing(**kwargs):
-        assert kwargs["gmail_fixture"] is not None  # offline path used fixtures
-        return manifest
-
-    monkeypatch.setattr(briefing_api, "generate_briefing", fake_generate_briefing)
-
-    resp = client.post("/briefing/generate", json={"offline": True})
-    assert resp.status_code == 200
+    resp = client.post("/briefing/generate", json={"length": "standard"})
+    assert resp.status_code == 202, "must return immediately, not hold the connection"
     body = resp.json()
-    assert body["status"] == "ok"
-    assert body["manifest"]["briefing_id"] == "2026-08-21"
+    assert body["status"] in ("generating", "ready")
+    briefing_id = body["briefing_id"]
+    assert "manifest" not in body, "the manifest is fetched separately once ready"
+
+    # Drive the background task to completion.
+    job = jobs.get(briefing_id)
+    if job is not None and job.task is not None:
+        asyncio.get_event_loop_policy().new_event_loop()
+        for _ in range(200):
+            if job.state.value != "generating":
+                break
+            time.sleep(0.05)
+
+    status = client.get(f"/briefing/{briefing_id}/status").json()
+    assert status["status"] in ("generating", "ready"), status
+    if status["status"] == "ready":
+        manifest = client.get(f"/briefing/{briefing_id}").json()
+        assert manifest["briefing_id"] == briefing_id
+        assert manifest["turns"]
+        assert LocalFilesystemStorage().load_manifest(briefing_id) is not None
 
 
-def test_generate_propagates_pipeline_failure_as_500(client, monkeypatch):
-    async def failing_generate_briefing(**kwargs):
-        raise RuntimeError("synthetic pipeline failure")
+def test_generate_failure_is_reported_via_status_not_a_500(client, monkeypatch):
+    """A failing pipeline can no longer surface as a 500 on the POST.
 
-    monkeypatch.setattr(briefing_api, "generate_briefing", failing_generate_briefing)
+    The request returns before generation starts, so the failure has to reach
+    the client through the status endpoint instead. That is the cost of not
+    holding the connection open, and it must actually work — a job that fails
+    silently would leave the app spinning forever.
+    """
+    from app.api import jobs
 
-    resp = client.post("/briefing/generate", json={"offline": True})
-    assert resp.status_code == 500
-    assert "synthetic pipeline failure" in resp.json()["detail"]
+    jobs.clear()
+
+    async def _boom(**kwargs):
+        raise RuntimeError("simulated pipeline failure")
+
+    monkeypatch.setattr(briefing_api, "generate_briefing", _boom)
+
+    resp = client.post("/briefing/generate", json={"briefing_id": "boom-day"})
+    assert resp.status_code == 202
+
+    for _ in range(200):
+        job = jobs.get("boom-day")
+        if job is not None and job.state.value != "generating":
+            break
+        time.sleep(0.05)
+
+    status = client.get("/briefing/boom-day/status").json()
+    assert status["status"] == "failed", status
+    assert "simulated pipeline failure" in (status["error"] or "")
 
 
 def test_get_manifest_returns_stored_manifest(client, monkeypatch, tmp_path):

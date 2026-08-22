@@ -23,6 +23,7 @@ final class PushService: NSObject {
     /// F-17: "Tapping the notification starts playback without opening to
     /// the home screen first").
     static let playActionIdentifier = "com.joeludu.mercury.play"
+    static let localWakeIdentifier = "mercury.localWake"
     static let briefingReadyCategory = "com.joeludu.mercury.briefingReady"
 
     /// Custom payload key the server cron sends alongside the standard
@@ -80,8 +81,18 @@ final class PushService: NSObject {
     /// silent push doesn't require alert authorization to be delivered to
     /// `application(_:didReceiveRemoteNotification:fetchCompletionHandler:)`,
     /// but the visible "briefing is ready" notification does.
+    /// Guards against re-running on every foreground transition. The device
+    /// log showed the "APNs registration failed / local wake notification
+    /// scheduled" pair six times in one session, each occurrence removing and
+    /// re-adding the pending notification — a small window with none armed at
+    /// all, and a log too noisy to read.
+    private var hasRequestedAuthorization = false
+
     @MainActor
     func requestAuthorization() async {
+        guard !hasRequestedAuthorization else { return }
+        hasRequestedAuthorization = true
+
         do {
             let granted = try await UNUserNotificationCenter.current()
                 .requestAuthorization(options: [.alert, .sound, .badge])
@@ -94,6 +105,69 @@ final class PushService: NSObject {
             print("[Mercury] Notification authorization request failed: \(error)")
         }
         UIApplication.shared.registerForRemoteNotifications()
+    }
+
+    // MARK: - Local wake notification (no paid account required)
+
+    /// Schedules a repeating local notification at the wake time, carrying the
+    /// same "Play" action as the APNs wake notification (PRD F-17).
+    ///
+    /// This exists because **APNs requires the Push Notifications capability,
+    /// which requires a paid Apple Developer Program membership.** On a free
+    /// personal team `registerForRemoteNotifications()` fails, so the PRIMARY
+    /// delivery layer in ADR-001 is unavailable.
+    ///
+    /// A local notification needs no entitlement at all. It cannot be
+    /// server-initiated — it fires on the device's own clock whether or not
+    /// the briefing is actually ready — so it is a weaker signal than a silent
+    /// push. But paired with the BGProcessingTask prefetch (SECONDARY) and the
+    /// foreground fetch on launch (FALLBACK), the user still gets "the
+    /// briefing is there when I wake up" without paying Apple 99 USD a year.
+    ///
+    /// Deliberately a repeating calendar trigger rather than one scheduled per
+    /// day: the app cannot rely on being launched daily to re-arm it, which is
+    /// the whole point of the wake notification.
+    @MainActor
+    func scheduleLocalWakeNotification(hour: Int, minute: Int) async {
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(
+            withIdentifiers: [Self.localWakeIdentifier]
+        )
+
+        let content = UNMutableNotificationContent()
+        content.title = "Your briefing is ready"
+        content.body = "Two hosts, everything that matters this morning."
+        content.sound = .default
+        content.categoryIdentifier = Self.briefingReadyCategory
+
+        var components = DateComponents()
+        components.hour = hour
+        components.minute = minute
+
+        let request = UNNotificationRequest(
+            identifier: Self.localWakeIdentifier,
+            content: content,
+            trigger: UNCalendarNotificationTrigger(
+                dateMatching: components, repeats: true
+            )
+        )
+
+        do {
+            try await center.add(request)
+            print("[Mercury] Local wake notification scheduled for "
+                + String(format: "%02d:%02d", hour, minute))
+        } catch {
+            print("[Mercury] Could not schedule local wake notification: \(error)")
+        }
+    }
+
+    /// Cancels the local wake notification — used when APNs registration
+    /// succeeds, so a paid-account build does not show two notifications.
+    @MainActor
+    func cancelLocalWakeNotification() {
+        UNUserNotificationCenter.current().removePendingNotificationRequests(
+            withIdentifiers: [Self.localWakeIdentifier]
+        )
     }
 
     // MARK: - Device token
@@ -115,9 +189,29 @@ final class PushService: NSObject {
         }
     }
 
+    /// Called when APNs registration fails — which is the NORMAL case on a
+    /// free personal team, where the Push Notifications capability is not
+    /// available. Falls back to the local wake notification so the user still
+    /// gets a morning prompt without a paid Apple Developer membership.
     func didFailToRegister(error: Error) {
-        print("[Mercury] APNs registration failed: \(error)")
+        print("[Mercury] APNs registration failed (expected on a free personal "
+            + "team — the Push Notifications capability needs a paid Apple "
+            + "Developer membership): \(error)")
+        // The PRIMARY delivery layer is unavailable, so arm the local
+        // notification instead. ADR-001's three layers were designed so any
+        // one of them failing still gets the user their briefing; this is
+        // that design being used, not a workaround bolted on.
+        Task { @MainActor in
+            let minutes = self.wakeTimeMinutesFromMidnight?() ?? 7 * 60
+            await self.scheduleLocalWakeNotification(
+                hour: minutes / 60, minute: minutes % 60
+            )
+        }
     }
+
+    /// Supplies the configured wake time. Injected rather than read directly
+    /// so `PushService` does not depend on `AppState`, which owns it.
+    var wakeTimeMinutesFromMidnight: (() -> Int)?
 
     private static func hexString(_ data: Data) -> String {
         data.map { String(format: "%02x", $0) }.joined()

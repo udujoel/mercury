@@ -67,7 +67,8 @@ script quality, voice quality or pacing. Fix the most frequent category first.
 
 ## Current phase
 
-Phase 2 — news, clustering and automation. See `docs/ROADMAP.md`.
+Phases 0-2 complete. Phase 3 (voice) was built then dropped — ADR-009.
+Next: deploy via GitHub Actions + Cloudflare R2 (ADR-008, docs/DEPLOYMENT.md).
 
 Phase 0 gate: **met**. Google Cloud TTS Neural2 passed the ten second test —
 "good, but can be better", which is a pass, not an endorsement. ElevenLabs is

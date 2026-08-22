@@ -53,16 +53,14 @@ enum APIConfig {
 enum Endpoint {
     case generate
     case manifest(briefingId: String)
+    case status(briefingId: String)
     case audio(briefingId: String)
     // Week 11 addition: hands the APNs device token to the backend so the
     // server cron can send the PRIMARY-layer silent push (ADR-001, PRD 3.6).
     // See backend/app/api/devices.py — guarded by the same X-Mercury-Token
     // dependency as the briefing routes.
     case registerDevice
-    /// Phase 3 voice interrupt (PRD 3.5). Built by a parallel agent — see
-    /// `VoiceAskClient` for the ASSUMED wire contract this client speaks
     /// until the real route lands and can be reconciled against.
-    case voiceAsk
 
     func url(base: URL = APIConfig.baseURL) -> URL {
         switch self {
@@ -70,19 +68,19 @@ enum Endpoint {
             return base.appendingPathComponent("briefing/generate")
         case .manifest(let id):
             return base.appendingPathComponent("briefing/\(id)")
+        case .status(let id):
+            return base.appendingPathComponent("briefing/\(id)/status")
         case .audio(let id):
             return base.appendingPathComponent("briefing/\(id)/audio")
         case .registerDevice:
             return base.appendingPathComponent("devices/register")
-        case .voiceAsk:
-            return base.appendingPathComponent("voice/ask")
         }
     }
 
     var method: String {
         switch self {
-        case .generate, .registerDevice, .voiceAsk: return "POST"
-        case .manifest, .audio: return "GET"
+        case .generate, .registerDevice: return "POST"
+        case .manifest, .audio, .status: return "GET"
         }
     }
 }

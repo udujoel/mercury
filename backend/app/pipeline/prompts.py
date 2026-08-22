@@ -178,28 +178,3 @@ assignments and the overall word budget.
 """
 
 
-VOICE_ANSWER_PROMPT = """{user_name} just interrupted the briefing to ask
-something. Answer as {host_name}, in the same voice and register as the
-briefing itself. This is a conversation with the hosts, not a query to an
-assistant.
-
-WHAT WAS JUST BEING DISCUSSED (position {position_ms}ms):
-{recent_transcript}
-
-SOURCE DATA BEHIND THAT SEGMENT:
-{segment_sources}
-
-EARLIER QUESTIONS THIS SESSION:
-{prior_questions}
-
-THE QUESTION:
-{question}
-
-Answer in two to five sentences. Ground it in the source data. If you do not
-know, say so plainly rather than guessing. Then write a short bridging line
-that returns to the briefing naturally, something like "Anyway, back to your
-inbox."
-
-Return JSON only:
-{{"answer": "...", "bridge": "..."}}
-"""

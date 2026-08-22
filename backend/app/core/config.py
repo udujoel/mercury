@@ -12,14 +12,6 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     llm_model: str = "gemini-2.5-flash"
 
-    # The voice path is latency-bound, not quality-bound: the Join flow has a
-    # 2.5s total perceived-gap budget and the script chain has all night.
-    # gemini-2.5-flash reasons internally before its first token, measured at
-    # 1.5-2.9s time-to-first-token on this key — over budget before a single
-    # word is spoken. flash-lite measured 423ms on the same prompt. Quality
-    # matters less here: this is one conversational answer grounded in a
-    # segment we already wrote, not the briefing itself.
-    voice_llm_model: str = "gemini-2.5-flash-lite"
     # text-embedding-004 is RETIRED — it 404s against v1beta as of Aug 2026,
     # despite being what the PRD and the original scaffold specified.
     # gemini-embedding-001 is the live replacement (3072 dimensions, up from
@@ -89,6 +81,15 @@ class Settings(BaseSettings):
     # Runtime
     database_url: str = "sqlite+aiosqlite:///./mercury.db"
     audio_output_dir: str = "./out"
+
+    # Storage backend: "local" or "r2". ADR-008 — the deployed path writes to
+    # Cloudflare R2 and the phone reads straight from it, so there is no
+    # backend to host.
+    storage_backend: str = "local"
+    r2_account_id: str = ""
+    r2_access_key_id: str = ""
+    r2_secret_access_key: str = ""
+    r2_bucket: str = ""
     log_level: str = "INFO"
 
     # Clustering — tuned against a real threshold sweep, not guessed.

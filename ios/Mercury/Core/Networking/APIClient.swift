@@ -21,6 +21,7 @@ enum APIError: Error, LocalizedError {
 /// third-party dependency — the API surface is three endpoints.
 protocol APIClientProtocol {
     func generateBriefing(length: BriefingLength) async throws -> BriefingManifest
+    func generationStatus(briefingId: String) async throws -> GenerationStatus
     func syncServerClock() async
     func fetchManifest(briefingId: String) async throws -> BriefingManifest
     func downloadAudio(briefingId: String) async throws -> URL
@@ -55,6 +56,22 @@ final class APIClient: APIClientProtocol {
 
     func generateBriefing(length: BriefingLength) async throws -> BriefingManifest {
         try await requestGenerate(length: length)
+    }
+
+    func generationStatus(briefingId: String) async throws -> GenerationStatus {
+        var request = URLRequest(url: Endpoint.status(briefingId: briefingId).url())
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        Self.authorize(&request)
+        do {
+            let (data, response) = try await session.data(for: request)
+            try Self.validate(response, body: data)
+            return try decoder.decode(GenerationStatus.self, from: data)
+        } catch let error as APIError {
+            throw error
+        } catch {
+            throw APIError.transport(error)
+        }
     }
 
     func fetchManifest(briefingId: String) async throws -> BriefingManifest {
@@ -139,9 +156,16 @@ final class APIClient: APIClientProtocol {
     /// (see `backend/app/api/briefing.py::GenerateResponse`), unlike the
     /// other two endpoints which return the manifest directly. Decode the
     /// wrapper, don't decode the manifest shape straight off the body.
+    /// `POST /briefing/generate` returns 202 with just an id — the manifest
+    /// is fetched separately once the job reports ready.
     private struct GenerateResponseBody: Decodable {
         let status: String
-        let manifest: BriefingManifest
+        let briefingId: String
+
+        enum CodingKeys: String, CodingKey {
+            case status
+            case briefingId = "briefing_id"
+        }
     }
 
     /// Body of `POST /briefing/generate`. Mirrors `GenerateRequest` in
@@ -171,11 +195,43 @@ final class APIClient: APIClientProtocol {
 
         try Self.validate(response, body: data)
 
+        // The POST now returns 202 with just a briefing id — generation runs
+        // as a background job server-side. Holding the connection open used to
+        // produce `Error 524 origin_response_timeout` through the tunnel,
+        // because a full live run measures ~127s against Cloudflare's hard
+        // 120s proxy read timeout. Poll until it is ready, then fetch.
+        let started: GenerateResponseBody
         do {
-            return try decoder.decode(GenerateResponseBody.self, from: data).manifest
+            started = try decoder.decode(GenerateResponseBody.self, from: data)
         } catch {
             throw APIError.decoding(error)
         }
+        return try await waitForBriefing(briefingId: started.briefingId)
+    }
+
+    /// Polls until generation finishes, then returns the manifest.
+    ///
+    /// `timeoutSeconds` is generous on purpose: a full live run with the
+    /// four-pass script chain and per-turn TTS measured 127 seconds, and a
+    /// slow morning could be worse. The failure mode we are avoiding is
+    /// giving up on a briefing that was seconds from ready.
+    private func waitForBriefing(
+        briefingId: String,
+        pollInterval: Duration = .seconds(2),
+        timeoutSeconds: Double = 420
+    ) async throws -> BriefingManifest {
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while Date() < deadline {
+            let status = try await generationStatus(briefingId: briefingId)
+            if status.isReady {
+                return try await fetchManifest(briefingId: briefingId)
+            }
+            if status.isFailed {
+                throw APIError.badStatus(500, status.error ?? "generation failed")
+            }
+            try? await Task.sleep(for: pollInterval)
+        }
+        throw APIError.badStatus(504, "Generation did not finish within \(Int(timeoutSeconds))s.")
     }
 
     /// Maps the response `Content-Type` to a file extension. Falls back to
@@ -216,8 +272,6 @@ final class APIClient: APIClientProtocol {
     }
 
     /// Attaches the shared secret to a request. Every briefing route requires
-    /// it — see backend/app/core/auth.py. Not private: `VoiceAskClient` uses
-    /// the exact same shared-secret scheme against `POST /voice/ask`, which
     /// carries transcript and inbox-derived context and must be guarded by
     /// the same `require_api_token` dependency per the phase brief's
     /// security posture section.
@@ -239,5 +293,24 @@ final class APIClient: APIClientProtocol {
             let text = String(data: body, encoding: .utf8) ?? ""
             throw APIError.badStatus(http.statusCode, text)
         }
+    }
+}
+
+
+/// Mirrors `StatusResponse` in backend/app/api/briefing.py.
+struct GenerationStatus: Decodable, Sendable {
+    let briefingId: String
+    let status: String   // generating | ready | failed | unknown
+    let elapsedS: Double?
+    let error: String?
+
+    var isReady: Bool { status == "ready" }
+    var isFailed: Bool { status == "failed" }
+
+    enum CodingKeys: String, CodingKey {
+        case briefingId = "briefing_id"
+        case status
+        case elapsedS = "elapsed_s"
+        case error
     }
 }
