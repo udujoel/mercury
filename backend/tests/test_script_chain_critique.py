@@ -38,6 +38,7 @@ from app.core.schemas import (
 )
 from app.pipeline import quality
 from app.pipeline.script_chain import (
+    _has_valid_segment_coverage_and_order,
     _run_critique_and_revise,
     generate_script,
 )
@@ -404,3 +405,83 @@ async def test_revise_that_improves_on_draft_is_accepted():
     result_texts = [t.text for t in result]
     assert "Sounds good, agreed." not in result_texts
     assert any("hold on" in t for t in result_texts)
+
+
+# ──────────────────────────────────────────────────────────────
+# Regressions from the PR review on the Phase 2 branch.
+# Each of these passed the original suite; the reviewer found them, the
+# tests did not.
+# ──────────────────────────────────────────────────────────────
+
+
+class _CritiqueExplodesProvider(FakeLLMProvider):
+    """Draft succeeds, critique raises a transport-style error."""
+
+    async def complete(self, system, prompt, *, temperature=0.85, json_mode=False):
+        if "Review this draft script" in prompt or "critically" in prompt:
+            raise TimeoutError("provider timed out")
+        return await super().complete(
+            system, prompt, temperature=temperature, json_mode=json_mode
+        )
+
+
+class _RevisionWrongShapeProvider(FakeLLMProvider):
+    """Revision returns valid JSON of the wrong shape."""
+
+    async def complete(self, system, prompt, *, temperature=0.85, json_mode=False):
+        if "Apply these fixes" in prompt:
+            return '{"turns": [{"speaker": "A", "segment": "inbox", "text": "hi"}]}'
+        return await super().complete(
+            system, prompt, temperature=temperature, json_mode=json_mode
+        )
+
+
+async def test_critique_provider_failure_keeps_the_draft():
+    """A transient critique outage must not cost us a briefing.
+
+    The handler caught only JSONParseError, so a timeout or exhausted retry
+    budget escaped and failed the whole run — despite a valid draft already
+    existing. Passes 3 and 4 are pure upside; nothing they do may lose it.
+    """
+    turns, _ = await generate_script(
+        llm=_CritiqueExplodesProvider(),
+        emails=[], events=[], weather=None,
+        length=BriefingLength.STANDARD,
+        date=datetime(2026, 8, 22, tzinfo=UTC),
+        passes=4,
+    )
+    assert turns, "a provider failure during critique lost the draft entirely"
+
+
+async def test_revision_with_wrong_json_shape_keeps_the_draft():
+    """JSON mode can return valid JSON of the wrong shape.
+
+    `{"turns": [...]}` parses fine, then turn-shape validation rejects it.
+    That raise sat outside the fallback and aborted a briefing whose draft
+    was perfectly usable.
+    """
+    turns, _ = await generate_script(
+        llm=_RevisionWrongShapeProvider(),
+        emails=[], events=[], weather=None,
+        length=BriefingLength.STANDARD,
+        date=datetime(2026, 8, 22, tzinfo=UTC),
+        passes=4,
+    )
+    assert turns, "a wrongly-shaped revision lost the draft entirely"
+
+
+def test_segment_repeating_out_of_order_is_rejected():
+    """Validating only first occurrences let a segment reappear later.
+
+    A script that runs the canonical order and then appends a `calendar`
+    turn after `sign_off` interleaves segments in the actual transcript,
+    which is precisely what this validator promises cannot happen.
+    """
+    canonical = [
+        Turn(speaker="A", segment=seg, text=f"{seg.value} line.")
+        for seg in Segment
+    ]
+    assert _has_valid_segment_coverage_and_order(canonical) is True
+
+    out_of_order = [*canonical, Turn(speaker="B", segment=Segment.CALENDAR, text="x")]
+    assert _has_valid_segment_coverage_and_order(out_of_order) is False

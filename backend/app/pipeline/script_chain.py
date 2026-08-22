@@ -311,19 +311,21 @@ def _has_valid_segment_coverage_and_order(turns: list[Turn]) -> bool:
     boolean check rather than a raise — a revision that drops or reorders a
     segment is a degradation, not a hard failure, and the caller decides
     what to do with a bad result rather than catching an exception."""
-    present_order: list[Segment] = []
-    for turn in turns:
-        if turn.segment not in present_order:
-            present_order.append(turn.segment)
-
-    missing = [s for s in _CANONICAL_SEGMENT_ORDER if s not in present_order]
+    present = {turn.segment for turn in turns}
+    missing = [s for s in _CANONICAL_SEGMENT_ORDER if s not in present]
     if missing:
         return False
 
+    # Check EVERY turn transition, not just the first appearance of each
+    # segment. Collapsing to first-occurrences accepted a script that ran
+    # the canonical order and then appended a `calendar` turn after
+    # `sign_off`: the repeat was discarded while building the order list, so
+    # the sequence looked valid while the actual transcript interleaved
+    # segments — the exact thing this validator exists to prevent.
     expected_index = {s: i for i, s in enumerate(_CANONICAL_SEGMENT_ORDER)}
     last_idx = -1
-    for seg in present_order:
-        idx = expected_index[seg]
+    for turn in turns:
+        idx = expected_index[turn.segment]
         if idx < last_idx:
             return False
         last_idx = idx
@@ -489,8 +491,13 @@ async def _run_critique_and_revise(
             HOST_SYSTEM, critique_prompt, temperature=0.5, json_mode=True
         )
         critique = parse_json_response(critique_raw)
-    except JSONParseError as exc:
-        logger.warning("critique pass failed to parse, keeping draft: %s", exc)
+    except Exception as exc:
+        # Deliberately broad. Catching only JSONParseError let a provider
+        # timeout, an exhausted retry budget or any other transport error
+        # escape — turning a transient critique outage into a FAILED
+        # BRIEFING even though a valid draft already exists. Passes 3 and 4
+        # are pure upside; nothing they do may cost us the draft.
+        logger.warning("critique pass failed, keeping draft: %r", exc)
         return draft_turns
 
     revise_prompt = REVISE_PROMPT.format(
@@ -501,11 +508,15 @@ async def _run_critique_and_revise(
             HOST_SYSTEM, revise_prompt, temperature=0.6, json_mode=True
         )
         revised_json = parse_json_response(revised_raw)
-    except JSONParseError as exc:
-        logger.warning("revise pass failed to parse, keeping draft: %s", exc)
+        # Inside the try on purpose. JSON mode can return perfectly valid
+        # JSON of the wrong SHAPE — {"turns": [...]} instead of a bare array
+        # — which parse_json_response accepts and _parse_draft_turns then
+        # rejects. Outside this block that raise escaped and aborted a
+        # briefing whose draft was fine.
+        revised_turns = _parse_draft_turns(revised_json)
+    except Exception as exc:
+        logger.warning("revise pass failed, keeping draft: %r", exc)
         return draft_turns
-
-    revised_turns = _parse_draft_turns(revised_json)
 
     if not _is_valid_script(revised_turns, budget):
         logger.warning(
