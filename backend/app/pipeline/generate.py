@@ -140,6 +140,10 @@ async def generate_briefing(
         emails=selection["emails"],
         events=selection["events"],
         background_events=selection.get("background_events", []),
+        # Phase 2: outline -> draft -> critique -> revise. The chain keeps
+        # the draft if revision scores worse on the quality gates, which a
+        # live run showed is not hypothetical (19 issues -> 20).
+        passes=4,
         weather=weather,
         length=length,
         date=briefing_date,

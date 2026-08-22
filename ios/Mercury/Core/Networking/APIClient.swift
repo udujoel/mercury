@@ -54,6 +54,7 @@ final class APIClient: APIClientProtocol {
         let endpoint = Endpoint.audio(briefingId: briefingId)
         var request = URLRequest(url: endpoint.url())
         request.httpMethod = endpoint.method
+        Self.authorize(&request)
 
         do {
             let (tempURL, response) = try await session.download(for: request)
@@ -102,6 +103,7 @@ final class APIClient: APIClientProtocol {
         // empty body, but the client still has a real preference to send.
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.httpBody = try? JSONEncoder().encode(GenerateRequestBody(length: length))
+        Self.authorize(&urlRequest)
 
         let data: Data
         let response: URLResponse
@@ -138,6 +140,7 @@ final class APIClient: APIClientProtocol {
         var urlRequest = URLRequest(url: endpoint.url())
         urlRequest.httpMethod = endpoint.method
         urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+        Self.authorize(&urlRequest)
 
         let data: Data
         let response: URLResponse
@@ -154,6 +157,20 @@ final class APIClient: APIClientProtocol {
         } catch {
             throw APIError.decoding(error)
         }
+    }
+
+    /// Attaches the shared secret to a request. Every briefing route requires
+    /// it — see backend/app/core/auth.py.
+    private static func authorize(_ request: inout URLRequest) {
+        guard let token = APIConfig.apiToken else {
+            print(
+                "[Mercury] MERCURY_API_TOKEN is not set in Secrets.xcconfig; "
+                + "briefing requests will be rejected with 401. Copy the value "
+                + "from backend/.env."
+            )
+            return
+        }
+        request.setValue(token, forHTTPHeaderField: "X-Mercury-Token")
     }
 
     private static func validate(_ response: URLResponse, body: Data = Data()) throws {

@@ -20,11 +20,15 @@ from fastapi.testclient import TestClient
 from app.api import briefing as briefing_api
 from app.core.schemas import BriefingManifest
 from app.main import app
+from tests.conftest import TEST_API_TOKEN
 
 
 @pytest.fixture
 def client():
-    return TestClient(app)
+    client = TestClient(app)
+    # Every briefing route requires the token; see app/core/auth.py.
+    client.headers.update({"X-Mercury-Token": TEST_API_TOKEN})
+    return client
 
 
 def _fake_manifest(briefing_id: str = "2026-08-21") -> BriefingManifest:
