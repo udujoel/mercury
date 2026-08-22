@@ -2,18 +2,24 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>CFBundleIdentifier</key>
-	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-	<key>CFBundleExecutable</key>
-	<string>$(EXECUTABLE_NAME)</string>
-	<key>CFBundleName</key>
-	<string>$(PRODUCT_NAME)</string>
+	<key>API_BASE_URL</key>
+	<string>$(API_BASE_URL)</string>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.joeludu.mercury.prefetch</string>
+	</array>
 	<key>CFBundleDisplayName</key>
 	<string>Mercury</string>
-	<key>CFBundlePackageType</key>
-	<string>APPL</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
@@ -22,39 +28,6 @@
 	<true/>
 	<key>MERCURY_API_TOKEN</key>
 	<string>$(MERCURY_API_TOKEN)</string>
-	<key>API_BASE_URL</key>
-	<string>$(API_BASE_URL)</string>
-
-	<!-- Background audio playback: required so briefing audio keeps playing
-	     (and stays controllable via MPRemoteCommandCenter) when the app is
-	     backgrounded or the screen is locked. See ADR-005 and
-	     Core/Audio/PlaybackCoordinator.swift. -->
-	<!-- "audio" keeps playback (and MPRemoteCommandCenter control) alive in
-	     the background/locked (ADR-005). "remote-notification" is required
-	     for the PRIMARY-layer silent push (content-available) to actually
-	     wake the app into
-	     application(_:didReceiveRemoteNotification:fetchCompletionHandler:)
-	     — without it, a silent push that arrives while the app isn't
-	     foregrounded is simply not delivered to app code at all. -->
-	<key>UIBackgroundModes</key>
-	<array>
-		<string>audio</string>
-		<string>remote-notification</string>
-	</array>
-
-	<!-- BGProcessingTask identifier for the SECONDARY prefetch layer
-	     (PRD 3.6, ADR-001). Registered in
-	     AppDelegate.application(_:didFinishLaunchingWithOptions:) via
-	     BackgroundScheduler.register(handler:) and scheduled from
-	     ScheduleSetupView / on every cold launch. Must never change once
-	     shipped — identifiers are stable forever. -->
-	<key>BGTaskSchedulerPermittedIdentifiers</key>
-	<array>
-		<string>com.joeludu.mercury.prefetch</string>
-	</array>
-
-	<!-- Local dev backend runs over plain HTTP on localhost; this does not
-	     relax ATS for any other host. -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSExceptionDomains</key>
@@ -66,22 +39,21 @@
 			</dict>
 		</dict>
 	</dict>
-
-	<!-- Phase 3 voice interrupt (PRD 3.5, "the Join flow"). Both strings are
-	     required or the app crashes the first time it hits
-	     SFSpeechRecognizer/AVAudioSession record permission — see
-	     Core/Voice/SpeechRecognitionService.swift. -->
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Mercury listens while you ask the hosts a question during your briefing, so you can interrupt and get an answer without opening the app.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Mercury transcribes your question on-device to answer it in the briefing — audio never leaves your phone for this.</string>
-
-	<key>UILaunchScreen</key>
-	<dict/>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
 		<false/>
 	</dict>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+		<string>remote-notification</string>
+	</array>
+	<key>UILaunchScreen</key>
+	<dict/>
 </dict>
 </plist>

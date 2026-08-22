@@ -97,6 +97,7 @@ final class AppState {
 
     init(api: APIClientProtocol = APIClient()) {
         self.api = api
+
         self.join = JoinCoordinator(playback: playback)
         join.configure(
             briefingId: { [weak self] in self?.manifest?.briefingId },

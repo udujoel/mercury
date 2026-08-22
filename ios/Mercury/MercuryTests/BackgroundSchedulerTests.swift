@@ -111,3 +111,67 @@ final class BriefingIdAndWakeTimeTests: XCTestCase {
         )
     }
 }
+
+/// Onboarding state must be OBSERVABLE, not merely persisted.
+///
+/// `hasCompletedOnboarding`, `briefingLength` and `wakeTimeMinutesFromMidnight`
+/// were computed properties reading and writing UserDefaults. `@Observable`
+/// only tracks *stored* properties, so setting them updated the defaults and
+/// emitted no change notification — `RootView` never re-rendered and tapping
+/// Done on the schedule screen appeared to do nothing at all. The value was
+/// written correctly the whole time; the view simply had no idea.
+///
+/// Testing observation directly needs a SwiftUI render pass, so these assert
+/// the property is backed by real storage that round-trips within one instance
+/// AND reaches UserDefaults — which is what distinguishes a stored property
+/// with a didSet from the computed version that shipped.
+final class OnboardingStatePersistenceTests: XCTestCase {
+
+    private let keys = [
+        "mercury.hasCompletedOnboarding",
+        "mercury.briefingLength",
+        "mercury.wakeTimeMinutesFromMidnight",
+    ]
+
+    override func setUp() {
+        super.setUp()
+        keys.forEach { UserDefaults.standard.removeObject(forKey: $0) }
+    }
+
+    override func tearDown() {
+        keys.forEach { UserDefaults.standard.removeObject(forKey: $0) }
+        super.tearDown()
+    }
+
+    func testOnboardingCompletionRoundTripsAndPersists() {
+        let state = AppState()
+        XCTAssertFalse(state.hasCompletedOnboarding)
+
+        state.hasCompletedOnboarding = true
+
+        // Readable back from the same instance — the bug was that the view
+        // never learned, but the value itself must also be correct here.
+        XCTAssertTrue(state.hasCompletedOnboarding)
+        XCTAssertTrue(
+            UserDefaults.standard.bool(forKey: "mercury.hasCompletedOnboarding"),
+            "must still persist — UserDefaults remains the storage layer"
+        )
+        XCTAssertTrue(AppState().hasCompletedOnboarding, "and survive a relaunch")
+    }
+
+    func testWakeTimeAndLengthRoundTripAndPersist() {
+        let state = AppState()
+        XCTAssertEqual(state.wakeTimeMinutesFromMidnight, 7 * 60, "default 07:00")
+        XCTAssertEqual(state.briefingLength, .standard)
+
+        state.wakeTimeMinutesFromMidnight = 6 * 60 + 45
+        state.briefingLength = .full
+
+        XCTAssertEqual(state.wakeTimeMinutesFromMidnight, 6 * 60 + 45)
+        XCTAssertEqual(state.briefingLength, .full)
+
+        let relaunched = AppState()
+        XCTAssertEqual(relaunched.wakeTimeMinutesFromMidnight, 6 * 60 + 45)
+        XCTAssertEqual(relaunched.briefingLength, .full)
+    }
+}

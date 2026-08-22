@@ -147,7 +147,6 @@
 				B623CA6338D94EA6B94CB4A7 /* BriefingManifest.swift */,
 				AA11BB22CC33DD44EE55F002 /* BriefingClock.swift */,
 			);
-			name = Models;
 			path = Models;
 			sourceTree = "<group>";
 		};
@@ -159,7 +158,6 @@
 				5C4648FE7E294CAD8886D5BB /* Player */,
 				E339174D3B5E4114B1142F20 /* ShowNotes */,
 			);
-			name = Features;
 			path = Features;
 			sourceTree = "<group>";
 		};
@@ -168,7 +166,6 @@
 			children = (
 				16C20DEB1A984F4682C4B440 /* PushService.swift */,
 			);
-			name = Notifications;
 			path = Notifications;
 			sourceTree = "<group>";
 		};
@@ -179,7 +176,6 @@
 				CBD7D2CD769D46C6A0A5EDA8 /* ScheduleSetupView.swift */,
 				56D6DD62948E4EE8A58107CD /* WelcomeView.swift */,
 			);
-			name = Onboarding;
 			path = Onboarding;
 			sourceTree = "<group>";
 		};
@@ -193,7 +189,6 @@
 				C48C0534805A41F7AE290D75 /* InboxCard.swift */,
 				9646ECE4D5EF4E6B8637AF47 /* WeatherCard.swift */,
 			);
-			name = Home;
 			path = Home;
 			sourceTree = "<group>";
 		};
@@ -204,7 +199,6 @@
 				C07D32533485477A94ED0028 /* Endpoints.swift */,
 				ABFF7F1448118936C816C535 /* VoiceAskClient.swift */,
 			);
-			name = Networking;
 			path = Networking;
 			sourceTree = "<group>";
 		};
@@ -229,7 +223,6 @@
 				E8A081F606CC4D82A84AB0AF /* TranscriptView.swift */,
 				1EFAC344CA89959E6E3BECA0 /* JoinOverlay.swift */,
 			);
-			name = Player;
 			path = Player;
 			sourceTree = "<group>";
 		};
@@ -239,7 +232,6 @@
 				B33F2A2C9B5A4A1EACD41181 /* NowPlayingService.swift */,
 				712134809B384AE3B7BD5717 /* PlaybackCoordinator.swift */,
 			);
-			name = Audio;
 			path = Audio;
 			sourceTree = "<group>";
 		};
@@ -253,7 +245,6 @@
 				0B764B992E1D6A1ECBB35BC2 /* JoinTiming.swift */,
 				66B7C6056116C72089F77D36 /* VoiceInterruptiblePlayback.swift */,
 			);
-			name = Voice;
 			path = Voice;
 			sourceTree = "<group>";
 		};
@@ -264,7 +255,6 @@
 				E5B2336CF13D4CBCB4EC14D0 /* Colors.swift */,
 				06EFBD27CD7347D39362659B /* Typography.swift */,
 			);
-			name = DesignSystem;
 			path = DesignSystem;
 			sourceTree = "<group>";
 		};
@@ -279,7 +269,6 @@
 				E754B28727FF4E1E9B809026 /* Persistence */,
 				76EDC87D72E10B4DA57C0DFC /* Voice */,
 			);
-			name = Core;
 			path = Core;
 			sourceTree = "<group>";
 		};
@@ -288,7 +277,6 @@
 			children = (
 				6C4F6EA543A44481A7E23776 /* BackgroundScheduler.swift */,
 			);
-			name = Background;
 			path = Background;
 			sourceTree = "<group>";
 		};
@@ -309,7 +297,6 @@
 				4B46E2499CB54C99986BB1B5 /* AppState.swift */,
 				14E68D94060547A199EDF858 /* MercuryApp.swift */,
 			);
-			name = App;
 			path = App;
 			sourceTree = "<group>";
 		};
@@ -326,7 +313,6 @@
 			children = (
 				310D73BEA60748D8B4DAA3FA /* ShowNotesView.swift */,
 			);
-			name = ShowNotes;
 			path = ShowNotes;
 			sourceTree = "<group>";
 		};
@@ -336,7 +322,6 @@
 				A500086096BB4F5DACCE0474 /* BriefingStore.swift */,
 				E01D07D57B1949F79CBF64F5 /* PersistenceModels.swift */,
 			);
-			name = Persistence;
 			path = Persistence;
 			sourceTree = "<group>";
 		};
@@ -539,11 +524,13 @@
 			baseConfigurationReference = 7FEB7EE2C789438998532376 /* Secrets.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO;
-				CODE_SIGNING_ALLOWED = NO;
-				CODE_SIGNING_REQUIRED = NO;
-				CODE_SIGN_IDENTITY = "";
+				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = NO;
+				"CODE_SIGNING_REQUIRED[sdk=iphonesimulator*]" = NO;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				"CODE_SIGN_IDENTITY[sdk=iphonesimulator*]" = "";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = U2Y24928BV;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Info.plist;
@@ -620,11 +607,13 @@
 			baseConfigurationReference = 7FEB7EE2C789438998532376 /* Secrets.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO;
-				CODE_SIGNING_ALLOWED = NO;
-				CODE_SIGNING_REQUIRED = NO;
-				CODE_SIGN_IDENTITY = "";
+				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = NO;
+				"CODE_SIGNING_REQUIRED[sdk=iphonesimulator*]" = NO;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				"CODE_SIGN_IDENTITY[sdk=iphonesimulator*]" = "";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = U2Y24928BV;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Info.plist;
@@ -649,9 +638,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGNING_ALLOWED = NO;
-				CODE_SIGNING_REQUIRED = NO;
-				CODE_SIGN_IDENTITY = "";
+				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = NO;
+				"CODE_SIGNING_REQUIRED[sdk=iphonesimulator*]" = NO;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				"CODE_SIGN_IDENTITY[sdk=iphonesimulator*]" = "";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -675,9 +665,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGNING_ALLOWED = NO;
-				CODE_SIGNING_REQUIRED = NO;
-				CODE_SIGN_IDENTITY = "";
+				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = NO;
+				"CODE_SIGNING_REQUIRED[sdk=iphonesimulator*]" = NO;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				"CODE_SIGN_IDENTITY[sdk=iphonesimulator*]" = "";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;

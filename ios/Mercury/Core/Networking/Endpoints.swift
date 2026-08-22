@@ -53,6 +53,7 @@ enum APIConfig {
 enum Endpoint {
     case generate
     case manifest(briefingId: String)
+    case status(briefingId: String)
     case audio(briefingId: String)
     // Week 11 addition: hands the APNs device token to the backend so the
     // server cron can send the PRIMARY-layer silent push (ADR-001, PRD 3.6).
@@ -70,6 +71,8 @@ enum Endpoint {
             return base.appendingPathComponent("briefing/generate")
         case .manifest(let id):
             return base.appendingPathComponent("briefing/\(id)")
+        case .status(let id):
+            return base.appendingPathComponent("briefing/\(id)/status")
         case .audio(let id):
             return base.appendingPathComponent("briefing/\(id)/audio")
         case .registerDevice:
@@ -82,7 +85,7 @@ enum Endpoint {
     var method: String {
         switch self {
         case .generate, .registerDevice, .voiceAsk: return "POST"
-        case .manifest, .audio: return "GET"
+        case .manifest, .audio, .status: return "GET"
         }
     }
 }
