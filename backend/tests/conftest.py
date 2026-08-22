@@ -31,6 +31,11 @@ CREDENTIAL_ENV_VARS = (
 # importantly, makes it impossible for a test run to open a real consent
 # browser window or spend a real API call.
 MISSING_PATH = "/nonexistent/mercury-tests/credentials.json"
+
+# Not a credential to strip — it is OUR auth token, and the API fails closed
+# without one. Pin it so API tests exercise the authenticated path rather than
+# every route 503-ing. Tests that care about the unconfigured case override it.
+TEST_API_TOKEN = "test-token-" + "x" * 32
 CREDENTIAL_PATH_ENV_VARS = (
     "GOOGLE_CREDENTIALS_FILE",
     "GOOGLE_TOKEN_FILE",
@@ -52,6 +57,7 @@ def _no_ambient_credentials(monkeypatch):
         monkeypatch.setenv(var, "")
     for var in CREDENTIAL_PATH_ENV_VARS:
         monkeypatch.setenv(var, MISSING_PATH)
+    monkeypatch.setenv("MERCURY_API_TOKEN", TEST_API_TOKEN)
 
     # Settings is lru_cached, so a cached instance built from a real .env
     # would leak straight past the monkeypatch above.

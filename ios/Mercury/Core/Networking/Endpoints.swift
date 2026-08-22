@@ -7,6 +7,17 @@ import Foundation
 enum APIConfig {
     static let fallback = URL(string: "http://localhost:8000")!
 
+    /// Shared secret for the briefing API, from Secrets.xcconfig (gitignored).
+    /// The backend fails closed, so a missing value means every request is
+    /// rejected with 401 rather than quietly returning someone else's data.
+    static var apiToken: String? {
+        guard let raw = Bundle.main.object(forInfoDictionaryKey: "MERCURY_API_TOKEN") as? String,
+              !raw.isEmpty,
+              !raw.hasPrefix("replace-me")
+        else { return nil }
+        return raw
+    }
+
     static var baseURL: URL {
         guard let raw = Bundle.main.object(forInfoDictionaryKey: "API_BASE_URL") as? String,
               !raw.isEmpty,

@@ -20,6 +20,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>MERCURY_API_TOKEN</key>
+	<string>$(MERCURY_API_TOKEN)</string>
 	<key>API_BASE_URL</key>
 	<string>$(API_BASE_URL)</string>
 

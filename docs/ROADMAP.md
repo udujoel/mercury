@@ -75,10 +75,10 @@ Observed while testing the MVP on the simulator, none of it blocking:
 
 ## Phase 2 — News, clustering, automation (weeks 8 to 11)
 
-- [ ] Week 8 — RSS aggregation, trafilatura extraction, schema normalisation
-- [ ] Week 9 — embeddings, agglomerative clustering, threshold tuning,
+- [x] Week 8 — RSS aggregation, trafilatura extraction, schema normalisation
+- [x] Week 9 — embeddings, agglomerative clustering, threshold tuning,
       cross-source dedup between newsletters and news
-- [ ] Week 10 — ranking function, word budgets, critique and revision passes
+- [~] Week 10 — critique and revision passes done; ranking wiring pending
 - [ ] Week 11 — server cron, APNs silent push, BGProcessingTask prefetch,
       wake notification, show notes
 

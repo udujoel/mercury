@@ -89,6 +89,7 @@ async def _fake_generate_script(
     length,
     date,
     background_events: list[CalendarEvent] | None = None,
+    passes: int = 2,
 ) -> tuple[list[Turn], list[SourceRef]]:
     # Exercise the injected LLM (as the real script chain would) without
     # depending on its exact prompt-dispatch behaviour.

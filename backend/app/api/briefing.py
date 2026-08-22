@@ -15,11 +15,15 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+<<<<<<< HEAD
 from app.core.config import get_settings
+=======
+from app.core.auth import require_api_token
+>>>>>>> main
 from app.core.schemas import BriefingLength, BriefingManifest
 from app.pipeline.generate import generate_briefing
 from app.providers.fake import FakeLLMProvider
@@ -28,7 +32,10 @@ from app.synthesis.storage import LocalFilesystemStorage
 
 log = logging.getLogger(__name__)
 
-router = APIRouter()
+# Every route here returns the user's inbox and calendar as speech. The
+# dependency fails closed: with MERCURY_API_TOKEN unset the routes refuse to
+# serve rather than defaulting to open. See app/core/auth.py.
+router = APIRouter(dependencies=[Depends(require_api_token)])
 
 FIXTURES_DIR = Path(__file__).resolve().parents[2] / "tests" / "fixtures"
 
