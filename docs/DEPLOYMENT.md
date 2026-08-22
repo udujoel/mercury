@@ -32,6 +32,20 @@ locally. Deferred, not deleted — see ADR-008.
 R2 and the phone reads straight from R2. Run `uvicorn` locally when you want
 on-demand generation or voice.
 
+## The bucket
+
+Already created: **`mercury-briefings`** (Standard class, ENAM region).
+
+What is left is the API token, which has to be you — it is a credential, and
+generating it in a dashboard is the only place it is ever shown in full:
+
+1. Cloudflare dashboard → **R2** → **Manage R2 API Tokens** → **Create API token**
+2. Permission: **Object Read & Write**
+3. Scope it to **`mercury-briefings`** specifically rather than all buckets —
+   the workflow has no reason to touch the other four buckets on this account
+4. Copy the **Access Key ID** and **Secret Access Key** into the secrets below.
+   The secret is shown once.
+
 ## Secrets
 
 GitHub repository → Settings → Secrets and variables → Actions:
@@ -41,7 +55,9 @@ GitHub repository → Settings → Secrets and variables → Actions:
 | `GEMINI_API_KEY` | AI Studio key |
 | `GOOGLE_TTS_CREDENTIALS_JSON` | Contents of the GCP service-account key |
 | `GOOGLE_OAUTH_TOKEN_JSON` | Contents of `token.json` (Gmail + Calendar refresh token) |
-| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | Cloudflare R2 |
+| `R2_ACCOUNT_ID` | Cloudflare account id (R2 overview page, right-hand sidebar) |
+| `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | From an R2 API token, **Object Read & Write** |
+| `R2_BUCKET` | `mercury-briefings` — already created |
 | `MERCURY_API_TOKEN` | Same value the iOS client sends |
 | `USER_EMAIL`, `USER_NAME`, `USER_TIMEZONE` | Personal config |
 
