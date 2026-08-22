@@ -1,4 +1,8 @@
-fastapi==0.115.6
+# >=0.141: pulls starlette >=1.x. starlette 0.41.3 carried EIGHT advisories
+# (PYSEC-2026-161/248/249/1941/1942/2280/2281) and is the core of the web
+# framework serving personal data. Dependabot did not flag it because it is a
+# transitive pin; pip-audit did.
+fastapi==0.141.1
 uvicorn[standard]==0.34.0
 pydantic==2.10.4
 pydantic-settings==2.7.0
@@ -21,7 +25,9 @@ feedparser==6.0.11
 # external entities (XXE). We parse XML and HTML that strangers control on
 # every RSS run, via feedparser and trafilatura, so this is directly on the
 # attack path opened in Phase 2, not a theoretical dependency alert.
-lxml==6.1.0
+lxml==6.1.2
+# Transitive via trafilatura. 0.4.4 had PYSEC-2026-2614.
+lxml-html-clean==0.4.5
 
 # Clustering
 numpy==2.2.1
@@ -33,6 +39,11 @@ pydub==0.25.1
 # Scheduling
 apscheduler==3.11.0
 
+# Push notifications (APNs) — ES256 JWT provider tokens, HTTP/2 transport
+pyjwt==2.13.0
+cryptography==50.0.0
+httpx[http2]==0.28.1
+
 # Storage
 sqlalchemy==2.0.36
 aiosqlite==0.20.0
@@ -40,6 +51,7 @@ aiosqlite==0.20.0
 # Dev
 # >=9.0.3: vulnerable tmpdir handling.
 pytest==9.0.3
+pip-audit==2.9.0
 # 1.x required by pytest 9.x.
 pytest-asyncio==1.4.0
 ruff==0.8.4

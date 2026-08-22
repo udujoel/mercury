@@ -56,6 +56,27 @@ class Settings(BaseSettings):
     # Generate: python -c "import secrets; print(secrets.token_urlsafe(32))"
     mercury_api_token: str = ""
 
+    # APNs — silent push "briefing is ready" hint. See app/notifications/apns.py.
+    # Path to the .p8 auth key downloaded from the Apple Developer portal.
+    apns_key_path: str = ""
+    # The 10-character Key ID shown next to the key in the Apple Developer portal.
+    apns_key_id: str = ""
+    # The 10-character Team ID for the Apple Developer account.
+    apns_team_id: str = ""
+    # The app's bundle identifier — the APNs "topic" the push is addressed to.
+    apns_topic: str = ""
+    # True for development/TestFlight builds (api.sandbox.push.apple.com),
+    # False for production App Store builds (api.push.apple.com).
+    apns_use_sandbox: bool = True
+
+    # Scheduler — the server-side cron that runs generate_briefing daily.
+    # Off by default so tests and local dev never schedule real generation;
+    # see app/scheduler/cron.py.
+    scheduler_enabled: bool = False
+    # Minutes before wake_time the cron fires generation, so the briefing is
+    # ready (not merely started) by the time the user wakes up.
+    generation_lead_minutes: int = 30
+
     # Runtime
     database_url: str = "sqlite+aiosqlite:///./mercury.db"
     audio_output_dir: str = "./out"

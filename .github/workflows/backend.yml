@@ -20,4 +20,9 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - run: ruff check .
+      # Catches vulnerable TRANSITIVE dependencies, which Dependabot's
+      # manifest scan misses. It found ten advisories nothing else did —
+      # eight of them in starlette, the core of the framework serving
+      # personal data, pinned indirectly through fastapi.
+      - run: pip-audit --progress-spinner off
       - run: pytest -q

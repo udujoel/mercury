@@ -23,6 +23,10 @@ protocol APIClientProtocol {
     func generateBriefing(length: BriefingLength) async throws -> BriefingManifest
     func fetchManifest(briefingId: String) async throws -> BriefingManifest
     func downloadAudio(briefingId: String) async throws -> URL
+    /// Registers (or refreshes) this device's APNs token with the backend
+    /// so the server cron can wake it with a silent push. Mirrors
+    /// `POST /devices/register` in `backend/app/api/devices.py`.
+    func registerDevice(token: String) async throws
 }
 
 final class APIClient: APIClientProtocol {
@@ -88,7 +92,34 @@ final class APIClient: APIClientProtocol {
         }
     }
 
+    func registerDevice(token: String) async throws {
+        var urlRequest = URLRequest(url: Endpoint.registerDevice.url())
+        urlRequest.httpMethod = Endpoint.registerDevice.method
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.httpBody = try? JSONEncoder().encode(RegisterDeviceRequestBody(deviceToken: token))
+        Self.authorize(&urlRequest)
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: urlRequest)
+        } catch {
+            throw APIError.transport(error)
+        }
+        try Self.validate(response, body: data)
+    }
+
     // MARK: - Private
+
+    /// Mirrors `RegisterRequest` in backend/app/api/devices.py.
+    private struct RegisterDeviceRequestBody: Encodable {
+        let deviceToken: String
+
+        enum CodingKeys: String, CodingKey {
+            case deviceToken = "device_token"
+        }
+    }
 
     /// `POST /briefing/generate` wraps the manifest in `{status, manifest}`
     /// (see `backend/app/api/briefing.py::GenerateResponse`), unlike the
