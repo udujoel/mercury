@@ -67,6 +67,15 @@
 		</dict>
 	</dict>
 
+	<!-- Phase 3 voice interrupt (PRD 3.5, "the Join flow"). Both strings are
+	     required or the app crashes the first time it hits
+	     SFSpeechRecognizer/AVAudioSession record permission — see
+	     Core/Voice/SpeechRecognitionService.swift. -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Mercury listens while you ask the hosts a question during your briefing, so you can interrupt and get an answer without opening the app.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Mercury transcribes your question on-device to answer it in the briefing — audio never leaves your phone for this.</string>
+
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UIApplicationSceneManifest</key>

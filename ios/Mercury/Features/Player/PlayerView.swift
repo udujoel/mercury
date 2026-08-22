@@ -21,6 +21,12 @@ struct PlayerView: View {
                     onSelect: { segment in playback.seek(toMs: segment.startMs) }
                 )
 
+                JoinOverlay(
+                    state: appState.join.state,
+                    partialTranscript: appState.join.partialTranscript,
+                    lastError: appState.join.lastError
+                )
+
                 if let manifest = appState.manifest {
                     HStack {
                         Text("Briefing · \(manifest.briefingId)")
@@ -44,10 +50,12 @@ struct PlayerView: View {
                 TransportControls(
                     isPlaying: playback.isPlaying,
                     rate: playback.rate,
+                    joinState: appState.join.state,
                     onTogglePlay: {
                         playback.isPlaying ? playback.pause() : playback.play()
                     },
-                    onCycleRate: { playback.cycleRate() }
+                    onCycleRate: { playback.cycleRate() },
+                    onTapMic: { appState.join.tap() }
                 )
             }
             .padding(.top, 8)
