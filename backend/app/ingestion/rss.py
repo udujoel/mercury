@@ -385,48 +385,79 @@ async def fetch_articles(
                     continue
                 parsed_feeds.append((url, result))
 
-        entry_tasks = []
-        # Keyed by (source_name, canonical_url) and hoisted OUT of the
-        # per-feed loop. Two feeds can map to one publication — Hacker News
-        # front page and its AI feed both become "Hacker News" — and an
-        # article carried by both produced two Items with an identical
-        # Item.id (id hashes source_name + url + timestamp). Live run before
-        # this fix: 187 items, 186 distinct ids. The duplicate then counted
-        # twice in cluster_items, inflating Story.cluster_size and handing the
-        # article a fake popularity boost through ranking's w_cluster term,
-        # as well as listing it twice in show notes.
-        seen_links: set[tuple[str, str]] = set()
+        # Choose ONE candidate per (publication, canonical url) before doing
+        # any work.
+        #
+        # Two feeds can map to a single publication — Hacker News front page
+        # and its AI feed both become "Hacker News" — and an article carried
+        # by both produced two Items with an identical Item.id (the id hashes
+        # source_name + url + timestamp). Live run before this: 187 items,
+        # 186 distinct ids. The duplicate counted twice in cluster_items,
+        # inflating Story.cluster_size and handing the article a fake
+        # popularity boost via ranking's w_cluster term, plus a doubled
+        # show-notes entry.
+        #
+        # Picking the BEST candidate rather than the first matters: an entry
+        # with a missing date or title normalises to None, so first-wins
+        # silently dropped an article whose other copy was perfectly usable.
+        # Ranking by summary length too means we skip a full-text fetch when
+        # one feed already carries the whole piece.
+        def _candidate_rank(entry: dict[str, Any]) -> tuple[int, int]:
+            usable = bool(entry_timestamp(entry)) and bool(entry.get("title"))
+            summary = entry.get("summary") or entry.get("description") or ""
+            return (1 if usable else 0, len(summary))
+
+        chosen: dict[tuple[str, str], tuple[tuple[int, int], str, str, dict]] = {}
+        unkeyed: list[tuple[str, str, dict[str, Any]]] = []
+
         for url, parsed in parsed_feeds:
             source_name = _feed_source_name(url, parsed)
             for entry in (parsed.get("entries") or [])[:max_per_feed]:
-                # Dedup on the CANONICAL link, not the raw one — the same
-                # entry commonly reappears under a different GUID with only
-                # its tracking query params changed.
                 canonical_link = canonicalize_url(entry.get("link") or "", base=url)
-                key = (source_name, canonical_link)
-                if canonical_link and key in seen_links:
+                if not canonical_link:
+                    unkeyed.append((source_name, url, entry))
                     continue
-                if canonical_link:
-                    seen_links.add(key)
-                entry_tasks.append(
-                    _entry_to_item(
-                        source_name=source_name,
-                        entry=entry,
-                        feed_url=url,
-                        hours=hours,
-                        now=now,
-                        client=client,
-                        semaphore=semaphore,
-                    )
-                )
+                key = (source_name, canonical_link)
+                rank = _candidate_rank(entry)
+                existing = chosen.get(key)
+                if existing is None or rank > existing[0]:
+                    chosen[key] = (rank, source_name, url, entry)
+
+        selected = [(s, u, e) for _rank, s, u, e in chosen.values()] + unkeyed
+
+        entry_tasks = [
+            _entry_to_item(
+                source_name=source_name,
+                entry=entry,
+                feed_url=url,
+                hours=hours,
+                now=now,
+                client=client,
+                semaphore=semaphore,
+            )
+            for source_name, url, entry in selected
+        ]
 
         results = await asyncio.gather(*entry_tasks, return_exceptions=True)
 
+    # Dedup AFTER normalisation, not before it. Marking a canonical link as
+    # seen at scheduling time meant the first occurrence won even when it was
+    # unusable — an entry with a missing date or title normalises to None, and
+    # a later, valid copy of the same article from another feed was then
+    # skipped entirely. Reachable with the two Hacker News feeds, which both
+    # map to the publication name "Hacker News".
     items: list[Item] = []
+    seen: set[tuple[str, str | None]] = set()
     for result in results:
         if isinstance(result, BaseException):
             logger.warning("failed to normalise a feed entry", exc_info=result)
             continue
-        if result is not None:
-            items.append(result)
+        if result is None:
+            continue
+        key = (result.source_name, result.url)
+        if result.url and key in seen:
+            continue
+        if result.url:
+            seen.add(key)
+        items.append(result)
     return items

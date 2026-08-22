@@ -10,6 +10,7 @@ the pattern in test_ingestion_weather.py.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -294,3 +295,57 @@ def test_clean_text_strips_appeared_first_on():
         "Great story here. The post Great Story appeared first on Example."
     )
     assert "appeared first on" not in text
+
+
+# ──────────────────────────────────────────────────────────────
+# Regression from the PR review: dedup must not let a broken first
+# occurrence hide a usable one.
+# ──────────────────────────────────────────────────────────────
+
+
+def _entry(link: str, *, title: str | None, dated: bool, summary: str = "s") -> dict:
+    entry: dict = {"link": link, "summary": summary}
+    if title is not None:
+        entry["title"] = title
+    if dated:
+        entry["published_parsed"] = (2026, 8, 22, 9, 0, 0, 0, 0, 0)
+    return entry
+
+
+async def test_unusable_first_copy_does_not_suppress_a_usable_one(tmp_path):
+    """Two feeds, one publication, same article — one copy unusable.
+
+    Marking the canonical link as seen at scheduling time meant first-wins:
+    an entry with no date normalises to None and the good copy from the other
+    feed was skipped, losing the article entirely. Reachable in production
+    with the two Hacker News feeds, which both map to "Hacker News".
+    """
+    url = "https://example.com/a-real-article"
+    fixture = tmp_path / "feeds.json"
+    fixture.write_text(
+        json.dumps(
+            {
+                "https://hnrss.org/frontpage": {
+                    "feed": {"title": "Hacker News"},
+                    # No date -> _entry_to_item returns None for this copy.
+                    "entries": [_entry(url, title="Real article", dated=False)],
+                },
+                "https://hnrss.org/newest?q=AI": {
+                    "feed": {"title": "Hacker News"},
+                    "entries": [_entry(url, title="Real article", dated=True)],
+                },
+            }
+        )
+    )
+
+    items = await rss.fetch_articles(
+        feeds=[
+            "https://hnrss.org/frontpage",
+            "https://hnrss.org/newest?q=AI",
+        ],
+        fixture=fixture,
+        now=datetime(2026, 8, 22, 12, 0, tzinfo=UTC),
+    )
+
+    assert len(items) == 1, "the usable copy should survive, exactly once"
+    assert items[0].title == "Real article"

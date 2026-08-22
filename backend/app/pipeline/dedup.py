@@ -18,6 +18,7 @@ item, unclustered, so the briefing still ships.
 from __future__ import annotations
 
 import logging
+import math
 
 from app.core.config import get_settings
 from app.core.providers import EmbeddingProvider
@@ -72,6 +73,37 @@ async def build_stories(
         return [_singleton(item) for item in items]
 
     for item, vector in zip(items, vectors, strict=True):
+        # Drop vectors clustering cannot use. A tokenless title like "!!!"
+        # yields an all-zero vector; cluster_items sees a non-empty list,
+        # treats the item as embedded, divides by a zero norm and hands
+        # scikit-learn NaNs, which it rejects — so ONE malformed item took
+        # down the whole clustering pass. An item with no embedding is
+        # already handled: it passes through as an unclustered singleton.
+        if not _is_usable_vector(vector):
+            log.warning(
+                "unusable embedding for item %r; passing it through "
+                "unclustered", item.title[:60],
+            )
+            item.embedding = None
+            continue
         item.embedding = vector
 
-    return cluster_items(items, threshold=resolved_threshold)
+    try:
+        return cluster_items(items, threshold=resolved_threshold)
+    except Exception:
+        # Same degradation as an embedding failure: a briefing without
+        # clustering beats no briefing (rule 7).
+        log.exception(
+            "clustering failed for %d items; shipping unclustered singletons",
+            len(items),
+        )
+        return [_singleton(item) for item in items]
+
+
+def _is_usable_vector(vector: list[float] | None) -> bool:
+    if not vector:
+        return False
+    if any(not math.isfinite(v) for v in vector):
+        return False
+    # A zero-norm vector has no direction, so cosine similarity is undefined.
+    return any(v != 0.0 for v in vector)
