@@ -462,10 +462,24 @@ async def test_tts_failure_on_one_sentence_does_not_abort_the_answer():
         )
     ]
     real_chunks = [c for c in chunks if c.kind in ("answer", "bridge")]
-    # The first synth call failed and was skipped, but later sentences and
-    # the bridge line still made it through.
     assert real_chunks
-    assert all(c.audio for c in real_chunks)
+
+    # The failed sentence is REPORTED, not silently dropped. This assertion
+    # used to be `all(c.audio for c in real_chunks)`, which encoded the old
+    # behaviour: a chunk whose TTS failed never reached the caller at all, so
+    # a client receiving sentences 1 and 3 of a three-sentence answer could
+    # not tell that sentence 2 had ever existed. A silently truncated answer
+    # was indistinguishable from a complete one. Rule 7 says keep going, not
+    # keep quiet.
+    failed = [c for c in real_chunks if c.audio_failed]
+    assert len(failed) == 1, "the one failed synth call should be surfaced"
+    assert not failed[0].audio
+    assert failed[0].text, "and it should carry the text that was lost"
+
+    # Everything else still played — the failure did not abort the answer.
+    survivors = [c for c in real_chunks if not c.audio_failed]
+    assert survivors
+    assert all(c.audio for c in survivors)
 
 
 class _ImmediatelyFailingLLM:

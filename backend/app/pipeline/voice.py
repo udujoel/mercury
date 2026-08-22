@@ -34,6 +34,7 @@ CLAUDE.md rule 7 (graceful degradation), applied at two levels here:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
@@ -443,6 +444,31 @@ async def _synthesize_chunk(
     return VoiceChunk(speaker=speaker, text=text, audio=audio, kind=kind, index=index)
 
 
+async def _drain_ready(
+    queue: list[asyncio.Task[VoiceChunk]],
+) -> AsyncIterator[VoiceChunk]:
+    """Yield synthesis results from the FRONT of the queue.
+
+    Order matters more than latency here: these are sentences of one spoken
+    answer, so releasing a later one first would rearrange them. We pop
+    strictly in submission order.
+
+    The head is AWAITED rather than skipped when it is not yet done. That is
+    deliberate: its audio is the next thing the listener must hear, so there
+    is nothing to gain by moving on. The win over synthesising inline is that
+    every LATER sentence already has its task in flight while we wait, so
+    sentences 2..n overlap with each other and with continued generation
+    instead of running strictly one after another.
+
+    Checking `done()` instead would starve the queue entirely — a task
+    created moments earlier has not had a chance to start, so nothing would
+    ever drain until the stream ended, which is exactly the buffering this
+    pipeline exists to avoid.
+    """
+    while queue:
+        yield await queue.pop(0)
+
+
 async def answer_question(
     *,
     llm: LLMProvider,
@@ -514,6 +540,9 @@ async def answer_question(
     # this never holds a sentence back waiting for the whole answer; it only
     # ever holds back the single most-recent one.
     pending: VoiceChunk | None = None
+    # In-flight synthesis tasks, drained in submission order so
+    # audio still reaches the caller as spoken, never reordered.
+    synth_queue: list[asyncio.Task[VoiceChunk]] = []
 
     def _mark_first_sentence() -> None:
         if timing["first_sentence_ms"] is None:
@@ -532,12 +561,17 @@ async def answer_question(
     def _offer(chunk: VoiceChunk) -> VoiceChunk | None:
         """Hold `chunk` as the new pending one and return whichever chunk
         was pending before it (the caller should yield that, if not None).
-        A no-audio chunk (TTS failed for it) is dropped without disturbing
-        `pending` at all — rule 7: skip it and keep going."""
+
+        A chunk whose TTS failed still goes through, carrying
+        `audio_failed=True` and empty audio. Dropping it here meant the flag
+        could never be observed by anyone: the client saw sentences 1 and 3
+        of a three-sentence answer and had no way to know sentence 2 existed,
+        so a silently truncated answer was indistinguishable from a complete
+        one. Rule 7 says keep going, not keep quiet.
+        """
         nonlocal pending
-        if not chunk.audio:
-            return None
-        _mark_first_audio()
+        if chunk.audio:
+            _mark_first_audio()
         released, pending = pending, chunk
         return released
 
@@ -560,16 +594,26 @@ async def answer_question(
                     )
                     for sentence in sentences:
                         _mark_first_sentence()
-                        chunk = await _synthesize_chunk(
-                            tts, voice_id, context.speaker, sentence, "answer",
-                            answer_index,
+                        # Start synthesis WITHOUT awaiting it here. Awaiting
+                        # inside this loop stopped consumption of the LLM
+                        # stream for the whole TTS round trip (~380-470ms
+                        # measured), so sentences 2..n were synthesised
+                        # strictly after the model had finished talking
+                        # instead of alongside it. Queue the task and drain
+                        # completed ones below, so generation and synthesis
+                        # overlap.
+                        synth_queue.append(
+                            asyncio.create_task(
+                                _synthesize_chunk(
+                                    tts, voice_id, context.speaker, sentence,
+                                    "answer", answer_index,
+                                )
+                            )
                         )
                         answer_index += 1
-                        # TTS failure: already logged inside _synthesize_chunk;
-                        # _offer() returns None for an empty-audio chunk, so a
-                        # failed sentence is skipped and the rest keeps going
-                        # — rule 7.
-                        released = _offer(chunk)
+
+                    async for ready in _drain_ready(synth_queue):
+                        released = _offer(ready)
                         if released is not None:
                             yield released
                     if completed:
@@ -589,13 +633,14 @@ async def answer_question(
                         bridge_field_done = True
                         bridge_text = bridge_buffer.strip()
                         if bridge_text:
-                            chunk = await _synthesize_chunk(
-                                tts, voice_id, context.speaker, bridge_text,
-                                "bridge", 0,
+                            synth_queue.append(
+                                asyncio.create_task(
+                                    _synthesize_chunk(
+                                        tts, voice_id, context.speaker,
+                                        bridge_text, "bridge", 0,
+                                    )
+                                )
                             )
-                            released = _offer(chunk)
-                            if released is not None:
-                                yield released
     except Exception as exc:  # noqa: BLE001 - provider SDKs raise varied types
         logger.error(
             "voice: LLM streaming failed outright, yielding nothing further: %r",
@@ -635,6 +680,12 @@ async def answer_question(
             tts, voice_id, context.speaker, bridge_buffer.strip(), "bridge", 0
         )
         released = _offer(chunk)
+        if released is not None:
+            yield released
+
+    # Anything still synthesising when the stream ended.
+    async for ready in _drain_ready(synth_queue):
+        released = _offer(ready)
         if released is not None:
             yield released
 

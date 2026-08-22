@@ -172,9 +172,31 @@ final class JoinCoordinator {
         timeoutTask?.cancel()
         freezeTask?.cancel()
         speech.stopListening()
-        guard machine.send(event) else { return }
+        guard machine.send(event) else {
+            // The machine rejected the event — but the DUCK already happened,
+            // and it is an audio side effect, not a state-machine concern.
+            // Returning here used to leave the briefing at 15% volume for the
+            // rest of the session with no way to recover: tap mic, tap again
+            // to cancel, then a late speech-auth callback fires cancel() from
+            // a state where .timedOut is illegal. Undo the audio
+            // unconditionally.
+            restoreAudioUnconditionally()
+            return
+        }
         state = machine.state
         finishResuming()
+    }
+
+    /// Undo the interrupt's audio side effects regardless of what the state
+    /// machine thinks. Safe to call more than once: `restoreVolume` ramps to
+    /// 1.0 from wherever it is, and `isPausedForInterrupt` is cleared here.
+    @MainActor
+    private func restoreAudioUnconditionally() {
+        if isPausedForInterrupt {
+            playback.play()
+        }
+        isPausedForInterrupt = false
+        playback.restoreVolume(over: PlaybackCoordinator.duckSeconds)
     }
 
     // MARK: - Speech
@@ -189,10 +211,14 @@ final class JoinCoordinator {
                 self.lastError = auth == .denied
                     ? "Microphone and Speech Recognition access are required for Join. "
                       + "Enable them in Settings → Privacy → Microphone / Speech Recognition."
-                    : "Waiting on microphone permission."
-                if auth == .denied {
-                    self.cancel(via: .timedOut)
-                }
+                    : "Microphone access is unavailable on this device."
+                // EVERY non-authorized outcome exits the interrupt, not just
+                // .denied. On a restricted device (parental controls, MDM)
+                // the old code left the machine in .listening with the audio
+                // ducked and nothing actually recognising, so the user waited
+                // out the whole listening timeout staring at a live-looking
+                // overlay.
+                self.cancel(via: .timedOut)
                 return
             }
             do {
@@ -276,7 +302,10 @@ final class JoinCoordinator {
                     // answer itself entirely failed to synthesise.
                     if !chunk.audioFailed, let audio = chunk.audio {
                         if self.machine.state == .thinking {
-                            guard self.machine.send(.answerReady) else { return }
+                            guard self.machine.send(.answerReady) else {
+                                self.restoreAudioUnconditionally()
+                                return
+                            }
                             self.state = self.machine.state
                         }
                         self.answerPlayer.enqueue(audio: audio)
@@ -304,7 +333,10 @@ final class JoinCoordinator {
     @MainActor
     private func failAnswer() {
         answerPlayer.stopAll()
-        guard machine.send(.answerFailed) else { return }
+        guard machine.send(.answerFailed) else {
+            restoreAudioUnconditionally()
+            return
+        }
         state = machine.state
         finishResuming()
     }
