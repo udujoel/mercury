@@ -11,7 +11,12 @@ class Settings(BaseSettings):
     # LLM
     gemini_api_key: str = ""
     llm_model: str = "gemini-2.5-flash"
-    embedding_model: str = "text-embedding-004"
+    # text-embedding-004 is RETIRED — it 404s against v1beta as of Aug 2026,
+    # despite being what the PRD and the original scaffold specified.
+    # gemini-embedding-001 is the live replacement (3072 dimensions, up from
+    # 768, which is fine at personal scale but is a real memory difference if
+    # this ever holds a large corpus in one numpy matrix).
+    embedding_model: str = "gemini-embedding-001"
 
     # TTS
     tts_provider: str = "google"
@@ -51,8 +56,19 @@ class Settings(BaseSettings):
     audio_output_dir: str = "./out"
     log_level: str = "INFO"
 
-    # Clustering — tune this against your own data. Start conservative.
-    cluster_similarity_threshold: float = 0.82
+    # Clustering — tuned against a real threshold sweep, not guessed.
+    #
+    # At 0.82 the canonical ADR-003 case does NOT fully collapse: an event
+    # covered by Reuters, Stratechery, Benedict Evans and Platformer splits,
+    # with Reuters breaking off at 0.7885 similarity while the other three
+    # merge. That is the exact failure the clustering exists to prevent.
+    #
+    # 0.78 sits inside the verified-correct band [0.70, 0.80] and still keeps
+    # 0.089 of margin above the highest similarity between two stories that
+    # must NOT merge (a SpaceX / Rocket Lab pair at 0.6908). ADR-003 says
+    # merging unrelated stories is far worse than leaving a duplicate, so the
+    # margin matters more than the collapse.
+    cluster_similarity_threshold: float = 0.78
 
     # Ranking weights
     w_personal: float = 0.35

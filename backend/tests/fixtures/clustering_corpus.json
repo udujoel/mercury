@@ -1,0 +1,280 @@
+{
+  "_comment": "Fixture for backend/tests/test_clustering_integration.py and docs/phase2/clustering.md's live threshold sweep. Deliberately built to exercise: (1) one real-world event covered by 4 outlets with differently worded headlines, including one EMAIL newsletter and three RSS pieces, so the cross-source dedup case (ADR-003 / PRD F-08) is covered by the same cluster; (2) two RSS items that share a lot of surface vocabulary ('launches', 'test flight', 'reaches orbit successfully') but describe genuinely distinct events and must NOT merge; (3) 19 unrelated singletons spanning EMAIL and RSS so real clustering runs have negative space to fail into.",
+  "items": [
+    {
+      "source_type": "rss",
+      "source_name": "Reuters",
+      "title": "TechCorp to acquire DataFlow for $2.3 billion in largest AI deal this year",
+      "body": "TechCorp announced Tuesday it will acquire data infrastructure startup DataFlow for $2.3 billion in cash and stock, the largest acquisition in the AI sector this year. The deal is expected to close in the fourth quarter pending regulatory approval. DataFlow's pipeline tooling will be folded into TechCorp's cloud platform.",
+      "url": "https://reuters.com/techcorp-dataflow-acquisition",
+      "author": "Reuters Staff",
+      "timestamp": "2026-08-20T09:05:00Z",
+      "requires_response": false,
+      "priority": "medium"
+    },
+    {
+      "source_type": "email",
+      "source_name": "Stratechery",
+      "title": "The DataFlow Acquisition and What It Means for the Bundle",
+      "body": "TechCorp's purchase of DataFlow this week is best understood as a bundling move, not an infrastructure move. The $2.3 billion price tag is high for a company DataFlow's size, but the strategic logic is about owning the pipeline layer before a competitor does. This is the aggregation pattern playing out again, one layer down the stack.",
+      "url": "https://stratechery.com/2026/the-dataflow-acquisition",
+      "author": "Ben Thompson",
+      "timestamp": "2026-08-20T11:30:00Z",
+      "requires_response": false,
+      "priority": "medium"
+    },
+    {
+      "source_type": "rss",
+      "source_name": "Benedict Evans",
+      "title": "TechCorp buys DataFlow: notes on distribution",
+      "body": "A quick note on TechCorp buying DataFlow for $2.3bn. The interesting question isn't the price, it's distribution: DataFlow's pipelines are already embedded in thousands of enterprise data stacks, and that install base is what TechCorp is really paying for, not the technology itself.",
+      "url": "https://ben-evans.com/benedictevans/2026/8/20/dataflow",
+      "author": "Benedict Evans",
+      "timestamp": "2026-08-20T13:15:00Z",
+      "requires_response": false,
+      "priority": "medium"
+    },
+    {
+      "source_type": "rss",
+      "source_name": "Platformer",
+      "title": "TechCorp just bought DataFlow. Here's why it matters",
+      "body": "TechCorp's $2.3 billion acquisition of DataFlow closed faster than expected regulatory scrutiny would have suggested, and that's a signal in itself: antitrust enforcers are not treating pipeline infrastructure the way they treat consumer platforms. Employees at DataFlow tell Platformer the integration timeline is aggressive, targeting Q4.",
+      "url": "https://platformer.news/techcorp-dataflow",
+      "author": "Casey Newton",
+      "timestamp": "2026-08-20T15:45:00Z",
+      "requires_response": false,
+      "priority": "medium"
+    },
+    {
+      "source_type": "rss",
+      "source_name": "SpaceNews",
+      "title": "SpaceX launches Starship on record tenth test flight, reaches orbit successfully",
+      "body": "SpaceX launched its Starship vehicle on its tenth test flight Wednesday from Starbase, Texas, successfully reaching orbit for the fourth consecutive time. The booster completed a controlled ocean landing. SpaceX said the next flight will attempt a full booster catch at the launch tower.",
+      "url": "https://spacenews.com/spacex-starship-flight-ten",
+      "author": "Jeff Foust",
+      "timestamp": "2026-08-19T14:00:00Z",
+      "requires_response": false,
+      "priority": "low"
+    },
+    {
+      "source_type": "rss",
+      "source_name": "Ars Technica",
+      "title": "Rocket Lab launches Neutron on debut test flight, reaches orbit successfully",
+      "body": "Rocket Lab's new medium-lift Neutron rocket reached orbit successfully on its debut test flight Thursday, launching from Wallops Island, Virginia. The company called it a flawless first flight and confirmed a second Neutron launch is scheduled within the month. Neutron is designed to compete directly with SpaceX's Falcon 9.",
+      "url": "https://arstechnica.com/science/2026/08/rocket-lab-neutron-debut",
+      "author": "Eric Berger",
+      "timestamp": "2026-08-19T18:20:00Z",
+      "requires_response": false,
+      "priority": "low"
+    },
+    {
+      "source_type": "email",
+      "source_name": "Priya Shah",
+      "title": "Provider upgrade rollout plan — need your sign-off before 9am review",
+      "body": "Hi Joel, attached the rollout plan for the provider upgrade migration. Proposing the migration window for the night of August 27th. Touches every module your team owns, so I'd like your sign-off before the review this morning. Let me know if you see any blockers.",
+      "url": null,
+      "author": "priya@company.com",
+      "timestamp": "2026-08-21T06:10:00Z",
+      "requires_response": true,
+      "priority": "high"
+    },
+    {
+      "source_type": "email",
+      "source_name": "Sam Ortiz",
+      "title": "1:1 agenda + question about the provider review",
+      "body": "Hey, for our 1:1 today I'd like to cover my Q3 goals draft. Also — should I join this morning's provider upgrade review? The plan touches my area directly and I don't want to be out of the loop.",
+      "url": null,
+      "author": "sam@company.com",
+      "timestamp": "2026-08-21T06:40:00Z",
+      "requires_response": true,
+      "priority": "high"
+    },
+    {
+      "source_type": "email",
+      "source_name": "Aveiro City Council",
+      "title": "Water maintenance notice: Glicínias district, August 22nd",
+      "body": "Please be advised that water pressure may drop in the Glicínias district between 9am and 1pm on August 22nd due to scheduled maintenance work on the municipal supply line. No action is required unless you experience a total outage.",
+      "url": null,
+      "author": "noticias@cm-aveiro.pt",
+      "timestamp": "2026-08-20T17:00:00Z",
+      "requires_response": false,
+      "priority": "low"
+    },
+    {
+      "source_type": "rss",
+      "source_name": "GitHub Notifications",
+      "title": "3 pull requests opened overnight on backend repo",
+      "body": "Fix for a flaky ingestion test, retry backoff added to the embedding client, and an lxml version bump. None flagged as blocking.",
+      "url": "https://github.com/mercury/backend/pulls",
+      "author": null,
+      "timestamp": "2026-08-21T02:00:00Z",
+      "requires_response": false,
+      "priority": "low"
+    },
+    {
+      "source_type": "rss",
+      "source_name": "The Athletic",
+      "title": "Manchester United sack manager after third straight loss",
+      "body": "Manchester United dismissed their head coach on Sunday following a 3-0 home defeat, the club's third consecutive loss in all competitions. The board is expected to name an interim replacement within the week while a permanent search continues.",
+      "url": "https://theathletic.com/manchester-united-manager-sacked",
+      "author": "Sarah Mackin",
+      "timestamp": "2026-08-18T20:00:00Z",
+      "requires_response": false,
+      "priority": "low"
+    },
+    {
+      "source_type": "rss",
+      "source_name": "Eater",
+      "title": "The 12 best new restaurants to open in Lisbon this summer",
+      "body": "From a tasting-menu-only seafood counter in Cais do Sodré to a wood-fired pizzeria in Alvalade, this summer's Lisbon openings lean coastal and casual. Reservations are already hard to get at half of them.",
+      "url": "https://eater.com/lisbon-new-restaurants-summer-2026",
+      "author": "Eater Staff",
+      "timestamp": "2026-08-17T10:00:00Z",
+      "requires_response": false,
+      "priority": "low"
+    },
+    {
+      "source_type": "email",
+      "source_name": "Delta Air Lines",
+      "title": "Your upcoming flight to Lisbon: check-in now open",
+      "body": "Online check-in is now open for your flight DL 231 departing JFK on September 3rd. Please review the latest baggage policy before you arrive at the airport.",
+      "url": null,
+      "author": "noreply@delta.com",
+      "timestamp": "2026-08-21T04:00:00Z",
+      "requires_response": false,
+      "priority": "low"
+    },
+    {
+      "source_type": "rss",
+      "source_name": "The Verge",
+      "title": "Apple pushes back foldable iPhone to 2028, supply chain sources say",
+      "body": "Apple has reportedly delayed its long-rumored foldable iPhone by another year, citing unresolved hinge durability issues. The device was previously expected to launch alongside the iPhone 18 lineup in 2027.",
+      "url": "https://theverge.com/apple-foldable-iphone-delay-2028",
+      "author": "Wes Davis",
+      "timestamp": "2026-08-16T12:00:00Z",
+      "requires_response": false,
+      "priority": "low"
+    },
+    {
+      "source_type": "email",
+      "source_name": "LinkedIn",
+      "title": "You have 3 new connection requests",
+      "body": "See who wants to connect with you on LinkedIn this week, plus jobs you might be interested in based on your profile.",
+      "url": null,
+      "author": "notifications@linkedin.com",
+      "timestamp": "2026-08-20T22:00:00Z",
+      "requires_response": false,
+      "priority": "low"
+    },
+    {
+      "source_type": "rss",
+      "source_name": "Bloomberg",
+      "title": "Federal Reserve holds interest rates steady, signals one cut before year end",
+      "body": "The Federal Reserve left its benchmark interest rate unchanged Wednesday but said in its statement that inflation data over the coming months would determine whether one rate cut is appropriate before the end of the year.",
+      "url": "https://bloomberg.com/fed-holds-rates-steady-august",
+      "author": "Bloomberg Staff",
+      "timestamp": "2026-08-20T18:00:00Z",
+      "requires_response": false,
+      "priority": "medium"
+    },
+    {
+      "source_type": "email",
+      "source_name": "Duolingo",
+      "title": "You're on a 14-day streak! Keep it going",
+      "body": "Don't lose your streak — complete one lesson today to keep your 14-day Portuguese streak alive.",
+      "url": null,
+      "author": "hello@duolingo.com",
+      "timestamp": "2026-08-21T07:00:00Z",
+      "requires_response": false,
+      "priority": "low"
+    },
+    {
+      "source_type": "rss",
+      "source_name": "MIT Technology Review",
+      "title": "A new battery chemistry promises twice the range for half the cost",
+      "body": "Researchers at a Boston-based startup say their new sodium-ion battery chemistry could double the range of consumer EVs while cutting cell costs in half, though the technology has not yet been validated at manufacturing scale.",
+      "url": "https://technologyreview.com/sodium-ion-battery-breakthrough",
+      "author": "Casey Crownhart",
+      "timestamp": "2026-08-15T09:00:00Z",
+      "requires_response": false,
+      "priority": "low"
+    },
+    {
+      "source_type": "email",
+      "source_name": "Wise",
+      "title": "Your transfer to EUR account has completed",
+      "body": "Your transfer of 500.00 GBP to your EUR account has completed. The recipient received 583.20 EUR after fees.",
+      "url": null,
+      "author": "noreply@wise.com",
+      "timestamp": "2026-08-20T08:00:00Z",
+      "requires_response": false,
+      "priority": "low"
+    },
+    {
+      "source_type": "rss",
+      "source_name": "Defector",
+      "title": "The Olympic swimming schedule everyone is arguing about",
+      "body": "The 2028 Olympic swimming schedule released this week has already drawn complaints from coaches over back-to-back finals sessions that could force athletes to choose between events.",
+      "url": "https://defector.com/olympic-swimming-schedule-controversy",
+      "author": "Kalyn Kahler",
+      "timestamp": "2026-08-14T11:00:00Z",
+      "requires_response": false,
+      "priority": "low"
+    },
+    {
+      "source_type": "email",
+      "source_name": "GoodReads",
+      "title": "New releases from authors you follow",
+      "body": "Three new books from authors on your shelf are out this month, including a sequel you added to your want-to-read list in June.",
+      "url": null,
+      "author": "noreply@goodreads.com",
+      "timestamp": "2026-08-19T09:00:00Z",
+      "requires_response": false,
+      "priority": "low"
+    },
+    {
+      "source_type": "rss",
+      "source_name": "Hacker News",
+      "title": "Show HN: I built a static site generator in 200 lines of Rust",
+      "body": "After getting frustrated with the build times of existing static site generators, I wrote a minimal one in Rust that handles Markdown, templating and incremental rebuilds in under 200 lines. Source and benchmarks in the post.",
+      "url": "https://news.ycombinator.com/item?id=41200000",
+      "author": "throwaway_dev",
+      "timestamp": "2026-08-18T13:00:00Z",
+      "requires_response": false,
+      "priority": "low"
+    },
+    {
+      "source_type": "email",
+      "source_name": "REI",
+      "title": "Your order has shipped",
+      "body": "Your order of a 2-person tent and trekking poles has shipped and is expected to arrive by August 25th. Track your package using the link below.",
+      "url": null,
+      "author": "orders@rei.com",
+      "timestamp": "2026-08-19T15:00:00Z",
+      "requires_response": false,
+      "priority": "low"
+    },
+    {
+      "source_type": "rss",
+      "source_name": "Nature News",
+      "title": "Fossil discovery pushes back timeline for early primate ancestors",
+      "body": "A newly described fossil from a site in Wyoming suggests the earliest primate ancestors emerged roughly two million years earlier than previously thought, according to a paper published this week in Nature.",
+      "url": "https://nature.com/news/fossil-primate-ancestors-timeline",
+      "author": "Nature Staff",
+      "timestamp": "2026-08-13T10:00:00Z",
+      "requires_response": false,
+      "priority": "low"
+    },
+    {
+      "source_type": "email",
+      "source_name": "Sam Ortiz",
+      "title": "Lunch Thursday?",
+      "body": "Are you free for lunch Thursday? Thinking that new place near the office if you're up for it.",
+      "url": null,
+      "author": "sam@company.com",
+      "timestamp": "2026-08-20T12:00:00Z",
+      "requires_response": true,
+      "priority": "medium"
+    }
+  ]
+}

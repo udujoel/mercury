@@ -1,13 +1,25 @@
 """
-Script generation chain — Phase 1: outline -> draft (two passes).
+Script generation chain — Phase 2: outline -> draft -> critique -> revise
+(four passes).
 
-Critique and revision are explicitly Phase 2 work (see docs/ROADMAP.md) and
-are deliberately NOT implemented here.
+Uses OUTLINE_PROMPT / DRAFT_PROMPT / CRITIQUE_PROMPT / REVISE_PROMPT /
+HOST_SYSTEM from `app.pipeline.prompts` verbatim. The JSON-parsing helper is
+lifted from `scripts/spike_04_llm.py` (`parse_json_response`) rather than
+reinvented — LLMs routinely wrap JSON in fences and prose, and that helper
+is already proven against those shapes.
 
-Uses OUTLINE_PROMPT / DRAFT_PROMPT / HOST_SYSTEM from `app.pipeline.prompts`
-verbatim. The JSON-parsing helper is lifted from `scripts/spike_04_llm.py`
-(`parse_json_response`) rather than reinvented — LLMs routinely wrap JSON in
-fences and prose, and that helper is already proven against those shapes.
+CLAUDE.md rule 7: graceful degradation. The critique and revise passes are
+pure upside when they work and must never take down a briefing when they
+don't:
+  - if the critique response fails to parse, log it and return the draft
+    unrevised.
+  - if the revision response fails to parse, or validates to zero turns, or
+    drops segment coverage, log it and return the draft unrevised.
+  - if the revised script scores worse on the quality gates (app.pipeline.
+    quality) than the draft did, keep the draft and log the deltas — a
+    revision pass is not trusted blindly just because it ran.
+A worse script beats no briefing; a validated draft always beats a broken
+"revision" of it.
 
 CLAUDE.md rule 5: raw email bodies are ephemeral. This module reads
 `Item.body` only to format the source-data block sent to the LLM for this
@@ -34,7 +46,14 @@ from app.core.schemas import (
     Turn,
     Weather,
 )
-from app.pipeline.prompts import DRAFT_PROMPT, HOST_SYSTEM, OUTLINE_PROMPT
+from app.pipeline.prompts import (
+    CRITIQUE_PROMPT,
+    DRAFT_PROMPT,
+    HOST_SYSTEM,
+    OUTLINE_PROMPT,
+    REVISE_PROMPT,
+)
+from app.pipeline.quality import run_all_gates
 
 logger = logging.getLogger(__name__)
 
@@ -247,6 +266,50 @@ def _parse_draft_turns(raw: Any) -> list[Turn]:
     return turns
 
 
+_CANONICAL_SEGMENT_ORDER = list(Segment)
+
+
+def _has_valid_segment_coverage_and_order(turns: list[Turn]) -> bool:
+    """Every canonical segment must appear, and segments must not
+    interleave or repeat out of order. Same rule the Phase 0 spike enforces
+    (`spike_04_llm.validate_segment_coverage`), reimplemented here as a
+    boolean check rather than a raise — a revision that drops or reorders a
+    segment is a degradation, not a hard failure, and the caller decides
+    what to do with a bad result rather than catching an exception."""
+    present_order: list[Segment] = []
+    for turn in turns:
+        if turn.segment not in present_order:
+            present_order.append(turn.segment)
+
+    missing = [s for s in _CANONICAL_SEGMENT_ORDER if s not in present_order]
+    if missing:
+        return False
+
+    expected_index = {s: i for i, s in enumerate(_CANONICAL_SEGMENT_ORDER)}
+    last_idx = -1
+    for seg in present_order:
+        idx = expected_index[seg]
+        if idx < last_idx:
+            return False
+        last_idx = idx
+    return True
+
+
+def _is_within_word_budget(turns: list[Turn], budget: int) -> bool:
+    words = sum(len(t.text.split()) for t in turns)
+    lo, hi = budget * 0.8, budget * 1.2
+    return lo <= words <= hi
+
+
+def _is_valid_script(turns: list[Turn], budget: int) -> bool:
+    """A script is usable when it has turns, covers every segment in
+    canonical order, and lands within the word budget. Applied identically
+    to the draft and to the revision — the revision gets no special pass."""
+    return bool(turns) and _has_valid_segment_coverage_and_order(turns) and (
+        _is_within_word_budget(turns, budget)
+    )
+
+
 # ──────────────────────────────────────────────────────────────
 # SourceRef building — grounding audit trail
 # ──────────────────────────────────────────────────────────────
@@ -361,6 +424,84 @@ def _build_source_refs(
 # ──────────────────────────────────────────────────────────────
 
 
+def _turns_to_json(turns: list[Turn]) -> list[dict]:
+    return [
+        {"speaker": t.speaker, "segment": t.segment.value, "text": t.text}
+        for t in turns
+    ]
+
+
+async def _run_critique_and_revise(
+    *,
+    llm: LLMProvider,
+    draft_turns: list[Turn],
+    source_data: str,
+    budget: int,
+) -> list[Turn]:
+    """Passes 3 and 4: critique -> revise. Always returns a usable script —
+    the draft itself, if anything along the way goes wrong or makes things
+    worse (CLAUDE.md rule 7).
+
+    Uses CRITIQUE_PROMPT and REVISE_PROMPT verbatim, per the Phase 2 brief.
+    """
+    draft_json = _turns_to_json(draft_turns)
+
+    critique_prompt = CRITIQUE_PROMPT.format(
+        script=json.dumps(draft_json), source_data=source_data
+    )
+    try:
+        critique_raw = await llm.complete(
+            HOST_SYSTEM, critique_prompt, temperature=0.5, json_mode=True
+        )
+        critique = parse_json_response(critique_raw)
+    except JSONParseError as exc:
+        logger.warning("critique pass failed to parse, keeping draft: %s", exc)
+        return draft_turns
+
+    revise_prompt = REVISE_PROMPT.format(
+        script=json.dumps(draft_json), critique=json.dumps(critique)
+    )
+    try:
+        revised_raw = await llm.complete(
+            HOST_SYSTEM, revise_prompt, temperature=0.6, json_mode=True
+        )
+        revised_json = parse_json_response(revised_raw)
+    except JSONParseError as exc:
+        logger.warning("revise pass failed to parse, keeping draft: %s", exc)
+        return draft_turns
+
+    revised_turns = _parse_draft_turns(revised_json)
+
+    if not _is_valid_script(revised_turns, budget):
+        logger.warning(
+            "revision invalid (empty, missing/out-of-order segments, or "
+            "outside word budget) — keeping draft. revised turn count: %d",
+            len(revised_turns),
+        )
+        return draft_turns
+
+    # Guard against a revision that "fixes" the flagged issues but makes the
+    # script worse overall. Run the same gates on both and only take the
+    # revision if it does not regress.
+    draft_report = run_all_gates(draft_turns, source_data)
+    revised_report = run_all_gates(revised_turns, source_data)
+    if revised_report["total_issues"] > draft_report["total_issues"]:
+        logger.warning(
+            "revision scored worse than draft on quality gates "
+            "(draft=%d issues, revised=%d issues) — keeping draft. "
+            "draft=%s revised=%s",
+            draft_report["total_issues"], revised_report["total_issues"],
+            draft_report, revised_report,
+        )
+        return draft_turns
+
+    logger.info(
+        "revision accepted: draft=%d issues, revised=%d issues",
+        draft_report["total_issues"], revised_report["total_issues"],
+    )
+    return revised_turns
+
+
 async def generate_script(
     *,
     llm: LLMProvider,
@@ -370,17 +511,40 @@ async def generate_script(
     weather: Weather | None = None,
     length: BriefingLength,
     date: datetime,
+    passes: int = 2,
 ) -> tuple[list[Turn], list[SourceRef]]:
-    """Two-pass script chain: outline -> draft.
+    """Script chain: outline -> draft (2 passes, the default), or
+    outline -> draft -> critique -> revise (4 passes) when `passes=4`.
 
-    Returns (turns, source_refs). Malformed turns from the LLM are skipped
-    and logged rather than failing the run (CLAUDE.md rule 7).
+    The default stays 2 to preserve the existing behaviour of every current
+    caller (app/pipeline/generate.py, and the Phase 1 test suite) byte for
+    byte — this module only adds the critique/revise capability, it does not
+    flip on the extra cost and latency for every caller unasked. Pass
+    `passes=4` explicitly to run the full Phase 2 chain; that is what
+    backend/tests/test_script_chain_critique.py and the live verification
+    for this change both do.
+
+    Returns (turns, source_refs), built from whichever script (draft or
+    revised) ends up being used. Malformed turns from the LLM are skipped
+    and logged rather than failing the run (CLAUDE.md rule 7); the critique
+    and revise passes degrade the same way — see _run_critique_and_revise.
     """
+    if passes not in (2, 4):
+        raise ValueError(f"passes must be 2 or 4, got {passes}")
+
     budget = LENGTH_BUDGETS[length]["words"]
     source_data = _flatten_source_text(emails, events, weather)
 
     outline_prompt = OUTLINE_PROMPT.format(
-        date=date.isoformat(),
+        # Spell the weekday out rather than handing over an ISO timestamp.
+        # Live runs opened with "It's Thursday, August 21st" for a date that
+        # was a Friday: given "2026-08-21T00:00:00+01:00" the model has to
+        # compute the day of week itself, and it gets it wrong. The grounding
+        # gate caught it ("Thursday" appears nowhere in the source) but
+        # neither critique pass fixed it — because from the model's side it
+        # was a derivation, not an invention. Never make the model derive a
+        # fact you can simply state.
+        date=date.strftime("%A, %d %B %Y") + f" (local time {date:%H:%M})",
         weather=_format_weather(weather),
         n_events=len(events),
         calendar=_format_calendar(events, background_events),
@@ -403,8 +567,18 @@ async def generate_script(
         HOST_SYSTEM, draft_prompt, temperature=0.85, json_mode=True
     )
     draft_json = parse_json_response(draft_raw)
-    turns = _parse_draft_turns(draft_json)
+    draft_turns = _parse_draft_turns(draft_json)
 
-    source_refs = _build_source_refs(turns, emails, events)
+    if passes == 4 and draft_turns:
+        final_turns = await _run_critique_and_revise(
+            llm=llm,
+            draft_turns=draft_turns,
+            source_data=source_data,
+            budget=budget,
+        )
+    else:
+        final_turns = draft_turns
 
-    return turns, source_refs
+    source_refs = _build_source_refs(final_turns, emails, events)
+
+    return final_turns, source_refs

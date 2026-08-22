@@ -1,0 +1,61 @@
+{
+  "https://example.com/feed/tech.xml": {
+    "feed": {
+      "title": "Example Tech Daily"
+    },
+    "entries": [
+      {
+        "title": "Startup Raises Series B To Build Faster Build Systems",
+        "link": "https://example.com/articles/build-systems?utm_source=rss&utm_medium=feed&ref=homepage",
+        "summary": "<p>A build-tooling startup announced a $40 million Series B on Thursday, saying it would use the money to expand its compiler-caching product beyond its current handful of enterprise customers into a broader self-serve offering. The round was led by a growth-stage fund that has previously backed several developer-tooling companies, with participation from two existing seed investors. The company said revenue had roughly tripled over the past year, driven mostly by teams migrating off slower incumbent build systems, and that it planned to double headcount by the end of next year, with most of the new hires going into a distributed-systems team focused on cache invalidation correctness rather than sales.</p> Read more.",
+        "published": "Thu, 20 Aug 2026 09:00:00 GMT",
+        "published_parsed": [2026, 8, 20, 9, 0, 0, 3, 232, 0]
+      },
+      {
+        "title": "Startup Raises Series B To Build Faster Build Systems",
+        "link": "https://example.com/articles/build-systems?utm_source=newsletter",
+        "summary": "duplicate entry, same article, different tracking params and guid",
+        "published": "Thu, 20 Aug 2026 09:00:00 GMT",
+        "published_parsed": [2026, 8, 20, 9, 0, 0, 3, 232, 0]
+      },
+      {
+        "title": "Regulators Open Inquiry Into Cloud Outage That Knocked Out Half the Internet",
+        "link": "https://example.com/articles/cloud-outage",
+        "summary": "Regulators are looking into this week's cloud outage.",
+        "published": "Thu, 20 Aug 2026 14:30:00 GMT",
+        "published_parsed": [2026, 8, 20, 14, 30, 0, 3, 232, 0]
+      },
+      {
+        "title": "A Decade-Old Story That Should Not Appear In A 24-Hour Window",
+        "link": "https://example.com/articles/old-story",
+        "summary": "This entry is far outside the recency window and must be excluded.",
+        "published": "Mon, 10 Aug 2015 09:00:00 GMT",
+        "published_parsed": [2015, 8, 10, 9, 0, 0, 0, 222, 0]
+      },
+      {
+        "title": "Entry With No Usable Date Anywhere",
+        "link": "https://example.com/articles/no-date",
+        "summary": "feedparser could not determine a publish date for this entry at all; it must be excluded rather than given a fake timestamp."
+      },
+      {
+        "title": "Entry That Only Has An Updated Timestamp",
+        "link": "https://example.com/articles/updated-only",
+        "summary": "Some feeds only ever set updated_parsed, never published_parsed, and this must still be picked up as recent enough to include.",
+        "updated": "Thu, 20 Aug 2026 20:00:00 GMT",
+        "updated_parsed": [2026, 8, 20, 20, 0, 0, 3, 232, 0]
+      }
+    ]
+  },
+  "https://example.com/feed/world.xml": {
+    "feed": {},
+    "entries": [
+      {
+        "title": "  Regional Trade Talks Resume After Two-Week Pause  ",
+        "link": "/world/trade-talks-resume",
+        "summary": "<div>Officials from both delegations returned to the table on Wednesday after a two-week pause driven by a disagreement over agricultural tariffs, with negotiators from both sides describing the mood as cautiously constructive heading into a final scheduled round of talks next month, though neither side would commit to a specific date for a signed agreement given how many sticking points on quota levels and dispute-resolution mechanisms remain unresolved between the two blocs.</div>",
+        "published": "Thu, 20 Aug 2026 11:00:00 GMT",
+        "published_parsed": [2026, 8, 20, 11, 0, 0, 3, 232, 0]
+      }
+    ]
+  }
+}
