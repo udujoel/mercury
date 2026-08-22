@@ -21,8 +21,13 @@ enum APIError: Error, LocalizedError {
 /// third-party dependency — the API surface is three endpoints.
 protocol APIClientProtocol {
     func generateBriefing(length: BriefingLength) async throws -> BriefingManifest
+    func syncServerClock() async
     func fetchManifest(briefingId: String) async throws -> BriefingManifest
     func downloadAudio(briefingId: String) async throws -> URL
+    /// Registers (or refreshes) this device's APNs token with the backend
+    /// so the server cron can wake it with a silent push. Mirrors
+    /// `POST /devices/register` in `backend/app/api/devices.py`.
+    func registerDevice(token: String) async throws
 }
 
 final class APIClient: APIClientProtocol {
@@ -88,7 +93,47 @@ final class APIClient: APIClientProtocol {
         }
     }
 
+    func registerDevice(token: String) async throws {
+        var urlRequest = URLRequest(url: Endpoint.registerDevice.url())
+        urlRequest.httpMethod = Endpoint.registerDevice.method
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.httpBody = try? JSONEncoder().encode(RegisterDeviceRequestBody(deviceToken: token))
+        Self.authorize(&urlRequest)
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: urlRequest)
+        } catch {
+            throw APIError.transport(error)
+        }
+        try Self.validate(response, body: data)
+    }
+
+    /// Learns the timezone the server names briefing ids in, so locally
+    /// derived ids match. Best effort: a failure here just leaves the last
+    /// known value (or the device zone) in place. See `BriefingClock`.
+    func syncServerClock() async {
+        var request = URLRequest(url: APIConfig.baseURL.appendingPathComponent("health"))
+        request.httpMethod = "GET"
+        guard let (data, _) = try? await session.data(for: request),
+              let payload = try? JSONDecoder().decode([String: String].self, from: data),
+              let identifier = payload["timezone"]
+        else { return }
+        BriefingClock.remember(identifier: identifier)
+    }
+
     // MARK: - Private
+
+    /// Mirrors `RegisterRequest` in backend/app/api/devices.py.
+    private struct RegisterDeviceRequestBody: Encodable {
+        let deviceToken: String
+
+        enum CodingKeys: String, CodingKey {
+            case deviceToken = "device_token"
+        }
+    }
 
     /// `POST /briefing/generate` wraps the manifest in `{status, manifest}`
     /// (see `backend/app/api/briefing.py::GenerateResponse`), unlike the

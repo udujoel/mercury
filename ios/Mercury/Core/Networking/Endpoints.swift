@@ -54,6 +54,11 @@ enum Endpoint {
     case generate
     case manifest(briefingId: String)
     case audio(briefingId: String)
+    // Week 11 addition: hands the APNs device token to the backend so the
+    // server cron can send the PRIMARY-layer silent push (ADR-001, PRD 3.6).
+    // See backend/app/api/devices.py — guarded by the same X-Mercury-Token
+    // dependency as the briefing routes.
+    case registerDevice
 
     func url(base: URL = APIConfig.baseURL) -> URL {
         switch self {
@@ -63,12 +68,14 @@ enum Endpoint {
             return base.appendingPathComponent("briefing/\(id)")
         case .audio(let id):
             return base.appendingPathComponent("briefing/\(id)/audio")
+        case .registerDevice:
+            return base.appendingPathComponent("devices/register")
         }
     }
 
     var method: String {
         switch self {
-        case .generate: return "POST"
+        case .generate, .registerDevice: return "POST"
         case .manifest, .audio: return "GET"
         }
     }

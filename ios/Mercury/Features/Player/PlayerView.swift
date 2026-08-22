@@ -27,8 +27,16 @@ struct PlayerView: View {
                             .font(MercuryType.caption)
                             .foregroundStyle(MercuryColor.textSecondary)
                         Spacer()
-                        Image(systemName: "bookmark")
-                            .foregroundStyle(MercuryColor.textSecondary)
+                        if !manifest.sources.isEmpty {
+                            NavigationLink {
+                                ShowNotesView(manifest: manifest, onSeek: { ms in
+                                    playback.seek(toMs: ms)
+                                })
+                            } label: {
+                                Image(systemName: "list.bullet.rectangle")
+                                    .foregroundStyle(MercuryColor.textSecondary)
+                            }
+                        }
                     }
                     .padding(.horizontal, 20)
                 }

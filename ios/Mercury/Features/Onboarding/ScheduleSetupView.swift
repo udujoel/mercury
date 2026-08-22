@@ -32,7 +32,22 @@ struct ScheduleSetupView: View {
                 Spacer()
 
                 Button {
+                    let components = Calendar.current.dateComponents([.hour, .minute], from: wakeTime)
+                    appState.wakeTimeMinutesFromMidnight =
+                        (components.hour ?? 7) * 60 + (components.minute ?? 0)
+                    appState.briefingLength = length
                     appState.hasCompletedOnboarding = true
+
+                    // Request notification authorization here rather than
+                    // waiting for the next cold launch — this is the first
+                    // moment the app has a wake time to schedule a
+                    // SECONDARY-layer prefetch window around (PRD 3.6), and
+                    // asking right after onboarding is when the user has
+                    // the most context for what the permission is for.
+                    Task {
+                        await PushService.shared.requestAuthorization()
+                        BackgroundScheduler.schedule(wakeTime: appState.nextWakeDate)
+                    }
                 } label: {
                     Text("Done")
                         .font(MercuryType.cardTitle)

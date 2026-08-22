@@ -53,6 +53,14 @@ struct HomeView: View {
             .navigationDestination(isPresented: $showPlayer) {
                 PlayerView()
             }
+            // Covers playback started outside a direct tap on the greeting
+            // card — the wake notification's "Play" action or tapping the
+            // notification itself (PRD F-17), which drive
+            // `AppState.playPrefetched` directly rather than going through
+            // this view's own button handler.
+            .onChange(of: appState.playback.isPlaying) { _, isPlaying in
+                if isPlaying { showPlayer = true }
+            }
         }
     }
 }

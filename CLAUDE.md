@@ -67,28 +67,53 @@ script quality, voice quality or pacing. Fix the most frequent category first.
 
 ## Current phase
 
-Phase 0 — foundation and dependency spikes. See `docs/ROADMAP.md`.
+Phase 2 — news, clustering and automation. See `docs/ROADMAP.md`.
 
-Do not start Phase 1 product code until the Phase 0 gate is met: the TTS spike
-must produce audio you would actually choose to listen to.
+Phase 0 gate: **met**. Google Cloud TTS Neural2 passed the ten second test —
+"good, but can be better", which is a pass, not an endorsement. ElevenLabs is
+a planned upgrade rather than an emergency swap; see ADR-006.
+
+Phase 1 gate: **met**. A real briefing from real Gmail and Calendar generates
+in 71 seconds, inside the PRD's 90-second budget.
+
+Phase 2 gate, still open: you stop opening the app to generate, and the same
+story never appears twice regardless of how many newsletters covered it.
 
 ## How work lands
 
-From 2026-08-22, nothing goes straight to `main`.
+From 2026-08-22, nothing goes straight to `main`. Every change runs this loop,
+and no step is optional.
 
-1. Branch. `feat/`, `fix/`, `chore/` plus a short description.
-2. Open a PR with `gh pr create`. Describe what changed and, more usefully,
+1. **Branch.** `feat/`, `fix/`, `chore/` plus a short description.
+2. **Verify locally.** `pytest -q` and `ruff check .` for the backend,
+   `xcodebuild build` and `test` for iOS. Run these BEFORE committing a merge,
+   not after — a merge commit once carried unresolved conflict markers into
+   `main` because `git add -A` swept them in.
+3. **Open a PR** with `gh pr create`. Say what changed and, more usefully,
    what you verified and how.
-3. Wait for the AI review (CodeRabbit). Do not merge before it has run.
-4. Work every comment. Resolve it, or reply explaining why it is wrong —
-   agreement is not automatic and a reviewer that is mistaken should be told
-   so, with reasoning.
-5. Merge only when checks pass and no thread is left hanging.
+4. **Run `/code-review` on the PR yourself.** Do not wait for a bot to do it,
+   and do not treat a passing bot as a review.
+5. **Post every finding to the PR** — inline threads plus a summary comment.
+   The PR is the durable record; a finding that lives only in a chat
+   transcript is not a record of anything.
+6. **Fix each finding**, with a regression test wherever one applies. If a
+   finding is wrong, say so on the thread with reasoning — agreement is not
+   automatic.
+7. **Reply to each thread** naming the fix and the test, then resolve it.
+8. **Merge only when** checks are green and no thread is unresolved. Squash,
+   delete the branch.
+9. **Then** start the next batch.
 
-Phases 0 and 1 were committed directly to `main`. It worked, but a manifest
-the iOS client could not decode and an xcconfig that silently truncated a URL
-both reached `main` and were caught only by running the app. A review pass
-over a diff is a cheaper place to find that class of bug.
+Why this is worth the ceremony: Phases 0 and 1 went straight to `main`, and a
+manifest the iOS client could not decode plus an xcconfig that silently
+truncated a URL both landed there, caught only by running the app. On the
+first two PRs that used this loop, review found nine further real bugs — two
+of them holes in a security fix written an hour earlier. Every one of the nine
+had passed a green test suite.
+
+Review the diff for what is newly **reachable**, not only what changed. The
+worst defect in this project so far — a public tunnel serving a real inbox —
+came from two individually sensible changes that no single diff contained.
 
 ## Conventions
 

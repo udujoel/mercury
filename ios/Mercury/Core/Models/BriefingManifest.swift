@@ -160,6 +160,22 @@ extension BriefingManifest {
     func segmentStartMs(id: String) -> Int? {
         segments.first(where: { $0.id == id })?.startMs
     }
+
+    /// Resolves a `SourceRef.turnIndex` to the turn it refers to, for the
+    /// show notes tap-to-seek behaviour (PRD F-19).
+    ///
+    /// The backend guarantees `turn_index` is valid against the manifest's
+    /// *compacted* turn list — i.e. `renderedTurns`, not the raw `turns`
+    /// array, which may still contain un-synthesised turns with sentinel
+    /// timing (see `Turn.isRendered`). Guaranteed today is not the same as
+    /// safe forever: a stale cached manifest, a hand-edited fixture, or a
+    /// future backend regression could still hand this an index the client
+    /// has never seen. Out of range returns `nil` rather than trapping.
+    func turn(atSourceIndex index: Int) -> Turn? {
+        let turns = renderedTurns
+        guard turns.indices.contains(index) else { return nil }
+        return turns[index]
+    }
 }
 
 

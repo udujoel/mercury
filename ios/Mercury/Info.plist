@@ -29,14 +29,25 @@
 	     (and stays controllable via MPRemoteCommandCenter) when the app is
 	     backgrounded or the screen is locked. See ADR-005 and
 	     Core/Audio/PlaybackCoordinator.swift. -->
+	<!-- "audio" keeps playback (and MPRemoteCommandCenter control) alive in
+	     the background/locked (ADR-005). "remote-notification" is required
+	     for the PRIMARY-layer silent push (content-available) to actually
+	     wake the app into
+	     application(_:didReceiveRemoteNotification:fetchCompletionHandler:)
+	     — without it, a silent push that arrives while the app isn't
+	     foregrounded is simply not delivered to app code at all. -->
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
+		<string>remote-notification</string>
 	</array>
 
-	<!-- BGProcessingTask identifier reserved for the Phase 1 prefetch path
-	     (PRD 3.6). Not yet scheduled from app code in this pass — the
-	     identifier is declared here so it is stable from day one. -->
+	<!-- BGProcessingTask identifier for the SECONDARY prefetch layer
+	     (PRD 3.6, ADR-001). Registered in
+	     AppDelegate.application(_:didFinishLaunchingWithOptions:) via
+	     BackgroundScheduler.register(handler:) and scheduled from
+	     ScheduleSetupView / on every cold launch. Must never change once
+	     shipped — identifiers are stable forever. -->
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>com.joeludu.mercury.prefetch</string>
