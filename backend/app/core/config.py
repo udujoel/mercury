@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     host_a_name: str = "Mara"
     host_b_name: str = "Theo"
 
+    # API auth — REQUIRED. The briefing routes refuse to serve without it;
+    # see app/core/auth.py for why this fails closed rather than open.
+    # Generate: python -c "import secrets; print(secrets.token_urlsafe(32))"
+    mercury_api_token: str = ""
+
     # Runtime
     database_url: str = "sqlite+aiosqlite:///./mercury.db"
     audio_output_dir: str = "./out"

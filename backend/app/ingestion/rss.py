@@ -42,6 +42,7 @@ from app.core.feeds import (
     TITLE_NOISE_PREFIXES,
     TITLE_SEPARATORS,
 )
+from app.core.net_guard import BlockedURLError, safe_get
 from app.core.schemas import Item, SourceType
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,9 @@ EXTRACTION_TIMEOUT_S = 10.0
 # the full article is worth the cost.
 EXTRACTION_MIN_CHARS = 500
 EXTRACTION_CONCURRENCY = 5
+
+# Tolerance for a publisher's clock running slightly fast.
+MAX_CLOCK_SKEW = timedelta(hours=2)
 
 USER_AGENT = "Mercury/0.1 (+https://github.com/; personal briefing app)"
 
@@ -135,9 +139,21 @@ def entry_timestamp(entry: dict[str, Any]) -> datetime | None:
         if not struct:
             continue
         try:
-            return datetime(*struct[:6], tzinfo=UTC)
+            parsed = datetime(*struct[:6], tzinfo=UTC)
         except (TypeError, ValueError):
             continue
+        # Reject dates in the future. Misconfigured feeds publish these
+        # routinely, and such an item is permanently "recent": it always
+        # passes the recency window, and ranking.py clamps a negative age to
+        # zero, giving it recency = exp(0) = 1.0 — the maximum — in every
+        # briefing from now on. One bad timestamp would quietly outrank all
+        # genuinely fresh news, forever.
+        if parsed > datetime.now(UTC) + MAX_CLOCK_SKEW:
+            logger.warning(
+                "ignoring future-dated entry %r (%s)", entry.get("title"), parsed
+            )
+            continue
+        return parsed
     return None
 
 
@@ -157,25 +173,42 @@ async def _extract_full_text(
     """
     async with semaphore:
         try:
-            resp = await client.get(
+            # safe_get validates every redirect hop against the SSRF guard and
+            # caps the body size. These URLs come from third-party feeds, so
+            # they are attacker-controlled input, not trusted config.
+            resp = await safe_get(
+                client,
                 url,
                 timeout=EXTRACTION_TIMEOUT_S,
                 headers={"User-Agent": USER_AGENT},
-                follow_redirects=True,
             )
             resp.raise_for_status()
             html = resp.text
+        except BlockedURLError as exc:
+            logger.warning("refusing to fetch article URL %s: %s", url, exc)
+            return None
         except Exception:
             logger.debug("full-text fetch failed for %s", url, exc_info=True)
             return None
 
-    try:
-        return trafilatura.extract(
-            html, include_comments=False, include_tables=False, favor_recall=True
-        )
-    except Exception:
-        logger.debug("trafilatura extraction raised for %s", url, exc_info=True)
-        return None
+        try:
+            # trafilatura.extract is a synchronous, CPU-bound HTML parse.
+            # Called directly it blocks the event loop, freezing every other
+            # feed fetch and extraction for its duration — and ~84% of a live
+            # run's articles need extraction. Run it in a thread, and keep it
+            # inside the semaphore so the concurrency cap covers the parse and
+            # not just the fetch.
+            return await asyncio.to_thread(
+                lambda: trafilatura.extract(
+                    html,
+                    include_comments=False,
+                    include_tables=False,
+                    favor_recall=True,
+                )
+            )
+        except Exception:
+            logger.debug("trafilatura extraction raised for %s", url, exc_info=True)
+            return None
 
 
 # ──────────────────────────────────────────────────────────────
@@ -186,11 +219,11 @@ async def _extract_full_text(
 async def _fetch_feed_live(client: httpx.AsyncClient, url: str) -> dict[str, Any]:
     # Several real feeds (fortune.com, marketwatch.com at time of writing)
     # 301 to a moved feed URL; follow it rather than treating it as dead.
-    resp = await client.get(
+    resp = await safe_get(
+        client,
         url,
         timeout=FEED_TIMEOUT_S,
         headers={"User-Agent": USER_AGENT},
-        follow_redirects=True,
     )
     resp.raise_for_status()
     parsed = feedparser.parse(resp.content)
@@ -353,18 +386,28 @@ async def fetch_articles(
                 parsed_feeds.append((url, result))
 
         entry_tasks = []
+        # Keyed by (source_name, canonical_url) and hoisted OUT of the
+        # per-feed loop. Two feeds can map to one publication — Hacker News
+        # front page and its AI feed both become "Hacker News" — and an
+        # article carried by both produced two Items with an identical
+        # Item.id (id hashes source_name + url + timestamp). Live run before
+        # this fix: 187 items, 186 distinct ids. The duplicate then counted
+        # twice in cluster_items, inflating Story.cluster_size and handing the
+        # article a fake popularity boost through ranking's w_cluster term,
+        # as well as listing it twice in show notes.
+        seen_links: set[tuple[str, str]] = set()
         for url, parsed in parsed_feeds:
             source_name = _feed_source_name(url, parsed)
-            seen_links: set[str] = set()
             for entry in (parsed.get("entries") or [])[:max_per_feed]:
                 # Dedup on the CANONICAL link, not the raw one — the same
                 # entry commonly reappears under a different GUID with only
                 # its tracking query params changed.
                 canonical_link = canonicalize_url(entry.get("link") or "", base=url)
-                if canonical_link and canonical_link in seen_links:
+                key = (source_name, canonical_link)
+                if canonical_link and key in seen_links:
                     continue
                 if canonical_link:
-                    seen_links.add(canonical_link)
+                    seen_links.add(key)
                 entry_tasks.append(
                     _entry_to_item(
                         source_name=source_name,
