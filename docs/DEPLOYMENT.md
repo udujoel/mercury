@@ -53,8 +53,8 @@ GitHub repository → Settings → Secrets and variables → Actions:
 | Secret | What |
 |---|---|
 | `GEMINI_API_KEY` | AI Studio key |
-| `GOOGLE_TTS_CREDENTIALS_JSON` | Contents of the GCP service-account key |
-| `GOOGLE_OAUTH_TOKEN_JSON` | Contents of `token.json` (Gmail + Calendar refresh token) |
+| `GOOGLE_TTS_CREDENTIALS_JSON` | The **service-account** key — Google Cloud Console → IAM & Admin → Service Accounts → Keys → Add key → JSON. Top-level keys include `client_email` and `private_key`. |
+| `GOOGLE_OAUTH_TOKEN_JSON` | The **user token** — `token.json` from the repo root, produced by running a spike locally. Contains `refresh_token`. |
 | `R2_ACCOUNT_ID` | Cloudflare account id (R2 overview page, right-hand sidebar) |
 | `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | From an R2 API token, **Object Read & Write** |
 | `R2_BUCKET` | `mercury-briefings` — already created |
@@ -63,6 +63,22 @@ GitHub repository → Settings → Secrets and variables → Actions:
 
 The workflow writes the two JSON secrets to files at runtime. They are never
 committed — `.gitignore` covers `credentials/`, `token.json` and `.env`.
+
+### Three JSON files, easy to confuse
+
+This project involves three similar-looking Google JSON files, and putting the
+wrong one in a secret is the first thing that actually went wrong in
+production:
+
+| File | Top-level shape | Where it goes |
+|---|---|---|
+| `credentials.json` | `{"installed": {...}}` | **Nowhere.** Local OAuth only |
+| `token.json` | has `refresh_token` | `GOOGLE_OAUTH_TOKEN_JSON` |
+| `gcp-tts.json` | has `client_email`, `private_key` | `GOOGLE_TTS_CREDENTIALS_JSON` |
+
+The workflow validates the shape of both before generating, so a mix-up fails
+in ten seconds with a message naming the wrong secret, rather than after
+install with a google.auth stack trace.
 
 ## The one thing that will break weekly if you skip it
 
