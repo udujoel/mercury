@@ -20,6 +20,18 @@ from app.synthesis.storage import LocalFilesystemStorage, build_storage
 R2_VARS = ("R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET")
 
 
+class _ClientError(Exception):
+    """Stands in for botocore.exceptions.ClientError, which carries its HTTP
+    status in a `response` dict rather than in the exception type."""
+
+    def __init__(self, status: int, code: str) -> None:
+        super().__init__(code)
+        self.response = {
+            "Error": {"Code": code},
+            "ResponseMetadata": {"HTTPStatusCode": status},
+        }
+
+
 class _FakeS3:
     def __init__(self) -> None:
         self.objects: dict[str, tuple[bytes, str]] = {}
@@ -29,7 +41,9 @@ class _FakeS3:
 
     def get_object(self, *, Bucket, Key):  # noqa: N803
         if Key not in self.objects:
-            raise FileNotFoundError(Key)
+            # Shaped like a real botocore ClientError, because the whole
+            # point of the code under test is telling 404 apart from 403.
+            raise _ClientError(404, "NoSuchKey")
 
         class _Body:
             def __init__(self, data): self._data = data
@@ -143,3 +157,37 @@ def test_manifest_json_is_valid_and_reparsable(monkeypatch):
     raw, content_type = storage.__dict__["_client"].objects["2026-08-22.manifest.json"]
     assert content_type == "application/json"
     assert json.loads(raw)["briefing_id"] == "2026-08-22"
+
+
+def test_permission_error_raises_rather_than_looking_like_a_miss(monkeypatch):
+    """A 403 must NOT be reported as "this briefing does not exist".
+
+    Treating every ClientError as a miss meant a rotated or under-scoped R2
+    token made the CLI conclude the briefing was never generated — so it
+    reran the whole 127-second pipeline, spending real Gemini and TTS money,
+    every day, with nothing in the log saying "permission denied".
+    """
+    storage = _configured(monkeypatch)
+
+    class _Forbidden:
+        def get_object(self, *, Bucket, Key):  # noqa: N803
+            raise _ClientError(403, "AccessDenied")
+
+    storage.__dict__["_client"] = _Forbidden()
+
+    with pytest.raises(_ClientError) as exc:
+        storage.load_audio("2026-08-22")
+    assert "AccessDenied" in str(exc.value)
+
+
+def test_permission_error_on_manifest_also_propagates(monkeypatch):
+    storage = _configured(monkeypatch)
+
+    class _Forbidden:
+        def get_object(self, *, Bucket, Key):  # noqa: N803
+            raise _ClientError(403, "AccessDenied")
+
+    storage.__dict__["_client"] = _Forbidden()
+
+    with pytest.raises(_ClientError):
+        storage.load_manifest("2026-08-22")

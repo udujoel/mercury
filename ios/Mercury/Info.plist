@@ -47,6 +47,12 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
+		<!-- Required by BGProcessingTaskRequest. Without it
+		     BGTaskScheduler.submit throws NotPermitted and the prefetch task
+		     is never scheduled — and since ADR-007 established that APNs is
+		     unavailable on free provisioning, that prefetch is the ONLY
+		     automatic delivery path left. -->
+		<string>processing</string>
 		<string>remote-notification</string>
 	</array>
 	<key>UILaunchScreen</key>

@@ -81,8 +81,18 @@ final class PushService: NSObject {
     /// silent push doesn't require alert authorization to be delivered to
     /// `application(_:didReceiveRemoteNotification:fetchCompletionHandler:)`,
     /// but the visible "briefing is ready" notification does.
+    /// Guards against re-running on every foreground transition. The device
+    /// log showed the "APNs registration failed / local wake notification
+    /// scheduled" pair six times in one session, each occurrence removing and
+    /// re-adding the pending notification — a small window with none armed at
+    /// all, and a log too noisy to read.
+    private var hasRequestedAuthorization = false
+
     @MainActor
     func requestAuthorization() async {
+        guard !hasRequestedAuthorization else { return }
+        hasRequestedAuthorization = true
+
         do {
             let granted = try await UNUserNotificationCenter.current()
                 .requestAuthorization(options: [.alert, .sound, .badge])

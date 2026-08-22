@@ -145,14 +145,33 @@ class R2Storage:
 
     # ── internals ─────────────────────────────────────────────
 
+    @staticmethod
+    def _status_code(exc: Exception) -> int | None:
+        """HTTP status from a botocore ClientError, if there is one."""
+        response = getattr(exc, "response", None)
+        if isinstance(response, dict):
+            meta = response.get("ResponseMetadata") or {}
+            code = meta.get("HTTPStatusCode")
+            if isinstance(code, int):
+                return code
+        return None
+
     def _get(self, key: str) -> bytes | None:
+        """Fetch a key, or None if it genuinely does not exist.
+
+        Only a real 404 counts as "not there". Treating every ClientError as
+        a miss meant a 403 from a rotated or under-scoped token was reported
+        as "this briefing was never generated" — so the CLI would rerun the
+        whole 127-second pipeline, spending real Gemini and TTS money, every
+        single day, with nothing in the log saying "permission denied".
+        Anything that is not a 404 is raised so the run fails visibly.
+        """
         try:
             return self._client.get_object(Bucket=self._bucket, Key=key)["Body"].read()
         except Exception as exc:
-            # A missing key is the normal "not generated yet" case, not an
-            # error worth a stack trace on every status poll.
-            if type(exc).__name__ in ("NoSuchKey", "ClientError", "404"):
+            status = self._status_code(exc)
+            if status == 404 or type(exc).__name__ == "NoSuchKey":
                 log.debug("R2 key %s not found", key)
                 return None
-            log.exception("R2 read failed for %s", key)
-            return None
+            log.error("R2 read failed for %s (HTTP %s): %r", key, status, exc)
+            raise
