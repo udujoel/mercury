@@ -84,7 +84,23 @@ jobs:
               except json.JSONDecodeError as exc:
                   sys.exit(f"::error::{secret} is not valid JSON: {exc}")
 
-          sa = load("credentials/gcp-tts.json", "GOOGLE_TTS_CREDENTIALS_JSON")
+          def as_object(value, secret):
+              # Not decoration: without this the membership tests below run
+              # against a string or list and do substring matching, which
+              # happens to give the right answer for today's inputs and would
+              # give a misleading one for a secret containing "token_uri"
+              # anywhere in its text.
+              if not isinstance(value, dict):
+                  sys.exit(
+                      f"::error::{secret} is valid JSON but not an object "
+                      f"(got {type(value).__name__})."
+                  )
+              return value
+
+          sa = as_object(
+              load("credentials/gcp-tts.json", "GOOGLE_TTS_CREDENTIALS_JSON"),
+              "GOOGLE_TTS_CREDENTIALS_JSON",
+          )
           if "installed" in sa or "web" in sa:
               sys.exit(
                   "::error::GOOGLE_TTS_CREDENTIALS_JSON looks like an OAuth "
@@ -92,15 +108,23 @@ jobs:
                   "ACCOUNT key: Google Cloud Console -> IAM & Admin -> "
                   "Service Accounts -> Keys -> Add key -> JSON."
               )
-          missing = [k for k in ("client_email", "private_key", "token_uri") if k not in sa]
+          missing = [
+              k for k in ("client_email", "private_key", "token_uri")
+              if not str(sa.get(k) or "").strip()
+          ]
           if missing:
               sys.exit(
                   f"::error::GOOGLE_TTS_CREDENTIALS_JSON is missing {', '.join(missing)}. "
                   "Expected a service-account key JSON."
               )
 
-          tok = load("../token.json", "GOOGLE_OAUTH_TOKEN_JSON")
-          if "refresh_token" not in tok:
+          tok = as_object(
+              load("../token.json", "GOOGLE_OAUTH_TOKEN_JSON"),
+              "GOOGLE_OAUTH_TOKEN_JSON",
+          )
+          # Truthy, not merely present: a key with an empty value would sail
+          # through and fail minutes later with invalid_grant.
+          if not str(tok.get("refresh_token") or "").strip():
               sys.exit(
                   "::error::GOOGLE_OAUTH_TOKEN_JSON has no refresh_token. "
                   "Expected the token.json produced by running a spike "
