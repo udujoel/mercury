@@ -1,0 +1,91 @@
+name: daily briefing
+
+# ADR-008: generation is a scheduled batch job, not a hosted service. It runs
+# for ~2 minutes a day and is idle the rest of the time, so a cron runner plus
+# object storage replaces a backend entirely.
+#
+# A private repo gets 2000 Actions minutes a month; a 2-minute daily job uses
+# about 60 of them.
+
+on:
+  schedule:
+    # 04:00 UTC. GitHub cron is UTC-only and has no DST, so this drifts by an
+    # hour relative to Europe/Lisbon across the year — deliberately early
+    # enough that it still lands before a 07:00 wake either way. The briefing
+    # is NAMED in the user's timezone by app.cli, which is what actually
+    # matters; see the five date bugs this project has already had.
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+    inputs:
+      length:
+        description: "Briefing length"
+        required: false
+        default: "standard"
+        type: choice
+        options: [express, standard, full]
+
+concurrency:
+  # Never two generations at once — each costs real Gemini and TTS spend.
+  group: daily-briefing
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install ffmpeg
+        # Required for AAC export. Without it the pipeline falls back to WAV,
+        # which is ~17MB instead of ~4MB — a real difference for a phone
+        # downloading it over cellular every morning.
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+
+      - run: pip install -r requirements.txt
+
+      - name: Write credential files
+        # The Google SDKs want files, not env vars. These are written into the
+        # runner's ephemeral filesystem and never leave it.
+        env:
+          TTS_KEY: ${{ secrets.GOOGLE_TTS_CREDENTIALS_JSON }}
+          OAUTH_TOKEN: ${{ secrets.GOOGLE_OAUTH_TOKEN_JSON }}
+        run: |
+          mkdir -p credentials
+          printf '%s' "$TTS_KEY" > credentials/gcp-tts.json
+          printf '%s' "$OAUTH_TOKEN" > ../token.json
+          test -s credentials/gcp-tts.json || { echo "::error::GOOGLE_TTS_CREDENTIALS_JSON is empty"; exit 1; }
+          test -s ../token.json || { echo "::error::GOOGLE_OAUTH_TOKEN_JSON is empty"; exit 1; }
+
+      - name: Generate
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_TTS_CREDENTIALS: ./credentials/gcp-tts.json
+          GOOGLE_TOKEN_FILE: ${{ github.workspace }}/token.json
+          MERCURY_API_TOKEN: ${{ secrets.MERCURY_API_TOKEN }}
+          USER_EMAIL: ${{ secrets.USER_EMAIL }}
+          USER_NAME: ${{ secrets.USER_NAME }}
+          USER_TIMEZONE: ${{ secrets.USER_TIMEZONE }}
+          BRIEFING_LENGTH: ${{ inputs.length || 'standard' }}
+          STORAGE_BACKEND: r2
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: python -m app.cli generate
+
+      - name: Scrub credentials
+        # Belt and braces. The runner is destroyed anyway, but a half-failed
+        # run should not leave a Google refresh token sitting in a workspace
+        # that a later step could archive.
+        if: always()
+        run: rm -f credentials/gcp-tts.json ../token.json

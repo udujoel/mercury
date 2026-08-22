@@ -113,3 +113,22 @@ class LocalFilesystemStorage:
                 media_type = AUDIO_MEDIA_TYPES.get(fmt, "application/octet-stream")
                 return path.read_bytes(), media_type
         return None
+
+
+def build_storage() -> BriefingStorage:
+    """The storage backend this deployment is configured for.
+
+    Fails loudly when STORAGE_BACKEND=r2 but R2 is misconfigured, rather than
+    silently writing to local disk. A scheduled run that writes a briefing to
+    a container's ephemeral filesystem looks exactly like success and produces
+    something nobody can reach — the failure has to be visible in the Actions
+    log, not discovered on a phone at 7am.
+    """
+    backend = get_settings().storage_backend.lower()
+    if backend == "r2":
+        from app.synthesis.r2_storage import R2Storage
+
+        return R2Storage()
+    if backend != "local":
+        log.warning("unknown STORAGE_BACKEND %r; using local", backend)
+    return LocalFilesystemStorage()
