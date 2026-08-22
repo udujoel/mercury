@@ -10,7 +10,7 @@ project's hard-won lesson about never making a live call from a test.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -21,7 +21,7 @@ from app.notifications.apns import FakePushProvider
 from app.scheduler import cron
 from app.scheduler.cron import (
     _compute_fire_time,
-    _today_briefing_id,
+    _target_briefing_id,
     run_daily_briefing_job,
     shutdown_scheduler,
     start_scheduler,
@@ -31,15 +31,17 @@ from app.scheduler.cron import (
 
 
 def test_fire_time_subtracts_lead_from_wake_time():
-    assert _compute_fire_time("07:00", 30) == (6, 30)
+    assert _compute_fire_time("07:00", 30) == (6, 30, False)
 
 
 def test_fire_time_wraps_past_midnight():
-    assert _compute_fire_time("00:10", 30) == (23, 40)
+    # Crossing midnight is now reported, because the briefing belongs to
+    # the day the user WAKES, not the evening the job runs.
+    assert _compute_fire_time("00:10", 30) == (23, 40, True)
 
 
 def test_fire_time_zero_lead_equals_wake_time():
-    assert _compute_fire_time("07:00", 0) == (7, 0)
+    assert _compute_fire_time("07:00", 0) == (7, 0, False)
 
 
 # ── DST boundary ─────────────────────────────────────────────────────
@@ -57,7 +59,7 @@ def test_cron_trigger_holds_local_wall_time_across_dst_boundary():
     out for `datetime.now(UTC)`.
     """
     tz = ZoneInfo("Europe/Lisbon")
-    hour, minute = _compute_fire_time("07:00", 30)
+    hour, minute, _ = _compute_fire_time("07:00", 30)
     trigger = CronTrigger(hour=hour, minute=minute, timezone=tz)
 
     before = datetime(2026, 3, 28, 0, 0, tzinfo=tz)
@@ -83,13 +85,13 @@ def test_today_briefing_id_uses_user_timezone_not_utc():
     # different UTC date if this function mistakenly asked for UTC "now"
     # instead of asking `datetime.now(tz)` directly, which it does. The
     # meaningful assertion is simply that it resolves via ZoneInfo, not UTC.
-    result = _today_briefing_id("Europe/Lisbon")
+    result = _target_briefing_id("Europe/Lisbon")
     expected = datetime.now(ZoneInfo("Europe/Lisbon")).strftime("%Y-%m-%d")
     assert result == expected
 
 
 def test_today_briefing_id_falls_back_to_utc_on_bad_timezone():
-    result = _today_briefing_id("Not/A_Real_Zone")
+    result = _target_briefing_id("Not/A_Real_Zone")
     expected = datetime.now(ZoneInfo("UTC")).strftime("%Y-%m-%d")
     assert result == expected
 
@@ -264,3 +266,52 @@ def test_settings_expose_new_scheduler_fields():
     s = Settings(mercury_api_token="x" * 32)
     assert s.scheduler_enabled is False
     assert s.generation_lead_minutes == 30
+
+
+def test_briefing_id_advances_when_the_lead_crosses_midnight():
+    """The briefing is named for the day the user WAKES.
+
+    With wake_time 00:30 and a 60 minute lead the job fires at 23:30 the
+    previous evening. Stamping it with that evening's date filed the briefing
+    a day early, so the client — correctly asking for the wake date — got a
+    404 and the scheduled delivery silently failed.
+    """
+    same_day = _target_briefing_id("Europe/Lisbon", crosses_midnight=False)
+    next_day = _target_briefing_id("Europe/Lisbon", crosses_midnight=True)
+
+    as_date = datetime.strptime(same_day, "%Y-%m-%d").date()
+    assert datetime.strptime(next_day, "%Y-%m-%d").date() == as_date + timedelta(days=1)
+
+
+async def test_unregistered_token_is_pruned_not_retried_forever(tmp_path, monkeypatch):
+    """A 410 from APNs means the token is permanently dead.
+
+    Without pruning, a token left behind by an app reinstall stays in the
+    store forever: every morning makes a doomed call for it, and the constant
+    "rejected" line becomes noise that hides a genuinely failing push later.
+    """
+    from app.api import devices
+    from app.notifications.apns import TokenUnregisteredError
+    from app.scheduler.cron import _send_push
+
+    monkeypatch.setattr(devices, "_store_path", lambda: tmp_path / "tokens.json")
+    devices.register_token("dead-token-aaaaaaaaaaaaaaaa")
+    devices.register_token("live-token-bbbbbbbbbbbbbbbb")
+
+    class PartlyDeadPush:
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+
+        async def send_silent(self, device_token: str, payload: dict) -> bool:
+            if device_token.startswith("dead"):
+                raise TokenUnregisteredError("gone")
+            self.sent.append(device_token)
+            return True
+
+    push = PartlyDeadPush()
+    await _send_push(push, "2026-08-22")
+
+    remaining = devices.list_registered_tokens()
+    assert "dead-token-aaaaaaaaaaaaaaaa" not in remaining, "410 token must be pruned"
+    assert "live-token-bbbbbbbbbbbbbbbb" in remaining, "healthy token must survive"
+    assert push.sent == ["live-token-bbbbbbbbbbbbbbbb"]

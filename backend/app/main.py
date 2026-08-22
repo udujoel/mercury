@@ -35,7 +35,15 @@ app = FastAPI(
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok", "service": "mercury"}
+    return {
+        "status": "ok",
+        "service": "mercury",
+        # The client derives briefing ids locally (the background task has no
+        # channel to be told one), so it needs the timezone the SERVER names
+        # them in. Without this the two disagree the moment the device leaves
+        # the configured zone and every prefetch 404s.
+        "timezone": get_settings().user_timezone,
+    }
 
 
 # Routers get mounted here as they land.

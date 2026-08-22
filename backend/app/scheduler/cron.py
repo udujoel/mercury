@@ -32,7 +32,12 @@ from fastapi import FastAPI
 
 from app.core.config import get_settings
 from app.core.providers import LLMProvider, TTSProvider
-from app.notifications.apns import APNsConfigurationError, PushProvider
+from app.core.schemas import BriefingLength
+from app.notifications.apns import (
+    APNsConfigurationError,
+    PushProvider,
+    TokenUnregisteredError,
+)
 from app.pipeline.generate import generate_briefing
 from app.synthesis.storage import BriefingStorage, LocalFilesystemStorage
 
@@ -46,19 +51,25 @@ JOB_ID = "mercury-daily-briefing"
 _scheduler: AsyncIOScheduler | None = None
 
 
-def _compute_fire_time(wake_time: str, lead_minutes: int) -> tuple[int, int]:
-    """(hour, minute), in the user's local clock, the job should fire.
+def _compute_fire_time(wake_time: str, lead_minutes: int) -> tuple[int, int, bool]:
+    """(hour, minute, crosses_midnight) the job should fire, local clock.
 
     Pure clock arithmetic on an arbitrary anchor date — no timezone, no UTC
     conversion. The CronTrigger this feeds is given `settings.user_timezone`
     directly and is what resolves the actual fire *date* (including DST
-    transitions); this function only ever needs to know what time of day
-    that is, not what day.
+    transitions); this function only needs the time of day.
+
+    `crosses_midnight` matters because the briefing is named for the day the
+    user WAKES, not the day the job runs. With wake_time 00:30 and a 60
+    minute lead the job fires at 23:30 the previous evening, and stamping it
+    with that evening's date filed the briefing one day early — the client,
+    correctly asking for the wake date, got a 404 and the whole scheduled
+    delivery silently failed.
     """
     hour_str, minute_str = wake_time.split(":")
-    anchor = datetime(2000, 1, 1, int(hour_str), int(minute_str))
+    anchor = datetime(2000, 1, 2, int(hour_str), int(minute_str))
     fire = anchor - timedelta(minutes=lead_minutes)
-    return fire.hour, fire.minute
+    return fire.hour, fire.minute, fire.day != anchor.day
 
 
 def _user_tz(tz_name: str) -> ZoneInfo:
@@ -69,10 +80,30 @@ def _user_tz(tz_name: str) -> ZoneInfo:
         return ZoneInfo("UTC")
 
 
-def _today_briefing_id(tz_name: str) -> str:
-    """Today's date, in the USER's timezone — never UTC. See module
-    docstring; this is the other half of the DST bug fix."""
-    return datetime.now(_user_tz(tz_name)).strftime("%Y-%m-%d")
+def _target_briefing_id(tz_name: str, *, crosses_midnight: bool = False) -> str:
+    """The id of the briefing this run is preparing, in the USER's timezone.
+
+    Normally today's date. When the generation lead pushes the run back past
+    midnight the briefing is for TOMORROW's wake, so the id advances — see
+    `_compute_fire_time`.
+    """
+    now = datetime.now(_user_tz(tz_name))
+    if crosses_midnight:
+        now = now + timedelta(days=1)
+    return now.strftime("%Y-%m-%d")
+
+
+def _configured_length(raw: str) -> BriefingLength:
+    """settings.briefing_length is a plain string; map it, and fall back
+    loudly rather than crashing the only scheduled run of the day."""
+    try:
+        return BriefingLength(raw)
+    except ValueError:
+        log.error(
+            "invalid BRIEFING_LENGTH %r; using %s",
+            raw, BriefingLength.STANDARD.value,
+        )
+        return BriefingLength.STANDARD
 
 
 def _build_live_providers() -> tuple[LLMProvider, TTSProvider]:
@@ -114,6 +145,8 @@ async def _send_push(push_provider: PushProvider | None, briefing_id: str) -> No
             )
             return
 
+    from app.api.devices import unregister_token
+
     for token in tokens:
         try:
             accepted = await push_provider.send_silent(
@@ -122,6 +155,12 @@ async def _send_push(push_provider: PushProvider | None, briefing_id: str) -> No
             log.info(
                 "push for %s: %s", briefing_id, "accepted" if accepted else "rejected"
             )
+        except TokenUnregisteredError as exc:
+            # Apple says this token is permanently dead. Drop it, or the
+            # store grows across every reinstall and each morning makes a
+            # doomed call whose "rejected" line hides real failures later.
+            log.info("pruning unregistered device token: %s", exc)
+            unregister_token(token)
         except Exception:
             # A push failure must never take down the job that already
             # produced a real briefing.
@@ -150,7 +189,12 @@ async def run_daily_briefing_job(
     """
     settings = get_settings()
     storage = storage or LocalFilesystemStorage()
-    briefing_id = _today_briefing_id(settings.user_timezone)
+    _, _, crosses_midnight = _compute_fire_time(
+        settings.wake_time, settings.generation_lead_minutes
+    )
+    briefing_id = _target_briefing_id(
+        settings.user_timezone, crosses_midnight=crosses_midnight
+    )
 
     if storage.load_manifest(briefing_id) is not None:
         log.info(
@@ -164,8 +208,16 @@ async def run_daily_briefing_job(
         tts = tts if tts is not None else built_tts
 
     try:
+        # Honour the configured length. Without this the cron always took
+        # the STANDARD default, so BRIEFING_LENGTH=full produced a 15-minute
+        # briefing on demand and a 7-minute one every morning — and the
+        # morning one is the whole product.
         await generate_briefing(
-            briefing_id=briefing_id, llm=llm, tts=tts, storage=storage
+            briefing_id=briefing_id,
+            llm=llm,
+            tts=tts,
+            storage=storage,
+            length=_configured_length(settings.briefing_length),
         )
     except Exception:
         log.exception(
@@ -192,7 +244,7 @@ def start_scheduler(app: FastAPI) -> AsyncIOScheduler | None:
         log.info("scheduler disabled (SCHEDULER_ENABLED=false); not starting")
         return None
 
-    hour, minute = _compute_fire_time(
+    hour, minute, _crosses_midnight = _compute_fire_time(
         settings.wake_time, settings.generation_lead_minutes
     )
     trigger = CronTrigger(

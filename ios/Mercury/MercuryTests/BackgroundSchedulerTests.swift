@@ -51,3 +51,63 @@ final class BackgroundSchedulerTests: XCTestCase {
         XCTAssertNotEqual(a.earliestBeginDate, b.earliestBeginDate)
     }
 }
+
+// MARK: - Regressions from the PR review
+
+final class BriefingIdAndWakeTimeTests: XCTestCase {
+
+    /// `briefingId` must use the SERVER's timezone, not the device's.
+    ///
+    /// The server names briefing ids from its configured USER_TIMEZONE. When
+    /// the client formatted in `.current` instead, the two disagreed the
+    /// moment the device left that zone: Lisbon-configured Mercury opened at
+    /// 20:00 in New York asks for 2026-08-22 while the server has already
+    /// filed 2026-08-23. The prefetch 404s and the app silently falls back to
+    /// a foreground fetch — the layer defeated, with no error anywhere.
+    func testBriefingIdUsesTheGivenTimeZoneNotTheDeviceOne() {
+        // 2026-08-22 23:30 UTC — still the 22nd in New York, already the
+        // 23rd in Lisbon (UTC+1 in August).
+        var components = DateComponents()
+        components.year = 2026
+        components.month = 8
+        components.day = 22
+        components.hour = 23
+        components.minute = 30
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        let instant = calendar.date(from: components)!
+
+        let lisbon = AppDelegate.briefingId(
+            for: instant, timeZone: TimeZone(identifier: "Europe/Lisbon")!
+        )
+        let newYork = AppDelegate.briefingId(
+            for: instant, timeZone: TimeZone(identifier: "America/New_York")!
+        )
+
+        XCTAssertEqual(lisbon, "2026-08-23")
+        XCTAssertEqual(newYork, "2026-08-22")
+        XCTAssertNotEqual(lisbon, newYork, "the zones must genuinely differ here")
+    }
+
+    /// `nextWakeDate` must not drift once today's wake time has passed.
+    ///
+    /// Matching on year/month/day pinned the search to today, so after the
+    /// wake time nothing could match: `nextDate` returned nil and the
+    /// fallback `.now + 24h` took over — 24 hours from whenever the app was
+    /// opened, not tomorrow's wake time, drifting further every day.
+    func testNextWakeDateIsTomorrowsWakeTimeNotTwentyFourHoursFromNow() {
+        let state = AppState()
+        state.wakeTimeMinutesFromMidnight = 7 * 60
+
+        let next = state.nextWakeDate
+        let parts = Calendar.current.dateComponents([.hour, .minute], from: next)
+
+        XCTAssertEqual(parts.hour, 7, "must land on the configured wake hour")
+        XCTAssertEqual(parts.minute, 0)
+        XCTAssertGreaterThan(next, Date(), "must be in the future")
+        XCTAssertLessThan(
+            next.timeIntervalSinceNow, 24 * 60 * 60 + 1,
+            "must be the next occurrence, never more than a day out"
+        )
+    }
+}

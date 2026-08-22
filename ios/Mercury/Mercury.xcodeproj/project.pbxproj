@@ -12,6 +12,7 @@
 		2ECD2ABB914248E2AA7C2CFF /* NowPlayingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B33F2A2C9B5A4A1EACD41181 /* NowPlayingService.swift */; };
 		49465A9383654545888B46CD /* PlaybackCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 712134809B384AE3B7BD5717 /* PlaybackCoordinator.swift */; };
 		40FD874573A449B99F662635 /* BriefingManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = B623CA6338D94EA6B94CB4A7 /* BriefingManifest.swift */; };
+		AA11BB22CC33DD44EE55F001 /* BriefingClock.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE55F002 /* BriefingClock.swift */; };
 		35553941EBBA4F60AD83C8DC /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46DDA802958348BBB0577AEA /* APIClient.swift */; };
 		7A6EB2262FAE4FE4BBEFC626 /* Endpoints.swift in Sources */ = {isa = PBXBuildFile; fileRef = C07D32533485477A94ED0028 /* Endpoints.swift */; };
 		1DFFF7D042234B42BC2F69A3 /* BriefingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A500086096BB4F5DACCE0474 /* BriefingStore.swift */; };
@@ -62,6 +63,7 @@
 		B33F2A2C9B5A4A1EACD41181 /* NowPlayingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingService.swift; sourceTree = "<group>"; };
 		712134809B384AE3B7BD5717 /* PlaybackCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackCoordinator.swift; sourceTree = "<group>"; };
 		B623CA6338D94EA6B94CB4A7 /* BriefingManifest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BriefingManifest.swift; sourceTree = "<group>"; };
+		AA11BB22CC33DD44EE55F002 /* BriefingClock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BriefingClock.swift; sourceTree = "<group>"; };
 		46DDA802958348BBB0577AEA /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		C07D32533485477A94ED0028 /* Endpoints.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Endpoints.swift; sourceTree = "<group>"; };
 		A500086096BB4F5DACCE0474 /* BriefingStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BriefingStore.swift; sourceTree = "<group>"; };
@@ -191,6 +193,7 @@
 			isa = PBXGroup;
 			children = (
 				B623CA6338D94EA6B94CB4A7 /* BriefingManifest.swift */,
+				AA11BB22CC33DD44EE55F002 /* BriefingClock.swift */,
 			);
 			name = Models;
 			path = Models;
@@ -423,6 +426,7 @@
 				2ECD2ABB914248E2AA7C2CFF /* NowPlayingService.swift in Sources */,
 				49465A9383654545888B46CD /* PlaybackCoordinator.swift in Sources */,
 				40FD874573A449B99F662635 /* BriefingManifest.swift in Sources */,
+				AA11BB22CC33DD44EE55F001 /* BriefingClock.swift in Sources */,
 				35553941EBBA4F60AD83C8DC /* APIClient.swift in Sources */,
 				7A6EB2262FAE4FE4BBEFC626 /* Endpoints.swift in Sources */,
 				1DFFF7D042234B42BC2F69A3 /* BriefingStore.swift in Sources */,

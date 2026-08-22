@@ -47,7 +47,14 @@ def _fake_manifest(briefing_id: str = "2026-08-21") -> BriefingManifest:
 def test_health_still_works(client):
     resp = client.get("/health")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok", "service": "mercury"}
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["service"] == "mercury"
+    # The client derives briefing ids locally (a background task has no
+    # channel to be told one), so it needs the zone the SERVER names them in.
+    # Asserted by key rather than by whole-dict equality so adding a field
+    # here is not a breaking change for an unrelated test.
+    assert body["timezone"]
 
 
 def test_generate_offline_returns_manifest(client, monkeypatch, tmp_path):

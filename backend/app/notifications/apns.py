@@ -58,6 +58,13 @@ class PushProvider(Protocol):
         ...
 
 
+class TokenUnregisteredError(RuntimeError):
+    """APNs returned 410 Unregistered: this device token is permanently dead
+    (the app was deleted, or the token was reissued). Apple's contract is to
+    STOP sending to it, so callers should unregister rather than retry it
+    every morning forever."""
+
+
 class APNsConfigurationError(RuntimeError):
     """Raised when APNs config is missing. Never send a fake/no-op push in
     this case — callers must be able to tell "not configured" apart from
@@ -136,6 +143,15 @@ class APNsProvider:
         if response.status_code == 200:
             log.info("APNs accepted push for %s", truncated)
             return True
+
+        if response.status_code == 410:
+            # Permanent, not transient. Distinguishing it lets the caller
+            # prune the token instead of making a doomed call every day and
+            # filling the log with "rejected" noise that will later hide a
+            # genuine failure.
+            raise TokenUnregisteredError(
+                f"APNs reports {truncated} is unregistered"
+            )
 
         log.warning(
             "APNs rejected push for %s: %d %s",

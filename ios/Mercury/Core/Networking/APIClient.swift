@@ -21,6 +21,7 @@ enum APIError: Error, LocalizedError {
 /// third-party dependency — the API surface is three endpoints.
 protocol APIClientProtocol {
     func generateBriefing(length: BriefingLength) async throws -> BriefingManifest
+    func syncServerClock() async
     func fetchManifest(briefingId: String) async throws -> BriefingManifest
     func downloadAudio(briefingId: String) async throws -> URL
     /// Registers (or refreshes) this device's APNs token with the backend
@@ -108,6 +109,19 @@ final class APIClient: APIClientProtocol {
             throw APIError.transport(error)
         }
         try Self.validate(response, body: data)
+    }
+
+    /// Learns the timezone the server names briefing ids in, so locally
+    /// derived ids match. Best effort: a failure here just leaves the last
+    /// known value (or the device zone) in place. See `BriefingClock`.
+    func syncServerClock() async {
+        var request = URLRequest(url: APIConfig.baseURL.appendingPathComponent("health"))
+        request.httpMethod = "GET"
+        guard let (data, _) = try? await session.data(for: request),
+              let payload = try? JSONDecoder().decode([String: String].self, from: data),
+              let identifier = payload["timezone"]
+        else { return }
+        BriefingClock.remember(identifier: identifier)
     }
 
     // MARK: - Private

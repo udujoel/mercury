@@ -23,6 +23,7 @@ reports as stale via the feedback service.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -111,14 +112,17 @@ async def register(request: RegisterRequest) -> RegisterResponse:
     token = request.device_token.strip()
     if not token:
         raise HTTPException(status_code=400, detail="device_token must not be empty")
-    register_token(token)
+    # The store does blocking file IO under a threading.Lock. Negligible for
+    # one user, but it shares an event loop with a ~70s generation and audio
+    # downloads, so keep it off the loop rather than coupling them.
+    await asyncio.to_thread(register_token, token)
     log.info("registered device token %s", _truncate_token(token))
     return RegisterResponse(status="ok")
 
 
 @router.delete("/{token}", response_model=RegisterResponse)
 async def unregister(token: str) -> RegisterResponse:
-    found = unregister_token(token)
+    found = await asyncio.to_thread(unregister_token, token)
     if not found:
         raise HTTPException(status_code=404, detail="device token not registered")
     log.info("unregistered device token %s", _truncate_token(token))

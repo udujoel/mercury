@@ -66,7 +66,14 @@ final class AppState {
     /// today if it hasn't passed yet, tomorrow otherwise. Used as the
     /// `wakeTime` argument to `BackgroundScheduler.schedule`.
     var nextWakeDate: Date {
-        var components = Calendar.current.dateComponents([.year, .month, .day], from: .now)
+        // Match on hour/minute ONLY. Including year/month/day pinned the
+        // match to today, so once today's wake time had passed nothing could
+        // satisfy it: nextDate returned nil and the fallback `.now + 24h`
+        // took over — which is 24 hours from whenever the app happened to be
+        // opened, not tomorrow's wake time. Opening at 09:00 with a 07:00
+        // wake produced a prefetch window at 08:30 the next day, drifting
+        // another two hours every time it recurred.
+        var components = DateComponents()
         components.hour = wakeTimeMinutesFromMidnight / 60
         components.minute = wakeTimeMinutesFromMidnight % 60
         components.second = 0
