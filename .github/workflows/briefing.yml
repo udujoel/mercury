@@ -63,8 +63,75 @@ jobs:
           mkdir -p credentials
           printf '%s' "$TTS_KEY" > credentials/gcp-tts.json
           printf '%s' "$OAUTH_TOKEN" > ../token.json
-          test -s credentials/gcp-tts.json || { echo "::error::GOOGLE_TTS_CREDENTIALS_JSON is empty"; exit 1; }
-          test -s ../token.json || { echo "::error::GOOGLE_OAUTH_TOKEN_JSON is empty"; exit 1; }
+
+          # Validate SHAPE, not just non-emptiness. The first real run failed
+          # with a 20-line google.auth traceback ending in "missing fields
+          # token_uri, client_email" — which is what you get when the OAuth
+          # *client* file (credentials.json, whose only top-level key is
+          # "installed") is pasted in place of the service-account key. Three
+          # similar-looking JSON files are involved in this project and it is
+          # genuinely easy to mix them up; the error should say which one is
+          # wrong, not make you read a stack trace to find out.
+          python - <<'CHECK'
+          import json, sys
+
+          def load(path, secret):
+              try:
+                  with open(path) as fh:
+                      return json.load(fh)
+              except FileNotFoundError:
+                  sys.exit(f"::error::{secret} produced no file")
+              except json.JSONDecodeError as exc:
+                  sys.exit(f"::error::{secret} is not valid JSON: {exc}")
+
+          def as_object(value, secret):
+              # Not decoration: without this the membership tests below run
+              # against a string or list and do substring matching, which
+              # happens to give the right answer for today's inputs and would
+              # give a misleading one for a secret containing "token_uri"
+              # anywhere in its text.
+              if not isinstance(value, dict):
+                  sys.exit(
+                      f"::error::{secret} is valid JSON but not an object "
+                      f"(got {type(value).__name__})."
+                  )
+              return value
+
+          sa = as_object(
+              load("credentials/gcp-tts.json", "GOOGLE_TTS_CREDENTIALS_JSON"),
+              "GOOGLE_TTS_CREDENTIALS_JSON",
+          )
+          if "installed" in sa or "web" in sa:
+              sys.exit(
+                  "::error::GOOGLE_TTS_CREDENTIALS_JSON looks like an OAuth "
+                  "CLIENT file (credentials.json). It needs the SERVICE "
+                  "ACCOUNT key: Google Cloud Console -> IAM & Admin -> "
+                  "Service Accounts -> Keys -> Add key -> JSON."
+              )
+          missing = [
+              k for k in ("client_email", "private_key", "token_uri")
+              if not str(sa.get(k) or "").strip()
+          ]
+          if missing:
+              sys.exit(
+                  f"::error::GOOGLE_TTS_CREDENTIALS_JSON is missing {', '.join(missing)}. "
+                  "Expected a service-account key JSON."
+              )
+
+          tok = as_object(
+              load("../token.json", "GOOGLE_OAUTH_TOKEN_JSON"),
+              "GOOGLE_OAUTH_TOKEN_JSON",
+          )
+          # Truthy, not merely present: a key with an empty value would sail
+          # through and fail minutes later with invalid_grant.
+          if not str(tok.get("refresh_token") or "").strip():
+              sys.exit(
+                  "::error::GOOGLE_OAUTH_TOKEN_JSON has no refresh_token. "
+                  "Expected the token.json produced by running a spike "
+                  "locally, not credentials.json."
+              )
+          print("credential files look structurally correct")
+          CHECK
 
       - name: Generate
         env:
