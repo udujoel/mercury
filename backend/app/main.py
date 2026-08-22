@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api import briefing, devices, voice
+from app.api import briefing, devices
 from app.core.config import get_settings
 from app.scheduler.cron import shutdown_scheduler, start_scheduler
 
@@ -49,6 +49,5 @@ async def health() -> dict[str, str]:
 # Routers get mounted here as they land.
 app.include_router(briefing.router, prefix="/briefing", tags=["briefing"])
 app.include_router(devices.router, prefix="/devices", tags=["devices"])
-app.include_router(voice.router, prefix="/voice", tags=["voice"])
 # from app.api import auth
 # app.include_router(auth.router,  prefix="/auth")

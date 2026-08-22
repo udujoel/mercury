@@ -84,7 +84,14 @@ Observed while testing the MVP on the simulator, none of it blocking:
 
 **Gate: you stop opening the app to generate, and no story appears twice.**
 
-## Phase 3 — Voice interaction (weeks 12 to 15)
+## Phase 3 — Voice interaction — DROPPED (see ADR-009)
+
+Built and merged in full, then removed from the product. It was PRD
+priority P2, and it was the only workload requiring a warm server —
+dropping it is what makes the free architecture in ADR-008 possible.
+Recoverable with `git show c701e4f`.
+
+<details><summary>Original Phase 3 scope</summary>
 
 - [x] SFSpeechRecognizer on-device with tuned endpointing
 - [x] Audio ducking, fade not cut
@@ -94,10 +101,10 @@ Observed while testing the MVP on the simulator, none of it blocking:
 - [x] Bridging line and seamless resume
 - [x] Latency instrumentation against the timing budget
 
-**Gate: perceived gap under 2.5 seconds.** Server share measured at
-1642-1977ms to first audio. The client stages need a physical device —
-`SFSpeechRecognizer` and real ducking do not run in the simulator. Free
-provisioning covers this; see docs/RUNNING_ON_YOUR_IPHONE.md and ADR-007.
+Gate was: perceived gap under 2.5s. Server share reached 1642-1977ms
+before the feature was dropped.
+
+</details>
 
 ## Phase 4 — Depth (weeks 16 to 19)
 

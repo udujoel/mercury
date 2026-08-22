@@ -272,8 +272,6 @@ final class APIClient: APIClientProtocol {
     }
 
     /// Attaches the shared secret to a request. Every briefing route requires
-    /// it — see backend/app/core/auth.py. Not private: `VoiceAskClient` uses
-    /// the exact same shared-secret scheme against `POST /voice/ask`, which
     /// carries transcript and inbox-derived context and must be guarded by
     /// the same `require_api_token` dependency per the phase brief's
     /// security posture section.

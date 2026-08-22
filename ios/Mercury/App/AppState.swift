@@ -49,13 +49,10 @@ final class AppState {
     var loadState: LoadState = .idle
     let playback = PlaybackCoordinator()
 
-    /// Owns the Join (voice interrupt) flow — PRD 3.5. Assigned in `init`
     /// (not as a default property initializer — those run before `self` is
     /// available, and `playback` is an instance member); `init` also wires
     /// the real `briefingId`/`positionMs` closures via `configure(...)`
-    /// once every stored property, `join` included, is initialized and
     /// `self` is safe to capture.
-    let join: JoinCoordinator
 
     /// User's configured wake time, stored as minutes since midnight local
     /// time (set from `ScheduleSetupView`). Drives both the background
@@ -98,11 +95,6 @@ final class AppState {
     init(api: APIClientProtocol = APIClient()) {
         self.api = api
 
-        self.join = JoinCoordinator(playback: playback)
-        join.configure(
-            briefingId: { [weak self] in self?.manifest?.briefingId },
-            positionMs: { [weak self] in self?.playback.positionMs ?? 0 }
-        )
     }
 
     /// Tapping the greeting card is the primary action of the entire app:

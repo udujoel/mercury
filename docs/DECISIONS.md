@@ -128,3 +128,88 @@ weekly. Neither blocks daily personal use.
 Rejected: dropping the APNs code. It costs nothing to keep, it is the correct
 architecture per ADR-001, and deleting working tested code to match a temporary
 account tier would have to be undone later.
+
+## ADR-008 — GitHub Actions generates, Cloudflare R2 serves, no hosted backend
+
+**Status:** accepted
+
+A cloudflared quick tunnel from a laptop was the delivery mechanism through
+Phases 1-3. It is fine for a demo and wrong as infrastructure: it dies when the
+Mac sleeps, the hostname changes on every restart, and it enforces a hard
+120-second proxy read timeout that a 127-second generation cannot clear.
+
+Surveying free backends made the real problem obvious: **Mercury is not one
+service, it is two workloads with opposite requirements**, and hosting them
+together is why every free tier looked wrong.
+
+    generation   127s, once a day, idle 23h58m    -> wants a scheduled runner
+    serving      a few-KB manifest, a ~4MB file   -> wants object storage
+    voice (Join) sub-2.5s round trip               -> wants a warm process
+
+So:
+
+- **GitHub Actions cron** runs generation daily. A private repo gets 2000
+  minutes a month; a two-minute daily job uses about 60. `apt install ffmpeg`
+  works, and secrets live in repository settings.
+- **Cloudflare R2** stores the audio and manifest. 10GB free with **zero
+  egress fees**, which matters because the phone downloads ~4MB every morning.
+- **The phone reads directly from R2.** No backend to host, no cold start, and
+  nothing that depends on a laptop being awake.
+
+**Voice is deferred, not deleted.** It is the only piece needing a warm
+process, and every free tier's 30-60 second cold start exceeds the entire 2.5
+second budget by an order of magnitude. It is PRD priority P2 — below data
+connections, the pipeline, playback and automation — so it is the right thing
+to drop from the hosted path. The code is built, tested and merged; it keeps
+working whenever the Mac is running, and it costs nothing to leave in place. If
+it ever becomes daily-use important, roughly 5 USD a month on a small VPS runs
+everything in one place.
+
+Rejected:
+
+- **Bonto** — Node.js only, explicitly no Python. The entire backend is Python.
+- **Koyeb** — acquired by Mistral AI in February 2026; no new free signups.
+- **Render free** — the trap on every list. Python and Docker both supported,
+  but it spins down after 15 minutes, so the 05:00 cron never fires and every
+  card tap waits 30-60 seconds.
+- **Vercel / Netlify synchronous functions** — 10 second timeout against a
+  127 second job.
+- **Railway / Fly.io** — no meaningful permanent free tier in 2026.
+
+**Dependency this exposes:** the Google OAuth consent screen is in Testing
+mode, where refresh tokens expire after seven days. Unattended daily
+generation will stop every week wherever it runs. Publishing the app to
+Production removes the expiry and needs no verification review for a single
+user on `gmail.readonly`.
+
+## ADR-009 — Voice (the Join flow) is dropped
+
+**Status:** accepted, supersedes the Phase 3 portion of the roadmap
+
+Joel's verdict: "a nice to have but rarely ever used."
+
+Voice was PRD priority **P2** — the lowest band, below data connections, the
+content pipeline, playback and automation. It was built, reviewed and merged
+in full (Phase 3, commit c701e4f), and it worked: the server side measured
+1642-1977ms to first audio against a 2500ms budget.
+
+It is removed anyway, for two reasons that compound:
+
+1. **It is the only workload that needs a warm server.** Every free tier's
+   30-60 second cold start exceeds the entire 2.5 second budget by an order of
+   magnitude. Keeping voice meant paying for hosting; dropping it made the
+   fully free architecture in ADR-008 possible.
+2. **It was not free to keep in the app.** It required microphone and speech
+   recognition permission prompts for a feature that would rarely be used, and
+   PRD 3.4 gave the mic the largest touch target on the player screen.
+
+What was removed: `app/pipeline/voice.py`, `app/api/voice.py`, the iOS
+`Core/Voice/` module, `JoinOverlay`, `VoiceAskClient`, the mic control, both
+Info.plist permission strings, and the associated tests.
+
+What was kept: `PlaybackCoordinator.duck`/`restoreVolume`. They are small,
+tested, and audio ducking is generally useful.
+
+**Recovering it** is `git show c701e4f` — the full implementation, its tests
+and its two reports are in history. This is a decision about what ships, not a
+judgement that the work was wrong.
