@@ -287,13 +287,93 @@ def _critique_json() -> str:
     return json.dumps(_CRITIQUE)
 
 
+def _extract_between(text: str, start_marker: str, end_marker: str) -> str:
+    """Pull the substring between two literal markers out of `text`, or ""
+    if `start_marker` isn't found. Used to pick the QUESTION and SOURCE DATA
+    fields back out of a formatted VOICE_ANSWER_PROMPT — see
+    `_voice_answer_json` below."""
+    start = text.find(start_marker)
+    if start == -1:
+        return ""
+    start += len(start_marker)
+    end = text.find(end_marker, start)
+    return text[start:end if end != -1 else None].strip()
+
+
+def _unfence(text: str) -> str:
+    """Strip the injection-warning fence app.pipeline.voice._fence_untrusted
+    wraps the `segment_sources` prompt field in, so the fake reads the
+    actual source list rather than treating the warning banner text as the
+    first "source". Mirrors the literal marker strings
+    app.pipeline.script_chain.SOURCE_FENCE_OPEN/CLOSE use; duplicated here
+    rather than imported so this offline provider has no dependency on the
+    pipeline package.
+    """
+    open_marker, close_marker = "<<<UNTRUSTED_SOURCE_DATA", "UNTRUSTED_SOURCE_DATA>>>"
+    open_idx = text.find(open_marker)
+    close_idx = text.find(close_marker)
+    if open_idx == -1 or close_idx == -1:
+        return text
+    content_start = text.find("\n", open_idx) + 1
+    return text[content_start:close_idx].strip()
+
+
+def _voice_answer_json(prompt: str) -> str:
+    """Build a canned voice-answer response that actually depends on the
+    QUESTION and the SOURCE DATA the caller assembled from the manifest —
+    not a fixed blob regardless of input.
+
+    This project has already been burned once by a fake that looked
+    reasonable and hid a prompt-wiring bug (see the module docstring). The
+    Phase 3 voice pipeline builds its context — which turns surround
+    position_ms, which SourceRefs attach to them — entirely inside the
+    caller (app.pipeline.voice._build_context) and hands it to the LLM only
+    through the formatted prompt string; a fake that ignores that string
+    can't catch a bug in that wiring. So this one actually reads it back
+    out, using the same literal section headers VOICE_ANSWER_PROMPT (see
+    app/pipeline/prompts.py) always produces.
+    """
+    question = _extract_between(
+        prompt, "THE QUESTION:\n", "\n\nAnswer in two to five sentences"
+    )
+    sources = _unfence(_extract_between(
+        prompt, "SOURCE DATA BEHIND THAT SEGMENT:\n", "\n\nEARLIER QUESTIONS"
+    ))
+    first_source_line = next(
+        (line.strip() for line in sources.splitlines() if line.strip()), ""
+    )
+
+    q_lower = question.lower()
+    if "weather" in q_lower:
+        no_weather_source = (
+            "There's no weather source linked to this part of the briefing."
+        )
+        answer = (
+            "You asked about the weather. "
+            + (first_source_line or no_weather_source)
+        )
+    elif first_source_line:
+        answer = (
+            f'On "{question}" — the source behind this part of the '
+            f"briefing is: {first_source_line}"
+        )
+    else:
+        answer = (
+            f'On "{question}": nothing in this part of the briefing answers '
+            "that directly."
+        )
+
+    return json.dumps({"answer": answer, "bridge": "Anyway, back to the briefing."})
+
+
 class FakeLLMProvider:
     """Deterministic LLMProvider for offline development and tests.
 
     Detects which of the four prompts (outline / draft / critique / revise)
     it has been asked to complete by looking for strings that are unique to
     each template in app/pipeline/prompts.py, and returns a fixed,
-    schema-valid response for that pass.
+    schema-valid response for that pass. The voice-answer pass is the one
+    exception to "fixed" — see `_voice_answer_json`.
     """
 
     def __init__(self) -> None:
@@ -309,12 +389,7 @@ class FakeLLMProvider:
         elif "Apply these fixes to the script" in prompt:
             kind, body = "revise", _revised_json()
         elif "just interrupted the briefing" in prompt:
-            kind, body = "voice_answer", json.dumps({
-                "answer": "Based on your inbox, the rollout plan Priya sent "
-                          "proposes the migration window for August "
-                          "twenty-seventh.",
-                "bridge": "Anyway, back to your inbox.",
-            })
+            kind, body = "voice_answer", _voice_answer_json(prompt)
         else:
             kind, body = "unknown", "{}"
         self.calls.append((kind, True))

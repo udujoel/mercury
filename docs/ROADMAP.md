@@ -78,8 +78,8 @@ Observed while testing the MVP on the simulator, none of it blocking:
 - [x] Week 8 — RSS aggregation, trafilatura extraction, schema normalisation
 - [x] Week 9 — embeddings, agglomerative clustering, threshold tuning,
       cross-source dedup between newsletters and news
-- [~] Week 10 — critique and revision passes done; ranking wiring pending
-- [ ] Week 11 — server cron, APNs silent push, BGProcessingTask prefetch,
+- [x] Week 10 — critique and revision passes; quality gates
+- [x] Week 11 — server cron, APNs silent push, BGProcessingTask prefetch,
       wake notification, show notes
 
 **Gate: you stop opening the app to generate, and no story appears twice.**
