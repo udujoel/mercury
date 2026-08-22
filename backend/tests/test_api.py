@@ -18,6 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api import briefing as briefing_api
+from app.core.config import get_settings
 from app.core.schemas import BriefingManifest
 from app.main import app
 from tests.conftest import TEST_API_TOKEN
@@ -150,3 +151,38 @@ def test_generate_live_without_credentials_returns_400(client, monkeypatch):
     resp = client.post("/briefing/generate", json={"offline": False})
     assert resp.status_code == 400
     assert resp.json()["detail"]  # names the missing credential
+
+
+# ──────────────────────────────────────────────────────────────
+# Regression: live mode must require Google user OAuth, not just
+# Gemini + TTS.
+# ──────────────────────────────────────────────────────────────
+
+
+def test_live_default_requires_a_google_user_token(monkeypatch, tmp_path):
+    """Gemini + TTS alone must NOT select live mode.
+
+    Gmail and Calendar ingestion go through the separate Google *user* OAuth
+    token. Without it a "live" run either drops both primary sources —
+    shipping a weather-only briefing that presents as the real thing — or,
+    with only the client file present, starts an interactive consent flow
+    from inside an API request and hangs. Both are worse than fixtures,
+    because both look like success.
+    """
+    tts_key = tmp_path / "gcp-tts.json"
+    tts_key.write_text("{}")
+
+    monkeypatch.setenv("GEMINI_API_KEY", "a-key")
+    monkeypatch.setenv("GOOGLE_TTS_CREDENTIALS", str(tts_key))
+    monkeypatch.setenv("GOOGLE_TOKEN_FILE", str(tmp_path / "no-such-token.json"))
+    get_settings.cache_clear()
+
+    assert briefing_api._credentials_configured() is False
+
+    # With a token present, live becomes available.
+    token = tmp_path / "token.json"
+    token.write_text("{}")
+    monkeypatch.setenv("GOOGLE_TOKEN_FILE", str(token))
+    get_settings.cache_clear()
+
+    assert briefing_api._credentials_configured() is True

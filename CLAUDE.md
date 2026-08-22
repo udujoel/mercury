@@ -72,6 +72,24 @@ Phase 0 — foundation and dependency spikes. See `docs/ROADMAP.md`.
 Do not start Phase 1 product code until the Phase 0 gate is met: the TTS spike
 must produce audio you would actually choose to listen to.
 
+## How work lands
+
+From 2026-08-22, nothing goes straight to `main`.
+
+1. Branch. `feat/`, `fix/`, `chore/` plus a short description.
+2. Open a PR with `gh pr create`. Describe what changed and, more usefully,
+   what you verified and how.
+3. Wait for the AI review (CodeRabbit). Do not merge before it has run.
+4. Work every comment. Resolve it, or reply explaining why it is wrong —
+   agreement is not automatic and a reviewer that is mistaken should be told
+   so, with reasoning.
+5. Merge only when checks pass and no thread is left hanging.
+
+Phases 0 and 1 were committed directly to `main`. It worked, but a manifest
+the iOS client could not decode and an xcconfig that silently truncated a URL
+both reached `main` and were caught only by running the app. A review pass
+over a diff is a cheaper place to find that class of bug.
+
 ## Conventions
 
 - Python 3.12, FastAPI, async throughout. Ruff for lint, format on save.

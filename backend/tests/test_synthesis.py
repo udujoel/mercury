@@ -166,11 +166,26 @@ async def test_synthesize_briefing_skips_failed_turn_without_failing_run():
     )
 
     assert len(audio_bytes) > 0
-    # The failed turn is skipped, not fatal — it has no timing.
-    assert manifest.turns[1].start_ms is None
-    assert manifest.turns[1].end_ms is None
-    assert manifest.turns[0].start_ms is not None
-    assert manifest.turns[2].start_ms is not None
+
+    # A failed turn is dropped from the manifest, not carried with null
+    # timing. This test previously asserted the opposite, and that shipped a
+    # manifest the iOS client could not decode at all: `start_ms` is a
+    # non-optional Int there, so one un-synthesised turn failed the whole
+    # briefing with "Expected value of type Int but found null instead. Path:
+    # manifest.turns[4].start_ms". Even with a tolerant client, a turn with no
+    # audio would render a sentence that is never spoken and desync every
+    # turn after it. Losing one line is the graceful degradation; a manifest
+    # that misdescribes its own audio is not.
+    assert [turn.text for turn in manifest.turns] == [
+        "Good morning.",
+        "Still sunny.",
+    ]
+    assert all(turn.start_ms is not None for turn in manifest.turns)
+    assert all(turn.end_ms is not None for turn in manifest.turns)
+
+    # And the surviving turns stay contiguous and ordered.
+    assert manifest.turns[0].start_ms == 0
+    assert manifest.turns[1].start_ms >= manifest.turns[0].end_ms
 
 
 async def test_falls_back_to_wav_when_ffmpeg_is_missing(monkeypatch):
@@ -207,3 +222,58 @@ async def test_synthesize_briefing_uses_compressed_format_when_ffmpeg_present():
     )
     assert audio_format != FALLBACK_FORMAT
     assert manifest.audio_url.endswith(audio_format)
+
+
+async def test_source_refs_are_remapped_when_a_turn_is_dropped():
+    """SourceRef.turn_index must follow the compacted turn list.
+
+    `_build_source_refs` numbers refs against the ORIGINAL script, but turns
+    whose TTS failed are dropped from the manifest. Passing refs through
+    unchanged meant a ref for a dropped turn attached to whatever unrelated
+    turn now sat at that index, and every later ref was off by one or pointed
+    past the end — so a show-notes tap would seek to the wrong moment and the
+    wrong source would be credited for a claim. That is a rule 3 grounding
+    failure, not cosmetics: the audit trail would confidently cite the wrong
+    thing.
+    """
+
+    class FlakyTTS(FakeTTSProvider):
+        async def synthesize(self, text: str, voice_id: str) -> bytes:
+            if "boom" in text:
+                raise RuntimeError("synthetic TTS failure")
+            return await super().synthesize(text, voice_id)
+
+    turns = [
+        Turn(speaker="A", segment=Segment.COLD_OPEN, text="Good morning."),
+        Turn(speaker="B", segment=Segment.COLD_OPEN, text="This will boom."),
+        Turn(speaker="A", segment=Segment.WEATHER, text="Still sunny."),
+    ]
+    sources = [
+        SourceRef(
+            turn_index=0, title="kept-first", url=None,
+            source_name="A", source_type=SourceType.EMAIL,
+        ),
+        SourceRef(
+            turn_index=1, title="belongs-to-dropped-turn", url=None,
+            source_name="B", source_type=SourceType.EMAIL,
+        ),
+        SourceRef(
+            turn_index=2, title="kept-last", url=None,
+            source_name="C", source_type=SourceType.EMAIL,
+        ),
+    ]
+
+    _, manifest, _ = await synthesize_briefing(
+        turns, tts=FlakyTTS(), briefing_id="x",
+        audio_url_for=lambda fmt: "url", sources=sources,
+    )
+
+    # The ref for the dropped turn is gone, not silently reattached.
+    titles = [s.title for s in manifest.sources]
+    assert "belongs-to-dropped-turn" not in titles
+
+    # Survivors point at the turns they actually describe.
+    by_title = {s.title: s.turn_index for s in manifest.sources}
+    assert by_title["kept-first"] == 0
+    assert by_title["kept-last"] == 1, "index 2 no longer exists after compaction"
+    assert all(s.turn_index < len(manifest.turns) for s in manifest.sources)
