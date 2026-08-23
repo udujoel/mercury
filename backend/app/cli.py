@@ -79,18 +79,23 @@ async def _generate(briefing_id: str, length: BriefingLength) -> int:
         manifest.briefing_id, len(manifest.turns), manifest.duration_ms / 1000,
     )
 
-    # Surface a degraded briefing to the runner. A GitHub ::warning:: shows up
-    # on the run summary, so a briefing that shipped without the user's actual
-    # day is visible without reading the log — the first real run produced
-    # exactly that and passed silently.
-    segments = {s["id"] for s in manifest.segments}
-    missing = [s for s in ("calendar", "inbox") if s not in segments]
-    if missing:
+    # Surface a degraded briefing to the runner. A GitHub ::warning:: shows on
+    # the run summary, so a briefing that shipped without the user's actual day
+    # is visible without reading the log.
+    #
+    # Keyed off the ingestion failures, NOT the manifest's segment ids: the
+    # script chain requires all seven canonical segments, so "calendar" and
+    # "inbox" are present even when nothing was behind them. An earlier version
+    # of this check inspected segment ids and could never fire.
+    from app.pipeline.generate import failed_personal_sources
+
+    failed = failed_personal_sources()
+    if failed:
         print(
             f"::warning::Briefing {manifest.briefing_id} shipped without "
-            f"{' and '.join(missing)}. It generated successfully but is "
-            "missing the personal content Mercury exists for — check the "
-            "ingestion errors above."
+            f"{' and '.join(failed)}. It generated successfully but is missing "
+            "personal content Mercury exists for — see the ingestion errors "
+            "above."
         )
     return 0
 

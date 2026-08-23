@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -50,8 +51,15 @@ def _token_path() -> Path:
 
 
 def credentials_available() -> bool:
-    """True if a credentials.json is present, i.e. a --live run is possible."""
-    return _credentials_path().exists()
+    """True if a live run is possible at all.
+
+    A cached token.json is sufficient on its own — see get_credentials. This
+    used to check only for credentials.json, which meant that on a box
+    provisioned the way the Actions runner is (token present, client file
+    absent — now the supported deployment shape) the spikes silently fell back
+    to fixtures and printed fixture data that looked like a real inbox.
+    """
+    return _token_path().exists() or _credentials_path().exists()
 
 
 def get_credentials() -> Credentials:
@@ -84,7 +92,26 @@ def get_credentials() -> Credentials:
         return creds
 
     if creds and creds.expired and creds.refresh_token:
-        creds.refresh(Request())
+        try:
+            creds.refresh(Request())
+        except RefreshError as exc:
+            # The single most likely production failure in this project, and
+            # it arrives as a bare "invalid_grant" that says nothing. While
+            # the OAuth consent screen is in Testing mode Google expires
+            # refresh tokens after SEVEN DAYS, so an unattended schedule stops
+            # weekly. Name the cause and the permanent fix, or the same
+            # breakage looks like a different bug every time.
+            raise MissingCredentialsError(
+                f"The stored Google token at {token_path} could not be "
+                f"refreshed: {exc}\n"
+                "The usual cause is the OAuth consent screen still being in "
+                "Testing mode, where Google expires refresh tokens after 7 "
+                "days. Fix it permanently: Google Cloud Console -> Google "
+                "Auth Platform -> Audience -> Publish app. For a single user "
+                "on read-only scopes this needs no verification review.\n"
+                "Then re-mint token.json locally and update the "
+                "GOOGLE_OAUTH_TOKEN_JSON secret."
+            ) from exc
         token_path.write_text(creds.to_json())
         return creds
 

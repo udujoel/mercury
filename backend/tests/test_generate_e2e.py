@@ -324,3 +324,12 @@ async def test_both_personal_sources_failing_is_logged_loudly(caplog, tmp_path):
     assert any(
         "BOTH personal sources failed" in r.message for r in caplog.records
     ), "a briefing with no calendar and no inbox must say so"
+
+    # And it must be REPORTABLE, not just logged. The CLI keys its
+    # ::warning:: off this rather than off the manifest's segment ids: the
+    # script chain requires all seven canonical segments, so "calendar" and
+    # "inbox" are present even when nothing was behind them, and a check
+    # based on segment ids could never fire.
+    from app.pipeline.generate import failed_personal_sources
+
+    assert sorted(failed_personal_sources()) == ["calendar", "email"]
