@@ -23,6 +23,15 @@ on:
         default: "standard"
         type: choice
         options: [express, standard, full]
+      briefing_id:
+        description: "Briefing id (YYYY-MM-DD). Blank = today, local."
+        required: false
+        type: string
+      force:
+        description: "Regenerate even if this briefing already exists"
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   # Never two generations at once — each costs real Gemini and TTS spend.
@@ -143,12 +152,27 @@ jobs:
           USER_NAME: ${{ secrets.USER_NAME }}
           USER_TIMEZONE: ${{ secrets.USER_TIMEZONE }}
           BRIEFING_LENGTH: ${{ inputs.length || 'standard' }}
+          # Passed as env, not interpolated into the command. Expression
+          # substitution happens BEFORE the shell runs, so an id containing a
+          # space or a semicolon would be parsed as shell syntax rather than
+          # treated as an argument. GitHub's own hardening guidance.
+          BRIEFING_ID: ${{ inputs.briefing_id }}
+          FORCE: ${{ inputs.force }}
           STORAGE_BACKEND: r2
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
-        run: python -m app.cli generate
+        run: |
+          # --force exists because generation is idempotent: a briefing that
+          # already exists is a no-op. Correct for a cron that may fire twice,
+          # but it also meant a briefing generated from a BROKEN run could
+          # never be replaced — the first deployment shipped one with no
+          # inbox and no calendar in it, and re-running simply declined.
+          args=()
+          if [ -n "$BRIEFING_ID" ]; then args+=(--briefing-id "$BRIEFING_ID"); fi
+          if [ "$FORCE" = "true" ]; then args+=(--force); fi
+          python -m app.cli generate "${args[@]}"
 
       - name: Scrub credentials
         # Belt and braces. The runner is destroyed anyway, but a half-failed

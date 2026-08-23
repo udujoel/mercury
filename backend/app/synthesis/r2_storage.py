@@ -143,6 +143,16 @@ class R2Storage:
                 return data, AUDIO_MEDIA_TYPES.get(fmt, "application/octet-stream")
         return None
 
+    def delete_audio(self, briefing_id: str) -> None:
+        for fmt in KNOWN_AUDIO_FORMATS:
+            key = self._audio_key(briefing_id, fmt)
+            try:
+                self._client.delete_object(Bucket=self._bucket, Key=key)
+            except Exception:
+                # Deleting a key that is not there is fine; anything else is
+                # worth knowing about but must not stop a regeneration.
+                log.debug("R2 delete of %s did nothing", key, exc_info=True)
+
     # ── internals ─────────────────────────────────────────────
 
     @staticmethod

@@ -53,6 +53,17 @@ class BriefingStorage(Protocol):
         """Returns (audio_bytes, media_type), or None if not found."""
         ...
 
+    def delete_audio(self, briefing_id: str) -> None:
+        """Remove every stored audio format for this briefing.
+
+        Needed before a forced regeneration. `load_audio` returns the FIRST
+        format it finds in KNOWN_AUDIO_FORMATS order, so an m4a left behind by
+        an earlier run outranks a freshly written wav — the phone would play
+        the old audio against the new manifest and every turn boundary would
+        be wrong.
+        """
+        ...
+
 
 class LocalFilesystemStorage:
     """Writes audio + manifest JSON under `settings.audio_output_dir`."""
@@ -113,6 +124,10 @@ class LocalFilesystemStorage:
                 media_type = AUDIO_MEDIA_TYPES.get(fmt, "application/octet-stream")
                 return path.read_bytes(), media_type
         return None
+
+    def delete_audio(self, briefing_id: str) -> None:
+        for fmt in KNOWN_AUDIO_FORMATS:
+            self._audio_path(briefing_id, fmt).unlink(missing_ok=True)
 
 
 def build_storage() -> BriefingStorage:
