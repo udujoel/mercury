@@ -95,13 +95,41 @@ Your own risk register rates "OAuth refresh token expires and the scheduler
 breaks silently" as High impact, High likelihood. This is that risk, and this
 is the mitigation.
 
+## The read Worker
+
+Generation writes to R2. Nothing could read it, for two reasons:
+
+- the app asks for `/briefing/{id}`; R2 stores `{id}.manifest.json`. A bucket
+  serves flat object keys, not routes.
+- **R2 buckets are private by default.** There is no public URL, and putting
+  R2 credentials in an iOS app is not an option.
+
+`worker/` closes that gap. It sits in front of the bucket, translates the
+routes, and checks the same `X-Mercury-Token` header the FastAPI backend uses
+— so the iOS client needs no changes, only a different `API_HOST`.
+
+The bucket stays private; only the Worker holds the binding.
+
+```bash
+npx wrangler login          # interactive, once
+cd worker
+npx wrangler secret put MERCURY_API_TOKEN   # same value as backend/.env
+npx wrangler deploy
+```
+
+Deploying prints a `*.workers.dev` URL. That becomes `API_HOST` below.
+
+**Cost: zero.** Workers free tier is 100,000 requests a day; Mercury makes
+about two. R2 free tier is 10GB with no egress charge; a 7-day retention of
+~3MB briefings uses about 20MB.
+
 ## Pointing the iPhone at R2
 
 `ios/Mercury/Secrets.xcconfig` (gitignored):
 
 ```
 API_SCHEME = https
-API_HOST = <your-bucket>.<account>.r2.cloudflarestorage.com
+API_HOST = mercury-briefings.<your-subdomain>.workers.dev
 MERCURY_API_TOKEN = <same value as the Actions secret>
 ```
 
