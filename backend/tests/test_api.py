@@ -23,6 +23,7 @@ from app.api import briefing as briefing_api
 from app.core.config import get_settings
 from app.core.schemas import BriefingManifest
 from app.main import app
+from app.synthesis.storage import LocalFilesystemStorage
 from tests.conftest import TEST_API_TOKEN
 
 
@@ -238,3 +239,77 @@ def test_live_default_requires_a_google_user_token(monkeypatch, tmp_path):
     get_settings.cache_clear()
 
     assert briefing_api._credentials_configured() is True
+
+
+# ──────────────────────────────────────────────────────────────
+# CLI --force
+# ──────────────────────────────────────────────────────────────
+
+
+def _manifest_for(briefing_id: str) -> BriefingManifest:
+    return BriefingManifest(
+        briefing_id=briefing_id,
+        generated_at=datetime(2026, 8, 23, 5, 0, tzinfo=UTC),
+        duration_ms=1000,
+        audio_url=f"/briefing/{briefing_id}/audio",
+        segments=[], turns=[], sources=[],
+    )
+
+
+def _run_cli(briefing_id, *, force=False):
+    from app.cli import _generate
+    from app.core.schemas import BriefingLength
+
+    return asyncio.run(_generate(briefing_id, BriefingLength.STANDARD, force=force))
+
+
+def _prepare(monkeypatch, tmp_path, generated: list):
+    """Point the CLI at a tmp store holding an existing briefing, and record
+    whether generation actually ran."""
+    monkeypatch.setenv("AUDIO_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setenv("STORAGE_BACKEND", "local")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    get_settings.cache_clear()
+
+    LocalFilesystemStorage(base_dir=tmp_path).save(
+        "2026-08-23", b"OLD", "m4a", _manifest_for("2026-08-23")
+    )
+
+    import app.pipeline.generate as gen_mod
+
+    async def _fake_generate(**kwargs):
+        generated.append(kwargs.get("briefing_id"))
+        return _manifest_for("2026-08-23")
+
+    monkeypatch.setattr(gen_mod, "generate_briefing", _fake_generate)
+    monkeypatch.setattr(
+        "app.providers.gemini.GeminiProvider", lambda *a, **k: object()
+    )
+    monkeypatch.setattr(
+        "app.providers.google_tts.GoogleTTSProvider", lambda *a, **k: object()
+    )
+
+
+def test_cli_skips_an_existing_briefing_without_force(monkeypatch, tmp_path):
+    """Idempotence: the cron may fire more than once, and each run costs real
+    Gemini and TTS spend."""
+    generated: list = []
+    _prepare(monkeypatch, tmp_path, generated)
+
+    assert _run_cli("2026-08-23") == 0
+    assert generated == [], "an existing briefing must not be regenerated"
+
+
+def test_cli_force_regenerates_an_existing_briefing(monkeypatch, tmp_path):
+    """--force exists because a briefing from a BROKEN run could otherwise
+    never be replaced.
+
+    The first real deployment shipped a briefing with no inbox and no calendar
+    in it, and re-running the workflow simply declined to touch it — leaving
+    the bad one as the briefing for that day.
+    """
+    generated: list = []
+    _prepare(monkeypatch, tmp_path, generated)
+
+    assert _run_cli("2026-08-23", force=True) == 0
+    assert generated == ["2026-08-23"], "--force must actually regenerate"

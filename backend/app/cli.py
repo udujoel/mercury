@@ -43,7 +43,9 @@ def _today_briefing_id(tz_name: str) -> str:
     return datetime.now(tz).strftime("%Y-%m-%d")
 
 
-async def _generate(briefing_id: str, length: BriefingLength) -> int:
+async def _generate(
+    briefing_id: str, length: BriefingLength, *, force: bool = False
+) -> int:
     from app.pipeline.generate import generate_briefing
     from app.synthesis.storage import build_storage
 
@@ -53,9 +55,15 @@ async def _generate(briefing_id: str, length: BriefingLength) -> int:
         log.error("storage is not configured: %s", exc)
         return 2
 
-    if storage.load_manifest(briefing_id) is not None:
-        log.info("briefing %s already exists; nothing to do", briefing_id)
+    if not force and storage.load_manifest(briefing_id) is not None:
+        log.info(
+            "briefing %s already exists; nothing to do (pass --force to "
+            "regenerate, e.g. after fixing a run that shipped degraded)",
+            briefing_id,
+        )
         return 0
+    if force:
+        log.info("--force: regenerating %s even though it may exist", briefing_id)
 
     try:
         from app.providers.gemini import GeminiProvider
@@ -110,6 +118,11 @@ def main(argv: list[str] | None = None) -> int:
     gen = sub.add_parser("generate", help="generate today's briefing")
     gen.add_argument("--briefing-id", default=None, help="defaults to today, local")
     gen.add_argument(
+        "--force",
+        action="store_true",
+        help="regenerate even if this briefing already exists",
+    )
+    gen.add_argument(
         "--length",
         default=None,
         choices=[b.value for b in BriefingLength],
@@ -127,7 +140,7 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError:
             log.error("invalid briefing length %r", raw_length)
             return 2
-        return asyncio.run(_generate(briefing_id, length))
+        return asyncio.run(_generate(briefing_id, length, force=args.force))
 
     return 2
 
