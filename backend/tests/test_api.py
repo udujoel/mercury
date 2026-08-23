@@ -313,3 +313,14 @@ def test_cli_force_regenerates_an_existing_briefing(monkeypatch, tmp_path):
 
     assert _run_cli("2026-08-23", force=True) == 0
     assert generated == ["2026-08-23"], "--force must actually regenerate"
+
+
+def test_cli_rejects_a_malformed_briefing_id(monkeypatch, tmp_path):
+    """A malformed id silently becomes a storage key nothing ever reads."""
+    from app.cli import main
+
+    monkeypatch.setenv("AUDIO_OUTPUT_DIR", str(tmp_path))
+    get_settings.cache_clear()
+
+    for bad in ("today", "2026/08/23", "2026-8-23", "2026-08-23; rm -rf ~"):
+        assert main(["generate", "--briefing-id", bad]) == 2, bad

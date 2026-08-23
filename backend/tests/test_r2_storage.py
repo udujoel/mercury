@@ -191,3 +191,28 @@ def test_permission_error_on_manifest_also_propagates(monkeypatch):
 
     with pytest.raises(_ClientError):
         storage.load_manifest("2026-08-22")
+
+
+def test_delete_audio_removes_every_format(monkeypatch):
+    """Forced regeneration must not leave a stale file in the other format.
+
+    `load_audio` returns the FIRST format it finds in KNOWN_AUDIO_FORMATS
+    order, so an m4a left behind by an earlier run outranks a freshly written
+    wav — the phone would play the old audio against the new manifest and
+    every turn boundary would be wrong.
+    """
+    storage = _configured(monkeypatch)
+    client = storage.__dict__["_client"]
+
+    def _delete(*, Bucket, Key):  # noqa: N803
+        client.objects.pop(Key, None)
+
+    client.delete_object = _delete
+
+    client.objects["2026-08-23.m4a"] = (b"OLD", "audio/mp4")
+    client.objects["2026-08-23.wav"] = (b"NEW", "audio/wav")
+
+    storage.delete_audio("2026-08-23")
+
+    assert "2026-08-23.m4a" not in client.objects
+    assert "2026-08-23.wav" not in client.objects

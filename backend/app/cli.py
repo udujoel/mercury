@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import re
 import sys
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -63,7 +64,20 @@ async def _generate(
         )
         return 0
     if force:
-        log.info("--force: regenerating %s even though it may exist", briefing_id)
+        # Remove every stored format first. save() overwrites only the format
+        # it writes, and load_audio returns the FIRST format it finds — so an
+        # m4a left by an earlier run would outrank a freshly written wav and
+        # the phone would play old audio against the new manifest.
+        log.info("--force: clearing existing audio for %s before regenerating",
+                 briefing_id)
+        try:
+            storage.delete_audio(briefing_id)
+        except Exception:
+            log.exception(
+                "could not clear existing audio for %s; a stale file in the "
+                "other format may be served instead of the new one",
+                briefing_id,
+            )
 
     try:
         from app.providers.gemini import GeminiProvider
@@ -134,6 +148,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "generate":
         briefing_id = args.briefing_id or _today_briefing_id(settings.user_timezone)
+        # A malformed id silently becomes a storage key nothing ever reads.
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", briefing_id):
+            log.error(
+                "briefing id %r is not YYYY-MM-DD; refusing to write a "
+                "briefing nothing will look for", briefing_id,
+            )
+            return 2
         raw_length = args.length or settings.briefing_length
         try:
             length = BriefingLength(raw_length)
