@@ -293,3 +293,34 @@ async def test_generate_briefing_degrades_when_every_optional_source_fails(stora
 
     assert manifest.duration_ms > 0
     assert len(manifest.turns) > 0
+
+
+async def test_both_personal_sources_failing_is_logged_loudly(caplog, tmp_path):
+    """Rule 7 ships the briefing; it should not ship it quietly.
+
+    A real Actions run dropped BOTH email and calendar — the auth demanded a
+    credentials.json the runner did not have — and produced a
+    weather-and-news briefing that exited 0. A green tick over a briefing
+    missing the entire personal half of the product. The degradation is
+    correct; the silence was not.
+    """
+
+    async def _failing_emails(**kwargs):
+        raise RuntimeError("simulated Gmail outage")
+
+    async def _failing_events(**kwargs):
+        raise RuntimeError("simulated Calendar outage")
+
+    with caplog.at_level("ERROR"):
+        await generate_briefing(
+            llm=FakeLLMProvider(),
+            tts=FakeTTSProvider(),
+            briefing_id="degraded-day",
+            storage=LocalFilesystemStorage(base_dir=tmp_path),
+            fetch_emails=_failing_emails,
+            fetch_events=_failing_events,
+        )
+
+    assert any(
+        "BOTH personal sources failed" in r.message for r in caplog.records
+    ), "a briefing with no calendar and no inbox must say so"

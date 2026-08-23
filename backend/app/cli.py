@@ -78,6 +78,20 @@ async def _generate(briefing_id: str, length: BriefingLength) -> int:
         "generated %s: %d turns, %.0fs of audio",
         manifest.briefing_id, len(manifest.turns), manifest.duration_ms / 1000,
     )
+
+    # Surface a degraded briefing to the runner. A GitHub ::warning:: shows up
+    # on the run summary, so a briefing that shipped without the user's actual
+    # day is visible without reading the log — the first real run produced
+    # exactly that and passed silently.
+    segments = {s["id"] for s in manifest.segments}
+    missing = [s for s in ("calendar", "inbox") if s not in segments]
+    if missing:
+        print(
+            f"::warning::Briefing {manifest.briefing_id} shipped without "
+            f"{' and '.join(missing)}. It generated successfully but is "
+            "missing the personal content Mercury exists for — check the "
+            "ingestion errors above."
+        )
     return 0
 
 
