@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -50,50 +51,91 @@ def _token_path() -> Path:
 
 
 def credentials_available() -> bool:
-    """True if a credentials.json is present, i.e. a --live run is possible."""
-    return _credentials_path().exists()
+    """True if a live run is possible at all.
+
+    A cached token.json is sufficient on its own — see get_credentials. This
+    used to check only for credentials.json, which meant that on a box
+    provisioned the way the Actions runner is (token present, client file
+    absent — now the supported deployment shape) the spikes silently fell back
+    to fixtures and printed fixture data that looked like a real inbox.
+    """
+    return _token_path().exists() or _credentials_path().exists()
 
 
 def get_credentials() -> Credentials:
     """
-    Return valid user credentials for the scopes above, running the
-    installed-app OAuth flow (opens a browser) on first use and caching the
-    result to token.json. Refreshes silently when the cached token expires.
+    Return valid user credentials for the scopes above.
 
-    Raises MissingCredentialsError with the exact Console steps when
-    credentials.json cannot be found. Never fabricates credentials.
+    A cached token.json is enough on its own: `InstalledAppFlow` writes the
+    client_id and client_secret into it, so refreshing needs no other file.
+    credentials.json is required ONLY to run the interactive browser flow for
+    the first authorisation.
+
+    That ordering is the whole point. Demanding credentials.json up front made
+    the GitHub Actions run fail both Gmail and Calendar ingestion with
+    "Missing OAuth client file" while holding a perfectly valid token — and
+    because rule 7 drops a failed source rather than failing the run, the
+    briefing shipped with no email and no calendar in it. A green tick over a
+    briefing missing the entire personal half of the product.
+
+    An interactive flow can never run unattended anyway, so requiring the file
+    that only the interactive flow needs was backwards.
     """
     creds_path = _credentials_path()
     token_path = _token_path()
-
-    if not creds_path.exists():
-        raise MissingCredentialsError(
-            f"Missing OAuth client file: {creds_path}\n"
-            "This spike needs a Google Cloud OAuth client to run against the "
-            "live API. To fix:\n"
-            "  1. https://console.cloud.google.com/apis/library -> enable "
-            "'Gmail API' and 'Google Calendar API' for your project.\n"
-            "  2. https://console.cloud.google.com/apis/credentials/consent "
-            "-> configure the OAuth consent screen in Testing mode, add "
-            "yourself as the sole test user.\n"
-            "  3. https://console.cloud.google.com/apis/credentials -> "
-            "Create Credentials -> OAuth client ID -> Application type "
-            "'Desktop app'.\n"
-            "  4. Download the JSON and save it as "
-            f"{creds_path} (or point GOOGLE_CREDENTIALS_FILE at it).\n"
-            "Run with --fixture instead to exercise the offline path."
-        )
 
     creds: Credentials | None = None
     if token_path.exists():
         creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
 
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(str(creds_path), SCOPES)
-            creds = flow.run_local_server(port=0)
-        token_path.write_text(creds.to_json())
+    if creds and creds.valid:
+        return creds
 
+    if creds and creds.expired and creds.refresh_token:
+        try:
+            creds.refresh(Request())
+        except RefreshError as exc:
+            # The single most likely production failure in this project, and
+            # it arrives as a bare "invalid_grant" that says nothing. While
+            # the OAuth consent screen is in Testing mode Google expires
+            # refresh tokens after SEVEN DAYS, so an unattended schedule stops
+            # weekly. Name the cause and the permanent fix, or the same
+            # breakage looks like a different bug every time.
+            raise MissingCredentialsError(
+                f"The stored Google token at {token_path} could not be "
+                f"refreshed: {exc}\n"
+                "The usual cause is the OAuth consent screen still being in "
+                "Testing mode, where Google expires refresh tokens after 7 "
+                "days. Fix it permanently: Google Cloud Console -> Google "
+                "Auth Platform -> Audience -> Publish app. For a single user "
+                "on read-only scopes this needs no verification review.\n"
+                "Then re-mint token.json locally and update the "
+                "GOOGLE_OAUTH_TOKEN_JSON secret."
+            ) from exc
+        token_path.write_text(creds.to_json())
+        return creds
+
+    # Only now is the interactive flow unavoidable, and only now does the
+    # client file actually matter.
+    if not creds_path.exists():
+        raise MissingCredentialsError(
+            f"No usable token at {token_path}, and no OAuth client file at "
+            f"{creds_path} to authorise a new one.\n"
+            "A cached token.json alone is enough for unattended runs — it "
+            "carries its own client_id and client_secret. You only need "
+            "credentials.json to create that token in the first place:\n"
+            "  1. https://console.cloud.google.com/apis/library -> enable "
+            "'Gmail API' and 'Google Calendar API'.\n"
+            "  2. https://console.cloud.google.com/apis/credentials/consent "
+            "-> OAuth consent screen, add yourself as a test user.\n"
+            "  3. https://console.cloud.google.com/apis/credentials -> "
+            "Create Credentials -> OAuth client ID -> 'Desktop app'.\n"
+            f"  4. Save the JSON as {creds_path} and run a spike locally "
+            "once to mint token.json.\n"
+            "Run with --fixture instead to exercise the offline path."
+        )
+
+    flow = InstalledAppFlow.from_client_secrets_file(str(creds_path), SCOPES)
+    creds = flow.run_local_server(port=0)
+    token_path.write_text(creds.to_json())
     return creds

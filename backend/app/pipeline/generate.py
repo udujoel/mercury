@@ -225,7 +225,44 @@ async def _ingest_concurrently(
             out.append(default)
         else:
             out.append(result)
+
+    # Rule 7 says any source can fail and the briefing still ships. It does
+    # not say that should be quiet when the source that failed IS the product.
+    # A real Actions run dropped BOTH email and calendar, shipped a
+    # weather-and-news briefing, and exited 0 — a green tick over a briefing
+    # missing the entire personal half of what Mercury is for.
+    personal_failed = [
+        label
+        for label, result in zip(labels[:2], results[:2], strict=True)
+        if isinstance(result, BaseException)
+    ]
+    _record_failed_sources(personal_failed)
+    if len(personal_failed) == 2:
+        log.error(
+            "BOTH personal sources failed (%s) — this briefing has no calendar "
+            "and no inbox in it, which is most of the point. Shipping it "
+            "anyway per rule 7, but this is not a healthy run.",
+            ", ".join(personal_failed),
+        )
+
     return tuple(out)  # type: ignore[return-value]
+
+
+# Set by the ingestion gather so callers (app.cli) can report a degraded run
+# without re-deriving it. Inferring from the manifest does not work: the script
+# chain REQUIRES all seven canonical segments, so "calendar" and "inbox" are
+# present even when there was no calendar and no inbox data behind them.
+_failed_personal_sources: list[str] = []
+
+
+def _record_failed_sources(failed: list[str]) -> None:
+    _failed_personal_sources.clear()
+    _failed_personal_sources.extend(failed)
+
+
+def failed_personal_sources() -> list[str]:
+    """Which of email/calendar failed during the most recent run."""
+    return list(_failed_personal_sources)
 
 
 def _score_emails(
