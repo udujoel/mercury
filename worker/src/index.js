@@ -20,6 +20,12 @@ const AUDIO_TYPES = {
 // Same header the FastAPI backend uses, so the client is unchanged.
 const TOKEN_HEADER = "X-Mercury-Token";
 
+// Same floor as MIN_TOKEN_LENGTH in app/core/auth.py. Without it the Worker
+// would happily serve private briefings behind a secret the backend rejects
+// as too weak — two halves of one system disagreeing about what counts as
+// authenticated, with the more exposed half being the more permissive one.
+const MIN_TOKEN_LENGTH = 32;
+
 /** Constant-time compare — a plain === leaks the token prefix through timing. */
 function tokensMatch(given, expected) {
   if (typeof given !== "string" || given.length !== expected.length) return false;
@@ -42,6 +48,19 @@ function json(body, status = 200) {
  * so this also stops path traversal ("../other-bucket-object") reaching the
  * bucket at all.
  */
+/**
+ * decodeURIComponent THROWS on a malformed escape such as "%zz", which would
+ * otherwise escape the handler and surface as an uncaught 500 on an
+ * authenticated request. A bad id is a client error, not a server one.
+ */
+function safeDecode(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+}
+
 function validBriefingId(id) {
   return /^\d{4}-\d{2}-\d{2}$/.test(id);
 }
@@ -75,15 +94,34 @@ export default {
         503,
       );
     }
+    if (env.MERCURY_API_TOKEN.length < MIN_TOKEN_LENGTH) {
+      // A placeholder like "changeme" reads as configured and is worse than
+      // blank. Refuse, exactly as the backend does.
+      return json(
+        {
+          detail:
+            `MERCURY_API_TOKEN must be at least ${MIN_TOKEN_LENGTH} characters.`,
+        },
+        503,
+      );
+    }
     if (!tokensMatch(request.headers.get(TOKEN_HEADER) || "", env.MERCURY_API_TOKEN)) {
       return json({ detail: `Missing or invalid ${TOKEN_HEADER}.` }, 401);
     }
 
     const audio = url.pathname.match(/^\/briefing\/([^/]+)\/audio$/);
-    if (audio) return serveAudio(env, decodeURIComponent(audio[1]));
+    if (audio) {
+      const id = safeDecode(audio[1]);
+      if (id === null) return json({ detail: "Invalid briefing id." }, 400);
+      return serveAudio(env, id);
+    }
 
     const manifest = url.pathname.match(/^\/briefing\/([^/]+)$/);
-    if (manifest) return serveManifest(env, decodeURIComponent(manifest[1]));
+    if (manifest) {
+      const id = safeDecode(manifest[1]);
+      if (id === null) return json({ detail: "Invalid briefing id." }, 400);
+      return serveManifest(env, id);
+    }
 
     return json({ detail: "Not found." }, 404);
   },

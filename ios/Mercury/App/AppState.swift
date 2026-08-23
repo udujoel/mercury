@@ -127,6 +127,13 @@ final class AppState {
     /// the backend to make one. A 404 is the ordinary "not generated yet"
     /// answer, not an error worth surfacing.
     private func fetchTodayOrGenerate() async throws -> BriefingManifest {
+        // Learn the server's timezone BEFORE deriving the id. BriefingClock
+        // falls back to the device zone until it has heard from /health, so
+        // on a first launch in a different zone the app would ask for the
+        // wrong date, get a 404, and fall through to a generate that the
+        // read-only Worker answers with 405. Cheap, and only actually
+        // fetches once per launch.
+        await api.syncServerClock()
         let today = AppDelegate.briefingId(for: .now)
         do {
             return try await api.fetchManifest(briefingId: today)
@@ -134,7 +141,23 @@ final class AppState {
             guard case .badStatus(let code, _) = error, code == 404 else { throw error }
             print("[Mercury] No briefing for \(today) yet; requesting generation.")
         }
-        return try await api.generateBriefing(length: briefingLength)
+
+        do {
+            return try await api.generateBriefing(length: briefingLength)
+        } catch let error as APIError {
+            // A read-only backend (the deployed Worker) answers 405 here.
+            // That is not an error the user can act on by retrying — it means
+            // the scheduled job has not produced today's briefing yet — so
+            // say that rather than surfacing "Backend returned 405".
+            if case .badStatus(405, _) = error {
+                throw APIError.badStatus(
+                    404,
+                    "Today's briefing hasn't been generated yet. It's produced "
+                    + "automatically each morning — try again shortly."
+                )
+            }
+            throw error
+        }
     }
 
     /// SECONDARY/PRIMARY-layer entry point (ADR-001, PRD 3.6): downloads a

@@ -116,10 +116,35 @@ final class PlayBriefingRoutingTests: XCTestCase {
 
         await state.playBriefing()
 
-        XCTAssertEqual(api.calls.first, "fetchManifest",
-                       "the card must ask for today's briefing first")
+        XCTAssertEqual(api.calls.prefix(2).map { $0 },
+                       ["syncServerClock", "fetchManifest"],
+                       "learn the server zone, then ask for today's briefing")
         XCTAssertFalse(api.calls.contains("generateBriefing"),
                        "it must not POST when a briefing already exists")
+    }
+
+    /// A non-404 must propagate WITHOUT generating.
+    ///
+    /// The test below covers the 404 branch; this covers the other half its
+    /// name promises. Without it, a 500 from the backend could quietly
+    /// trigger a generate — which is the original generate-first bug wearing
+    /// a different hat, and against the read-only Worker would turn one
+    /// confusing error into another.
+    func testNon404FailurePropagatesWithoutGenerating() async {
+        let api = RecordingAPI(
+            manifestResult: .failure(APIError.badStatus(500, "server exploded"))
+        )
+        let state = AppState(api: api)
+
+        await state.playBriefing()
+
+        XCTAssertEqual(api.calls, ["syncServerClock", "fetchManifest"],
+                       "a 500 must not be treated as 'not generated yet'")
+        if case .failed(let message) = state.loadState {
+            XCTAssertTrue(message.contains("500"), "the real error must surface")
+        } else {
+            XCTFail("expected a failed load state, got \(state.loadState)")
+        }
     }
 
     /// A 404 is the ordinary "not generated yet" answer, and only then is
@@ -132,7 +157,7 @@ final class PlayBriefingRoutingTests: XCTestCase {
 
         await state.playBriefing()
 
-        XCTAssertEqual(api.calls.first, "fetchManifest")
+        XCTAssertTrue(api.calls.contains("fetchManifest"))
         XCTAssertTrue(api.calls.contains("generateBriefing"),
                       "a missing briefing should fall back to generating one")
     }

@@ -30,7 +30,16 @@ each morning.
     npm install -g wrangler
     cd worker
     wrangler secret put MERCURY_API_TOKEN     # same value as backend/.env
+    wrangler secret put USER_TIMEZONE         # same value as backend/.env
+
     wrangler deploy
+
+USER_TIMEZONE is not optional. `/health` reports it, and the iOS client caches
+that value (`BriefingClock`) to derive briefing ids locally — the background
+task has no other way to know which briefing to prefetch. Leave it unset and
+`/health` reports UTC, so the phone asks for the wrong day whenever the user's
+zone is not UTC. That is the exact failure `BriefingClock.swift` exists to
+prevent.
 
 `wrangler.toml` binds the `mercury-briefings` bucket. Deploying prints the
 `*.workers.dev` URL to put in `ios/Mercury/Secrets.xcconfig` as `API_HOST`.
