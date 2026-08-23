@@ -98,10 +98,13 @@ async function serveManifest(env, id) {
   return new Response(object.body, {
     headers: {
       "content-type": "application/json",
-      // A briefing never changes once written, so let the phone skip the
-      // download on a re-open. It is replaced only by an explicit --force
-      // regeneration, which rewrites the object and changes its etag.
-      "cache-control": "public, max-age=3600",
+      // PRIVATE, not public. This response is returned only after a token
+      // check and its body is the transcript of the user's email and
+      // calendar. "public" would authorise shared caches — Cloudflare's own
+      // edge, any proxy in between — to store and re-serve it, which is at
+      // odds with the entire reason the bucket is private. "private" keeps
+      // the client-side caching benefit, the only one actually wanted.
+      "cache-control": "private, max-age=3600",
       etag: object.httpEtag,
     },
   });
@@ -118,8 +121,11 @@ async function serveAudio(env, id) {
       return new Response(object.body, {
         headers: {
           "content-type": AUDIO_TYPES[ext],
-          "content-length": String(object.size),
-          "cache-control": "public, max-age=3600",
+          // No explicit content-length: the runtime derives it from the R2
+          // body. Setting it by hand only adds a way for the declared and
+          // actual byte counts to disagree, which surfaces on the client as
+          // an undiagnosable transport failure.
+          "cache-control": "private, max-age=3600",
           etag: object.httpEtag,
         },
       });

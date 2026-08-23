@@ -97,15 +97,22 @@ final class AppState {
 
     }
 
-    /// Tapping the greeting card is the primary action of the entire app:
-    /// fetch (or generate) the briefing, download its audio, load it into
-    /// the playback engine, and start playing — all before the player
-    /// screen is shown.
+    /// Tapping the greeting card is the primary action of the entire app.
+    ///
+    /// FETCHES FIRST, generates only as a fallback. Per ADR-001 the phone
+    /// never generates: a scheduled job produces the briefing overnight and
+    /// this just plays it. Going straight to generate meant the card failed
+    /// outright against the deployed read-only Worker, which answers 405 to
+    /// any POST — while the briefing the cron had already made sat in R2,
+    /// reachable, and simply never asked for.
+    ///
+    /// The generate fallback is kept for running against a full local
+    /// backend, where producing one on demand is genuinely useful.
     @MainActor
     func playBriefing() async {
         loadState = .loading
         do {
-            let manifest = try await api.generateBriefing(length: briefingLength)
+            let manifest = try await fetchTodayOrGenerate()
             self.manifest = manifest
             let audioURL = try await api.downloadAudio(briefingId: manifest.briefingId)
             try playback.load(manifest: manifest, audioURL: audioURL)
@@ -114,6 +121,20 @@ final class AppState {
         } catch {
             loadState = .failed(error.localizedDescription)
         }
+    }
+
+    /// Today's briefing if the scheduled job has produced one, otherwise ask
+    /// the backend to make one. A 404 is the ordinary "not generated yet"
+    /// answer, not an error worth surfacing.
+    private func fetchTodayOrGenerate() async throws -> BriefingManifest {
+        let today = AppDelegate.briefingId(for: .now)
+        do {
+            return try await api.fetchManifest(briefingId: today)
+        } catch let error as APIError {
+            guard case .badStatus(let code, _) = error, code == 404 else { throw error }
+            print("[Mercury] No briefing for \(today) yet; requesting generation.")
+        }
+        return try await api.generateBriefing(length: briefingLength)
     }
 
     /// SECONDARY/PRIMARY-layer entry point (ADR-001, PRD 3.6): downloads a
