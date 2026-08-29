@@ -97,15 +97,22 @@ final class AppState {
 
     }
 
-    /// Tapping the greeting card is the primary action of the entire app:
-    /// fetch (or generate) the briefing, download its audio, load it into
-    /// the playback engine, and start playing — all before the player
-    /// screen is shown.
+    /// Tapping the greeting card is the primary action of the entire app.
+    ///
+    /// FETCHES FIRST, generates only as a fallback. Per ADR-001 the phone
+    /// never generates: a scheduled job produces the briefing overnight and
+    /// this just plays it. Going straight to generate meant the card failed
+    /// outright against the deployed read-only Worker, which answers 405 to
+    /// any POST — while the briefing the cron had already made sat in R2,
+    /// reachable, and simply never asked for.
+    ///
+    /// The generate fallback is kept for running against a full local
+    /// backend, where producing one on demand is genuinely useful.
     @MainActor
     func playBriefing() async {
         loadState = .loading
         do {
-            let manifest = try await api.generateBriefing(length: briefingLength)
+            let manifest = try await fetchTodayOrGenerate()
             self.manifest = manifest
             let audioURL = try await api.downloadAudio(briefingId: manifest.briefingId)
             try playback.load(manifest: manifest, audioURL: audioURL)
@@ -113,6 +120,43 @@ final class AppState {
             loadState = .ready
         } catch {
             loadState = .failed(error.localizedDescription)
+        }
+    }
+
+    /// Today's briefing if the scheduled job has produced one, otherwise ask
+    /// the backend to make one. A 404 is the ordinary "not generated yet"
+    /// answer, not an error worth surfacing.
+    private func fetchTodayOrGenerate() async throws -> BriefingManifest {
+        // Learn the server's timezone BEFORE deriving the id. BriefingClock
+        // falls back to the device zone until it has heard from /health, so
+        // on a first launch in a different zone the app would ask for the
+        // wrong date, get a 404, and fall through to a generate that the
+        // read-only Worker answers with 405. Cheap, and only actually
+        // fetches once per launch.
+        await api.syncServerClock()
+        let today = AppDelegate.briefingId(for: .now)
+        do {
+            return try await api.fetchManifest(briefingId: today)
+        } catch let error as APIError {
+            guard case .badStatus(let code, _) = error, code == 404 else { throw error }
+            print("[Mercury] No briefing for \(today) yet; requesting generation.")
+        }
+
+        do {
+            return try await api.generateBriefing(length: briefingLength)
+        } catch let error as APIError {
+            // A read-only backend (the deployed Worker) answers 405 here.
+            // That is not an error the user can act on by retrying — it means
+            // the scheduled job has not produced today's briefing yet — so
+            // say that rather than surfacing "Backend returned 405".
+            if case .badStatus(405, _) = error {
+                throw APIError.badStatus(
+                    404,
+                    "Today's briefing hasn't been generated yet. It's produced "
+                    + "automatically each morning — try again shortly."
+                )
+            }
+            throw error
         }
     }
 

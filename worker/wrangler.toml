@@ -1,0 +1,10 @@
+name = "mercury-briefings"
+main = "src/index.js"
+compatibility_date = "2026-08-01"
+
+# The bucket stays PRIVATE. Only this Worker can read it, via the binding
+# below — which is the whole reason the Worker exists rather than making the
+# bucket public.
+[[r2_buckets]]
+binding = "BRIEFINGS"
+bucket_name = "mercury-briefings"

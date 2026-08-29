@@ -66,3 +66,112 @@ final class ManifestDecodingTests: XCTestCase {
         return try decoder.decode(BriefingManifest.self, from: data)
     }
 }
+
+// MARK: - Regression: the card must fetch before generating
+
+/// Records which endpoints the app actually reaches for.
+final class RecordingAPI: APIClientProtocol {
+    var calls: [String] = []
+    var manifestResult: Result<BriefingManifest, Error>
+
+    init(manifestResult: Result<BriefingManifest, Error>) {
+        self.manifestResult = manifestResult
+    }
+
+    func fetchManifest(briefingId: String) async throws -> BriefingManifest {
+        calls.append("fetchManifest")
+        return try manifestResult.get()
+    }
+
+    func generateBriefing(length: BriefingLength) async throws -> BriefingManifest {
+        calls.append("generateBriefing")
+        return ManifestFixtures.minimal
+    }
+
+    func generationStatus(briefingId: String) async throws -> GenerationStatus {
+        calls.append("generationStatus")
+        return GenerationStatus(
+            briefingId: briefingId, status: "ready", elapsedS: nil, error: nil
+        )
+    }
+
+    func downloadAudio(briefingId: String) async throws -> URL {
+        calls.append("downloadAudio")
+        throw APIError.badStatus(404, "no audio in this test")
+    }
+
+    func registerDevice(token: String) async throws { calls.append("registerDevice") }
+    func syncServerClock() async { calls.append("syncServerClock") }
+}
+
+final class PlayBriefingRoutingTests: XCTestCase {
+
+    /// The deployed backend is a read-only Worker that answers 405 to any
+    /// POST. Going straight to generate meant tapping the greeting card
+    /// failed outright, while the briefing the cron had already produced sat
+    /// in R2 and was simply never requested.
+    func testCardFetchesTodayBeforeGenerating() async {
+        let api = RecordingAPI(manifestResult: .success(ManifestFixtures.minimal))
+        let state = AppState(api: api)
+
+        await state.playBriefing()
+
+        XCTAssertEqual(api.calls.prefix(2).map { $0 },
+                       ["syncServerClock", "fetchManifest"],
+                       "learn the server zone, then ask for today's briefing")
+        XCTAssertFalse(api.calls.contains("generateBriefing"),
+                       "it must not POST when a briefing already exists")
+    }
+
+    /// A non-404 must propagate WITHOUT generating.
+    ///
+    /// The test below covers the 404 branch; this covers the other half its
+    /// name promises. Without it, a 500 from the backend could quietly
+    /// trigger a generate — which is the original generate-first bug wearing
+    /// a different hat, and against the read-only Worker would turn one
+    /// confusing error into another.
+    func testNon404FailurePropagatesWithoutGenerating() async {
+        let api = RecordingAPI(
+            manifestResult: .failure(APIError.badStatus(500, "server exploded"))
+        )
+        let state = AppState(api: api)
+
+        await state.playBriefing()
+
+        XCTAssertEqual(api.calls, ["syncServerClock", "fetchManifest"],
+                       "a 500 must not be treated as 'not generated yet'")
+        if case .failed(let message) = state.loadState {
+            XCTAssertTrue(message.contains("500"), "the real error must surface")
+        } else {
+            XCTFail("expected a failed load state, got \(state.loadState)")
+        }
+    }
+
+    /// A 404 is the ordinary "not generated yet" answer, and only then is
+    /// asking the backend to make one appropriate.
+    func testCardFallsBackToGenerateOnlyOn404() async {
+        let api = RecordingAPI(
+            manifestResult: .failure(APIError.badStatus(404, "not found"))
+        )
+        let state = AppState(api: api)
+
+        await state.playBriefing()
+
+        XCTAssertTrue(api.calls.contains("fetchManifest"))
+        XCTAssertTrue(api.calls.contains("generateBriefing"),
+                      "a missing briefing should fall back to generating one")
+    }
+}
+
+enum ManifestFixtures {
+    static var minimal: BriefingManifest {
+        let json = """
+        {"briefing_id":"2026-08-23","generated_at":"2026-08-23T05:00:00Z",
+         "duration_ms":1000,"audio_url":"/briefing/2026-08-23/audio",
+         "segments":[],"turns":[],"sources":[]}
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try! decoder.decode(BriefingManifest.self, from: Data(json.utf8))
+    }
+}
