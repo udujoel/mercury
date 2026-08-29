@@ -44,11 +44,6 @@ function json(body, status = 200) {
 }
 
 /**
- * Reject anything that is not a plain YYYY-MM-DD. The id becomes an R2 key,
- * so this also stops path traversal ("../other-bucket-object") reaching the
- * bucket at all.
- */
-/**
  * decodeURIComponent THROWS on a malformed escape such as "%zz", which would
  * otherwise escape the handler and surface as an uncaught 500 on an
  * authenticated request. A bad id is a client error, not a server one.
@@ -61,6 +56,11 @@ function safeDecode(value) {
   }
 }
 
+/**
+ * Reject anything that is not a plain YYYY-MM-DD. The id becomes an R2 key,
+ * so this also stops path traversal ("../other-bucket-object") reaching the
+ * bucket at all.
+ */
 function validBriefingId(id) {
   return /^\d{4}-\d{2}-\d{2}$/.test(id);
 }
