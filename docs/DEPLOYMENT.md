@@ -97,6 +97,9 @@ is the mitigation.
 
 ## The read Worker
 
+**Deployed:** `https://mercury-briefings.udujoel.workers.dev`
+
+
 Generation writes to R2. Nothing could read it, for two reasons:
 
 - the app asks for `/briefing/{id}`; R2 stores `{id}.manifest.json`. A bucket
@@ -129,7 +132,7 @@ about two. R2 free tier is 10GB with no egress charge; a 7-day retention of
 
 ```
 API_SCHEME = https
-API_HOST = mercury-briefings.<your-subdomain>.workers.dev
+API_HOST = mercury-briefings.udujoel.workers.dev
 MERCURY_API_TOKEN = <same value as the Actions secret>
 ```
 
