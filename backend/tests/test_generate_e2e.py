@@ -70,7 +70,11 @@ def _fake_score_emails(
 
 
 def _fake_select_for_briefing(
-    emails: list[Item], events: list[CalendarEvent], length: BriefingLength
+    emails: list[Item],
+    events: list[CalendarEvent],
+    length: BriefingLength,
+    *,
+    date=None,
 ) -> dict:
     budget = LENGTH_BUDGETS[length]
     selected_emails = emails[: budget["emails"]]
@@ -90,6 +94,7 @@ async def _fake_generate_script(
     length,
     date,
     background_events: list[CalendarEvent] | None = None,
+    aggregated_email_count: int = 0,
     passes: int = 2,
 ) -> tuple[list[Turn], list[SourceRef]]:
     # Exercise the injected LLM (as the real script chain would) without

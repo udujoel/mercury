@@ -340,8 +340,29 @@ def _fence_untrusted(body: str) -> str:
     )
 
 
+def _inbox_policy(aggregated_count: int) -> str:
+    """How the model should treat the emails below the cut. Trusted instruction.
+
+    Outside the fence, for the reason `_calendar_policy` documents: a rule
+    about the data, fenced together with the data, tells the model to obey it
+    and to distrust it in the same breath.
+    """
+    if aggregated_count <= 0:
+        return ""
+    return (
+        f"\n\n{aggregated_count} further emails were below the cut and are "
+        "NOT listed above. They rank lower than everything that is. "
+        "Acknowledge them collectively in at most one short clause — "
+        '"plus eleven others, nothing urgent" — and never invent what any '
+        "of them said, who sent it, or what it was about."
+    )
+
+
 def _flatten_source_text(
-    emails: list[Item], events: list[CalendarEvent], weather: Weather | None
+    emails: list[Item],
+    events: list[CalendarEvent],
+    weather: Weather | None,
+    aggregated_count: int = 0,
 ) -> str:
     """Flatten the day's material into the prompt's source block.
 
@@ -361,6 +382,14 @@ def _flatten_source_text(
         for ev in events
     )
     parts.extend(f"{em.title} {em.author} {em.body}" for em in emails)
+    if aggregated_count > 0:
+        # The count belongs in the SOURCE block, not only in the outline.
+        # check_grounding flags any number in the script that is absent from
+        # this text, so putting the remainder only in the outline prompt
+        # makes the hosts saying "plus 11 others" an UNGROUNDED finding —
+        # flagged as an invention by the pass that exists to catch
+        # inventions, and then "fixed" out of the script.
+        parts.append(f"{aggregated_count} further emails, not individually listed.")
     return _fence_untrusted("\n".join(parts))
 
 
@@ -965,6 +994,7 @@ async def generate_script(
     weather: Weather | None = None,
     length: BriefingLength,
     date: datetime,
+    aggregated_email_count: int = 0,
     passes: int = 2,
 ) -> tuple[list[Turn], list[SourceRef]]:
     """Script chain: outline -> draft (2 passes, the default), or
@@ -987,7 +1017,9 @@ async def generate_script(
         raise ValueError(f"passes must be 2 or 4, got {passes}")
 
     budget = LENGTH_BUDGETS[length]["words"]
-    source_data = _flatten_source_text(emails, events, weather)
+    source_data = _flatten_source_text(
+        emails, events, weather, aggregated_email_count
+    )
 
     outline_prompt = OUTLINE_PROMPT.format(
         # Spell the weekday out rather than handing over an ISO timestamp.
@@ -1014,7 +1046,10 @@ async def generate_script(
             + _calendar_policy(background_events)
         ),
         n_emails=len(emails),
-        emails=_fence_untrusted(_format_emails(emails)),
+        emails=(
+            _fence_untrusted(_format_emails(emails))
+            + _inbox_policy(aggregated_email_count)
+        ),
         n_stories=0,
         stories="(none — Phase 1 has no news clustering)",
         follow_ups="(none)",

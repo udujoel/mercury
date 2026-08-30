@@ -131,7 +131,13 @@ async def generate_briefing(
             "found and no fake was injected). Pass select_for_briefing= "
             "explicitly, or wait for app/pipeline/scoring.py to land."
         )
-    selection = select_for_briefing(scored_emails, events, length)
+    # date=, so "your day" means the briefing day. Ingestion deliberately
+    # fetches today plus 72 hours (PRD F-02) and this is the only place that
+    # narrows it to what gets spoken; without it the calendar segment walked
+    # the next three days under the heading "Your day".
+    selection = select_for_briefing(
+        scored_emails, events, length, date=briefing_date
+    )
 
     if generate_script is None:
         raise RuntimeError(
@@ -144,6 +150,11 @@ async def generate_briefing(
         emails=selection["emails"],
         events=selection["events"],
         background_events=selection.get("background_events", []),
+        # PRD F-05 caps how many emails are read out individually; this is
+        # how many were left over. It was computed and dropped on the floor,
+        # so most of the inbox disappeared without so much as a "plus eleven
+        # others, nothing urgent".
+        aggregated_email_count=selection.get("aggregated_count", 0),
         # Phase 2: outline -> draft -> critique -> revise. The chain keeps
         # the draft if revision scores worse on the quality gates, which a
         # live run showed is not hypothetical (19 issues -> 20).
