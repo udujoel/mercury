@@ -46,11 +46,16 @@ from app.pipeline.script_chain import (
     _MAX_REPAIR_ECHO_CHARS,
     _OUTLINE_SCHEMA,
     _TURN_LIST_SCHEMA,
+    INJECTION_WARNING,
+    SOURCE_FENCE_CLOSE,
+    SOURCE_FENCE_OPEN,
     JSONParseError,
     _complete_json,
     _parse_draft_turns,
     _repair_echo,
     _run_critique_and_revise,
+    _validate_critique,
+    _validate_outline,
     generate_script,
     parse_json_response,
 )
@@ -522,3 +527,145 @@ def test_response_schemas_are_accepted_by_the_real_sdk():
         assert config.response_mime_type == "application/json", name
         # 5 == ARRAY, 6 == OBJECT in the Schema.Type proto enum.
         assert config.response_schema.type_ == expected[name], name
+
+
+# ──────────────────────────────────────────────────────────────
+# Findings from the bot reviewers on PR #10.
+# ──────────────────────────────────────────────────────────────
+
+
+async def test_outline_with_no_segments_is_retried_not_embedded():
+    """response_schema constrains Gemini; LLMProvider is a protocol.
+
+    A provider that ignores the schema could return `{"turns": []}`, which is
+    syntactically fine. Without a local validator that went straight into
+    DRAFT_PROMPT and the whole script was written from an outline with no
+    segments in it.
+    """
+
+    class BadOutlineThenGood:
+        def __init__(self):
+            self.calls = 0
+
+        async def complete(self, system, prompt, *, temperature=0.85,
+                           json_mode=False, response_schema=None):
+            self.calls += 1
+            if self.calls == 1:
+                return '{"turns": []}'
+            return '{"segments": [{"segment": "cold_open", "covers": "x", ' \
+                   '"angle": "y", "words": 40}]}'
+
+    llm = BadOutlineThenGood()
+    outline = await _complete_json(
+        llm=llm, prompt="outline", temperature=0.7, response_schema=None,
+        what="outline", validate=_validate_outline,
+    )
+    assert llm.calls == 2
+    assert outline["segments"][0]["segment"] == "cold_open"
+
+
+def test_critique_with_zero_issues_is_valid():
+    """An empty issues list is how the editor says the draft is already good.
+
+    _run_critique_and_revise uses it to skip the revise call entirely, so
+    treating it as a parse failure would burn an LLM call on every clean
+    draft — and the revise pass can score worse than the draft it replaces.
+    """
+    assert _validate_critique({"issues": []}) == {"issues": []}
+    with pytest.raises(JSONParseError):
+        _validate_critique({"notes": []})
+
+
+async def test_repair_echo_is_fenced_as_untrusted():
+    """The echo is model output derived from email bodies.
+
+    An attacker-controlled email reaches this prompt, so it needs the same
+    boundary the draft and outline passes give their source data.
+    """
+    seen: list[str] = []
+
+    class BrokenThenGood:
+        def __init__(self):
+            self.calls = 0
+
+        async def complete(self, system, prompt, *, temperature=0.85,
+                           json_mode=False, response_schema=None):
+            self.calls += 1
+            seen.append(prompt)
+            if self.calls == 1:
+                return '[{"speaker":"A","segment":"inbox","text":"he said "x" ok"}]'
+            return '[{"speaker":"A","segment":"inbox","text":"clean"}]'
+
+    await _complete_json(
+        llm=BrokenThenGood(), prompt="draft", temperature=0.7,
+        response_schema=None, what="draft", validate=_parse_draft_turns,
+    )
+    repair_prompt = seen[1]
+    assert SOURCE_FENCE_OPEN in repair_prompt
+    assert SOURCE_FENCE_CLOSE in repair_prompt
+    assert INJECTION_WARNING in repair_prompt
+
+
+async def test_repair_returning_only_the_window_is_retried():
+    """A repair is shown a WINDOW, so it can answer with just that window.
+
+    Valid JSON, correct shape, and a briefing missing most of itself. Only
+    checked after a repair — a first-attempt draft is the critique pass's
+    business, not this loop's.
+    """
+    full = [
+        {"speaker": "A", "segment": seg.value, "text": f"{seg.value} line"}
+        for seg in Segment
+    ]
+
+    class TruncatedRepairThenFull:
+        def __init__(self):
+            self.calls = 0
+
+        async def complete(self, system, prompt, *, temperature=0.85,
+                           json_mode=False, response_schema=None):
+            self.calls += 1
+            if self.calls == 1:
+                return '[{"speaker":"A","segment":"inbox","text":"a "b" c"}]'
+            if self.calls == 2:
+                # Only the excerpt it was shown — one segment of seven.
+                return json.dumps([{"speaker": "A", "segment": "inbox",
+                                    "text": "just the window"}])
+            return json.dumps(full)
+
+    llm = TruncatedRepairThenFull()
+    turns = await _complete_json(
+        llm=llm, prompt="draft", temperature=0.7, response_schema=None,
+        what="draft", validate=_parse_draft_turns,
+        repair_check=script_chain._has_valid_segment_coverage_and_order,
+    )
+    assert llm.calls == 3, "a truncated repair must not be accepted"
+    assert {t.segment for t in turns} == set(Segment)
+
+
+def test_background_calendar_policy_sits_outside_the_untrusted_fence():
+    """Data goes inside the fence; rules about the data stay outside it.
+
+    Fencing the demotion policy told the model to follow the rule and to
+    distrust it in the same breath, freeing it to walk holidays and
+    subscribed all-day entries as if they were real appointments.
+    """
+    from app.core.schemas import CalendarEvent
+
+    background = [CalendarEvent(
+        id="bg1", title="Bank Holiday",
+        start=datetime(2026, 8, 31, tzinfo=UTC),
+        end=datetime(2026, 9, 1, tzinfo=UTC),
+        all_day=True, owned=False,
+    )]
+    fenced = script_chain._fence_untrusted(
+        script_chain._format_calendar([], background)
+    )
+    policy = script_chain._calendar_policy(background)
+
+    assert "Bank Holiday" in fenced, "event titles are data and stay fenced"
+    assert "chronologically" not in fenced, "the policy must not be inside the fence"
+    assert "their own turns" not in fenced, "the policy must not be inside the fence"
+    assert "chronologically" in policy
+    assert SOURCE_FENCE_CLOSE not in policy
+    assert script_chain._calendar_policy(None) == ""
