@@ -23,10 +23,70 @@ final class BackgroundSchedulerTests: XCTestCase {
         XCTAssertEqual(request.identifier, BackgroundScheduler.prefetchIdentifier)
     }
 
-    func testEarliestBeginDateIsThirtyMinutesBeforeWakeTime() {
-        let wake = Date(timeIntervalSince1970: 1_700_000_000)
-        let request = BackgroundScheduler.makeRequest(wakeTime: wake)
+    /// This test USED to read:
+    ///
+    ///     let wake = Date(timeIntervalSince1970: 1_700_000_000)   // Nov 2023
+    ///     XCTAssertEqual(request.earliestBeginDate, wake - 30 * 60)
+    ///
+    /// — a wake time permanently in the past, asserting that the window
+    /// opens in the past too. It did not merely fail to catch the
+    /// reschedule bug below; it pinned the behaviour that IS the bug. Now
+    /// `now` is passed explicitly, and the wake time is ahead of it.
+    func testEarliestBeginDateIsThirtyMinutesBeforeAFutureWakeTime() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let wake = now.addingTimeInterval(6 * 60 * 60)
+        let request = BackgroundScheduler.makeRequest(wakeTime: wake, now: now)
         XCTAssertEqual(request.earliestBeginDate, wake.addingTimeInterval(-30 * 60))
+    }
+
+    /// THE RESCHEDULE BUG.
+    ///
+    /// `handlePrefetch` reschedules from inside the fired task's own
+    /// handler, passing `AppState.nextWakeDate` — the next occurrence of the
+    /// configured hour. Fire the task at 06:35 for an 07:00 wake and "next"
+    /// is today's 07:00, so the resubmitted window opened at 06:30: already
+    /// past, therefore immediately eligible again. The one prefetch before
+    /// the alarm became a request to run repeatedly, on exactly the budget
+    /// iOS grants least willingly.
+    func testReschedulingFromInsideThePrefetchWindowLandsInTheFuture() {
+        // 06:35, with the wake at 07:00 the same morning.
+        let wake = Date(timeIntervalSince1970: 1_700_000_000)
+        let now = wake.addingTimeInterval(-25 * 60)
+
+        let request = BackgroundScheduler.makeRequest(wakeTime: wake, now: now)
+        let begin = request.earliestBeginDate
+
+        XCTAssertNotNil(begin)
+        XCTAssertGreaterThan(
+            begin!, now,
+            "a window in the past makes the task immediately eligible again"
+        )
+        // Tomorrow's window, not some arbitrary offset from `now`.
+        XCTAssertEqual(begin!.timeIntervalSince(wake.addingTimeInterval(-30 * 60)),
+                       24 * 60 * 60, accuracy: 60 * 60,
+                       "it must roll forward a day, not drift by the lead time")
+    }
+
+    /// The boundary: firing exactly at the moment the window opens must
+    /// still produce a future window, not the same instant back again.
+    func testReschedulingExactlyAtTheWindowOpeningRollsForward() {
+        let wake = Date(timeIntervalSince1970: 1_700_000_000)
+        let now = wake.addingTimeInterval(-30 * 60)
+
+        let begin = BackgroundScheduler.makeRequest(wakeTime: wake, now: now).earliestBeginDate
+        XCTAssertNotNil(begin)
+        XCTAssertGreaterThan(begin!, now)
+    }
+
+    /// A task that fires late — after the wake time has passed — gets the
+    /// same treatment.
+    func testReschedulingAfterTheWakeTimeLandsInTheFuture() {
+        let wake = Date(timeIntervalSince1970: 1_700_000_000)
+        let now = wake.addingTimeInterval(90 * 60)
+
+        let begin = BackgroundScheduler.makeRequest(wakeTime: wake, now: now).earliestBeginDate
+        XCTAssertNotNil(begin)
+        XCTAssertGreaterThan(begin!, now)
     }
 
     func testRequiresNetworkConnectivityIsTrue() {
@@ -47,8 +107,13 @@ final class BackgroundSchedulerTests: XCTestCase {
     }
 
     func testDifferentWakeTimesProduceDifferentEarliestBeginDates() {
-        let a = BackgroundScheduler.makeRequest(wakeTime: Date(timeIntervalSince1970: 0))
-        let b = BackgroundScheduler.makeRequest(wakeTime: Date(timeIntervalSince1970: 3600))
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let a = BackgroundScheduler.makeRequest(
+            wakeTime: now.addingTimeInterval(3 * 60 * 60), now: now
+        )
+        let b = BackgroundScheduler.makeRequest(
+            wakeTime: now.addingTimeInterval(4 * 60 * 60), now: now
+        )
         XCTAssertNotEqual(a.earliestBeginDate, b.earliestBeginDate)
     }
 }

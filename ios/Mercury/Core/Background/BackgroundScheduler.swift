@@ -59,12 +59,48 @@ enum BackgroundScheduler {
     /// simulator at all, so tests target this construction logic instead of
     /// end-to-end scheduling. See `docs/phase2/ios_automation.md` for what
     /// still needs a physical device.
-    static func makeRequest(wakeTime: Date) -> BGProcessingTaskRequest {
+    static func makeRequest(wakeTime: Date, now: Date = .now) -> BGProcessingTaskRequest {
         let request = BGProcessingTaskRequest(identifier: prefetchIdentifier)
-        request.earliestBeginDate = wakeTime.addingTimeInterval(-leadTime)
+        request.earliestBeginDate = earliestBeginDate(wakeTime: wakeTime, now: now)
         request.requiresNetworkConnectivity = true
         request.requiresExternalPower = false
         return request
+    }
+
+    /// The window opens `leadTime` before the wake time — but NEVER in the
+    /// past.
+    ///
+    /// `handlePrefetch` reschedules from inside the fired task's own
+    /// handler, and the wake time it passes is `AppState.nextWakeDate`: the
+    /// next occurrence of the configured hour. A task that fires at 06:35
+    /// for an 07:00 wake therefore computes today's 07:00 as "next", and
+    /// `07:00 - 30min` is 06:30 — twenty-five minutes in the PAST. iOS
+    /// treats a request whose `earliestBeginDate` has already passed as
+    /// immediately eligible, so the task the system just ran became a
+    /// candidate to run again straight away, for the rest of the morning.
+    /// Instead of one prefetch before the alarm, the app asks for a
+    /// download loop, on the budget iOS grants grudgingly in the first
+    /// place.
+    ///
+    /// Rolling forward a whole day at a time, through `Calendar`, keeps the
+    /// window at the same wall-clock time across a DST boundary rather than
+    /// drifting an hour twice a year.
+    static func earliestBeginDate(
+        wakeTime: Date,
+        now: Date,
+        calendar: Calendar = .current
+    ) -> Date {
+        var begin = wakeTime.addingTimeInterval(-leadTime)
+        // Bounded: `nextWakeDate` is always in the future, so at most one
+        // step is ever needed in practice. The cap is here so a nonsense
+        // wake time far in the past cannot spin.
+        var steps = 0
+        while begin <= now, steps < 400 {
+            begin = calendar.date(byAdding: .day, value: 1, to: begin)
+                ?? begin.addingTimeInterval(24 * 60 * 60)
+            steps += 1
+        }
+        return begin
     }
 
     /// Submits a prefetch request for the given wake time.
