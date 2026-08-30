@@ -60,6 +60,9 @@ final class APIClient: APIClientProtocol {
         var request = URLRequest(url: Endpoint.status(briefingId: briefingId).url())
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        // A cached "generating" would make `waitForBriefing` poll a frozen
+        // answer until it times out seven minutes later.
+        request.cachePolicy = .reloadIgnoringLocalCacheData
         Self.authorize(&request)
         do {
             let (data, response) = try await session.data(for: request)
@@ -83,29 +86,136 @@ final class APIClient: APIClientProtocol {
     /// server doesn't send.
     func downloadAudio(briefingId: String) async throws -> URL {
         let endpoint = Endpoint.audio(briefingId: briefingId)
+        let directory = try Self.audioCacheDirectory()
+        let cached = Self.cachedAudioURL(briefingId: briefingId, in: directory)
+
         var request = URLRequest(url: endpoint.url())
         request.httpMethod = endpoint.method
+        // Revalidation is managed here rather than left to `URLCache`:
+        // download tasks and the URL cache interact inconsistently, and the
+        // whole point is to know whether we were served fresh bytes or told
+        // to keep what we have.
+        request.cachePolicy = .reloadIgnoringLocalCacheData
         Self.authorize(&request)
+
+        // The ONE thing that makes reusing a cached file safe. `--force`
+        // regeneration reuses the same briefing id (see the `--force` /
+        // `--briefing-id` work in the backend), so an id match alone proves
+        // nothing about whether the audio changed. The Worker already sends
+        // an ETag on every audio response; ask it to tell us.
+        if cached != nil, let etag = Self.cachedETag(briefingId: briefingId) {
+            request.setValue(etag, forHTTPHeaderField: "If-None-Match")
+        }
 
         do {
             let (tempURL, response) = try await session.download(for: request)
+            let http = response as? HTTPURLResponse
+
+            if http?.statusCode == 304, let cached {
+                // Unchanged: keep the ~4MB already on disk.
+                try? FileManager.default.removeItem(at: tempURL)
+                return cached
+            }
+
             try Self.validate(response)
 
             let ext = Self.fileExtension(forMimeType: response.mimeType)
-            let destination = FileManager.default.temporaryDirectory
-                .appendingPathComponent("\(briefingId)-audio")
-                .appendingPathExtension(ext)
+            let destination = Self.audioURL(briefingId: briefingId, ext: ext, in: directory)
 
-            if FileManager.default.fileExists(atPath: destination.path) {
-                try FileManager.default.removeItem(at: destination)
+            // A regeneration can switch format (the backend falls back to
+            // WAV without ffmpeg). Drop the stale sibling so `cachedAudioURL`
+            // cannot later find the wrong one.
+            for other in Self.knownAudioExtensions where other != ext {
+                try? FileManager.default.removeItem(
+                    at: Self.audioURL(briefingId: briefingId, ext: other, in: directory)
+                )
             }
-            try FileManager.default.moveItem(at: tempURL, to: destination)
+
+            try Self.install(tempURL, at: destination)
+            Self.rememberETag(http?.value(forHTTPHeaderField: "Etag"), briefingId: briefingId)
             return destination
         } catch let error as APIError {
             throw error
         } catch {
             throw APIError.transport(error)
         }
+    }
+
+    // MARK: - Audio cache
+
+    /// Both formats the backend can serve, in the same order as
+    /// `KNOWN_AUDIO_FORMATS` in `backend/app/synthesis/storage.py` and the
+    /// probe loop in `worker/src/index.js`.
+    static let knownAudioExtensions = ["m4a", "wav"]
+
+    /// Caches, not tmp.
+    ///
+    /// The background prefetch (PRD F-17) downloads overnight so the morning
+    /// tap is instant. That only works if the file is still there hours
+    /// later, and the system reclaims `tmp` far more eagerly than `Caches`.
+    /// Both are purgeable under storage pressure, which is correct: a missing
+    /// cache file simply means downloading again.
+    static func audioCacheDirectory() throws -> URL {
+        let base = try FileManager.default.url(
+            for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true
+        ).appendingPathComponent("Briefings", isDirectory: true)
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        return base
+    }
+
+    static func audioURL(briefingId: String, ext: String, in directory: URL) -> URL {
+        directory.appendingPathComponent("\(briefingId)-audio").appendingPathExtension(ext)
+    }
+
+    /// Probes BOTH known extensions: which one exists depends on whether the
+    /// server had ffmpeg when it generated, which the client cannot know
+    /// ahead of asking.
+    static func cachedAudioURL(briefingId: String, in directory: URL) -> URL? {
+        for ext in knownAudioExtensions {
+            let candidate = audioURL(briefingId: briefingId, ext: ext, in: directory)
+            if FileManager.default.fileExists(atPath: candidate.path) { return candidate }
+        }
+        return nil
+    }
+
+    /// Moves a freshly downloaded file into place with no window in which
+    /// the destination is missing.
+    ///
+    /// The old sequence was `removeItem(at:)` then `moveItem(at:to:)`, which
+    /// leaves a gap between the two calls. Two downloads of the same briefing
+    /// — which tapping the greeting card twice used to start — could
+    /// interleave there: one removes, the other moves, the first then moves
+    /// onto an existing file and throws. `replaceItemAt` closes the gap.
+    static func install(_ source: URL, at destination: URL) throws {
+        if FileManager.default.fileExists(atPath: destination.path) {
+            _ = try FileManager.default.replaceItemAt(destination, withItemAt: source)
+            return
+        }
+        do {
+            try FileManager.default.moveItem(at: source, to: destination)
+        } catch CocoaError.fileWriteFileExists {
+            // Lost the race between the check above and the move.
+            _ = try FileManager.default.replaceItemAt(destination, withItemAt: source)
+        }
+    }
+
+    private static func etagKey(_ briefingId: String) -> String {
+        "mercury.audioETag.\(briefingId)"
+    }
+
+    static func cachedETag(briefingId: String) -> String? {
+        UserDefaults.standard.string(forKey: etagKey(briefingId))
+    }
+
+    static func rememberETag(_ etag: String?, briefingId: String) {
+        guard let etag, !etag.isEmpty else {
+            // No validator means we cannot prove a cached file is current,
+            // so forget any old one rather than revalidate against a stale
+            // ETag and be told 304 about the wrong bytes.
+            UserDefaults.standard.removeObject(forKey: etagKey(briefingId))
+            return
+        }
+        UserDefaults.standard.set(etag, forKey: etagKey(briefingId))
     }
 
     func registerDevice(token: String) async throws {
@@ -250,6 +360,17 @@ final class APIClient: APIClientProtocol {
         var urlRequest = URLRequest(url: endpoint.url())
         urlRequest.httpMethod = endpoint.method
         urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+        // NEVER serve a manifest from cache on freshness alone.
+        //
+        // `worker/src/index.js` sends `cache-control: private, max-age=3600`,
+        // so URLSession's default policy would hand back an hour-old manifest
+        // without asking the server anything. A `--force` regeneration REUSES
+        // the briefing id, so that stale manifest describes different audio:
+        // every turn timing and every chapter boundary lands wrong against
+        // the file that actually plays, and the transcript drifts further
+        // the longer you listen. A manifest is tens of kilobytes; the round
+        // trip is cheap and the alternative is silently broken.
+        urlRequest.cachePolicy = .reloadIgnoringLocalCacheData
         Self.authorize(&urlRequest)
 
         let data: Data
