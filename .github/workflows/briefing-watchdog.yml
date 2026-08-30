@@ -78,17 +78,51 @@ jobs:
           USER_TIMEZONE: ${{ secrets.USER_TIMEZONE }}
           STORAGE_BACKEND: r2
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-          R2_ACCESS_KEY_ID: ${{ secrets.R2_READONLY_ACCESS_KEY_ID || secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_READONLY_SECRET_ACCESS_KEY || secrets.R2_SECRET_ACCESS_KEY }}
+          # Both halves of ONE pair, never one of each. Independent `||`
+          # fallbacks meant that configuring only R2_READONLY_ACCESS_KEY_ID
+          # — the obvious way to get half way through the setup — produced a
+          # read-only key id married to the generation secret. R2 rejects
+          # that, `check` exits 4, and the watchdog reports a missing
+          # briefing that is actually present: a false alarm caused by the
+          # alarm's own credentials.
+          R2_ACCESS_KEY_ID: ${{ (secrets.R2_READONLY_ACCESS_KEY_ID && secrets.R2_READONLY_SECRET_ACCESS_KEY) && secrets.R2_READONLY_ACCESS_KEY_ID || secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ (secrets.R2_READONLY_ACCESS_KEY_ID && secrets.R2_READONLY_SECRET_ACCESS_KEY) && secrets.R2_READONLY_SECRET_ACCESS_KEY || secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
           # Passed as env, not interpolated into the command. Expression
           # substitution happens BEFORE the shell runs, so an id containing a
           # space or a semicolon would be parsed as shell syntax rather than
           # treated as an argument. GitHub's own hardening guidance.
           BRIEFING_ID: ${{ inputs.briefing_id }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           args=()
           if [ -n "$BRIEFING_ID" ]; then args+=(--briefing-id "$BRIEFING_ID"); fi
+
+          # A backstop that fires after the user's midnight is watching the
+          # WRONG DAY. With no explicit id, `app.cli check` resolves the
+          # current local date — so a scheduled run delayed past 00:00 local
+          # (GitHub's scheduler has been observed 12 hours late on this repo)
+          # asks about tomorrow's briefing, finds nothing, and raises a false
+          # alarm about a morning that in fact generated fine.
+          #
+          # Guessing the intended date from a delayed run's clock is how this
+          # project has produced five separate date bugs, so this does not
+          # guess. The Cloudflare trigger always passes an explicit
+          # briefing_id and is unaffected; only the scheduled backstop can
+          # arrive with none, and outside the morning window it is watching a
+          # morning that has not happened yet. There is nothing to alarm
+          # about, so it stands down rather than inventing a date.
+          if [ "$EVENT_NAME" = "schedule" ] && [ -z "$BRIEFING_ID" ]; then
+            local_hour=$(TZ="${USER_TIMEZONE:-UTC}" date +%-H)
+            if [ "$local_hour" -lt 3 ] || [ "$local_hour" -ge 12 ]; then
+              echo "::notice::Backstop fired at ${local_hour}:00 local, outside" \
+                   "the 03:00-12:00 window it guards. GitHub's scheduler ran it" \
+                   "late; the briefing it was meant to check is no longer the" \
+                   "one today's date resolves to. Standing down rather than" \
+                   "alarming about the wrong day."
+              exit 0
+            fi
+          fi
 
           # Ask again before crying wolf.
           #

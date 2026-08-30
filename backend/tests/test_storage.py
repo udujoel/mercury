@@ -124,3 +124,34 @@ def test_base_dir_created_if_missing(tmp_path):
     assert not target.exists()
     LocalFilesystemStorage(base_dir=target)
     assert target.exists()
+
+
+def test_a_storage_outage_is_not_a_corrupt_manifest(tmp_path, monkeypatch):
+    """A disk that will not answer must not read as a missing briefing.
+
+    `existing_manifest` treats UnreadableManifestError as "no usable
+    briefing", so folding PermissionError and transient OSError into it made
+    a thirty-second storage blip trigger a full regeneration — real Gemini
+    and TTS spend to replace a file that was sitting there intact. Corrupt
+    JSON is a statement about the briefing; an unreadable disk is a
+    statement about the disk.
+    """
+    from app.synthesis.storage import LocalFilesystemStorage, UnreadableManifestError
+
+    storage = LocalFilesystemStorage(base_dir=tmp_path)
+    path = tmp_path / "2026-08-30.manifest.json"
+    path.write_text("{}")
+
+    def _explode(*args, **kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(Path, "read_text", _explode)
+
+    with pytest.raises(PermissionError):
+        storage.load_manifest("2026-08-30")
+
+    # ...while genuinely invalid JSON still reports as unreadable.
+    monkeypatch.undo()
+    path.write_text("not json at all")
+    with pytest.raises(UnreadableManifestError):
+        storage.load_manifest("2026-08-30")

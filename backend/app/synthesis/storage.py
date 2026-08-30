@@ -247,8 +247,17 @@ class LocalFilesystemStorage:
         path = self._manifest_path(briefing_id)
         if not path.exists():
             return None
+        # Read OUTSIDE the parse handler. Inside it, a PermissionError or a
+        # transient OSError became UnreadableManifestError, and
+        # `existing_manifest` reads that as "no usable briefing" — so a
+        # storage outage triggered a full regeneration of a briefing that was
+        # sitting there intact, spending real Gemini and TTS money to replace
+        # a file nobody could read for thirty seconds. Corrupt JSON is a
+        # statement about the briefing; an unreadable disk is a statement
+        # about the disk, and only the first one is this exception's job.
+        raw = path.read_text()
         try:
-            return BriefingManifest.model_validate_json(path.read_text())
+            return BriefingManifest.model_validate_json(raw)
         except Exception as exc:
             raise UnreadableManifestError(
                 f"the manifest at {path} is not a readable BriefingManifest"

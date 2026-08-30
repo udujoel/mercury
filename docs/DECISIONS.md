@@ -410,7 +410,7 @@ writes did. So it is written down here rather than quietly corrected in a
 docstring: **the documentation was wrong, for months, in the reassuring
 direction.**
 
-**The decision:** `prune_briefings` in `app/synthesis/storage.py`, 30 days by
+**The decision:** `prune_briefings` in `backend/app/synthesis/storage.py`, 30 days by
 default via `RETENTION_DAYS`, run as a step of the daily workflow.
 
 30 rather than 7 because the constraint was never really storage — 30 days is
