@@ -378,6 +378,7 @@ class FakeLLMProvider:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, bool]] = []  # (kind, json_mode) audit trail
+        self.schemas: list[dict | None] = []  # response_schema per complete()
 
     def _dispatch(self, prompt: str) -> str:
         if "Produce an OUTLINE for the briefing" in prompt:
@@ -402,7 +403,15 @@ class FakeLLMProvider:
         *,
         temperature: float = 0.85,
         json_mode: bool = False,
+        response_schema: dict | None = None,
     ) -> str:
+        # response_schema is accepted and ignored: this provider returns
+        # canned, already-schema-valid bodies, so there is nothing to
+        # constrain. It stays in the signature because the fake has to keep
+        # step with app.core.providers.LLMProvider — a fake that silently
+        # rejects a keyword the real provider accepts turns a protocol
+        # change into a test-only failure at the worst moment.
+        self.schemas.append(response_schema)
         return self._dispatch(prompt)
 
     async def stream(
