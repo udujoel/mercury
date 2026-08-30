@@ -88,6 +88,38 @@ def validate_retention_days(retention_days: int) -> None:
         )
 
 
+class UnreadableManifestError(RuntimeError):
+    """The manifest object is there and cannot be parsed.
+
+    Its own type because "corrupt" and "absent" need different words said to
+    the operator, and returning None for both said the wrong one: `app.cli
+    check` blamed GitHub's scheduler for dropping a run while the object sat
+    in the bucket, unparseable. Callers that ask "is a briefing already there?"
+    should use `existing_manifest`, which treats corrupt as absent so the one
+    state that most needs regenerating is not the one that can never be.
+    """
+
+
+def existing_manifest(
+    storage: BriefingStorage, briefing_id: str
+) -> BriefingManifest | None:
+    """The stored manifest, or None if there is nothing worth keeping.
+
+    For the idempotency probes — the callers asking "has today already been
+    generated?". A manifest that will not parse is not a briefing worth
+    preserving, and generation is idempotent, so treating it as absent is what
+    lets the next run replace it.
+    """
+    try:
+        return storage.load_manifest(briefing_id)
+    except UnreadableManifestError:
+        log.warning(
+            "manifest for %s is unreadable; treating it as absent so it can "
+            "be regenerated", briefing_id,
+        )
+        return None
+
+
 class BriefingStorage(Protocol):
     def audio_path_for(self, briefing_id: str) -> str:
         """The URL/path the API should hand back for this briefing's audio,
@@ -104,6 +136,11 @@ class BriefingStorage(Protocol):
         ...
 
     def load_manifest(self, briefing_id: str) -> BriefingManifest | None:
+        """The stored manifest, or None if nothing was ever written.
+
+        Raises UnreadableManifestError if the object is there and will not
+        parse. None means absent and nothing else.
+        """
         ...
 
     def load_audio(self, briefing_id: str) -> tuple[bytes, str] | None:
@@ -210,7 +247,12 @@ class LocalFilesystemStorage:
         path = self._manifest_path(briefing_id)
         if not path.exists():
             return None
-        return BriefingManifest.model_validate_json(path.read_text())
+        try:
+            return BriefingManifest.model_validate_json(path.read_text())
+        except Exception as exc:
+            raise UnreadableManifestError(
+                f"the manifest at {path} is not a readable BriefingManifest"
+            ) from exc
 
     def load_audio(self, briefing_id: str) -> tuple[bytes, str] | None:
         for fmt in KNOWN_AUDIO_FORMATS:

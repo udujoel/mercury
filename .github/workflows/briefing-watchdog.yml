@@ -24,7 +24,14 @@ on:
     # Off the hour, per GitHub's own advice ("To decrease the chance of delay,
     # schedule your workflow to run at a different time of the hour"). Two
     # entries because a single dropped run would take the alarm with it.
-    - cron: "27 5 * * *"
+    #
+    # The first was 05:27, which is 19 minutes after the Worker's 05:08
+    # generation dispatch — and the load condition that delays an Actions run
+    # past 19 minutes is exactly the condition this watchdog exists to
+    # tolerate, so it would have cried wolf precisely when it mattered. Moved
+    # to 05:52: after the Worker's own 05:40 alarm checkpoint, 44 minutes after
+    # the last generation dispatch, and still an hour before the 07:00 wake.
+    - cron: "52 5 * * *"
     - cron: "56 6 * * *"
   workflow_dispatch:
     inputs:
@@ -87,9 +94,10 @@ jobs:
           #
           # The Worker's own alarm checkpoint is half an hour after the last
           # generation dispatch, so it is never racing a run. The SCHEDULED
-          # backstops below are: 05:27 fires 19 minutes after the 05:08
-          # generation dispatch, and an Actions queue only has to be slow once
-          # for this to look before the run has written anything. A watchdog
+          # backstops above are further out now (05:52), but "further out" is
+          # a margin, not a guarantee: an Actions queue only has to be slow
+          # once for this to look before the run has written anything, and a
+          # slow queue is the exact condition this exists to survive. A watchdog
           # that cries wolf is worse than no watchdog — the email it sends is
           # the only signal this design has, and it stops being read the
           # moment it is usually wrong.
@@ -103,8 +111,10 @@ jobs:
             status=$?
             set -e
             if [ "$status" -eq 0 ]; then exit 0; fi
-            # 2 is "storage is misconfigured", which no amount of waiting fixes.
-            if [ "$status" -eq 2 ]; then break; fi
+            # 2 (misconfigured) and 4 (storage could not answer — a 403, or a
+            # manifest object that will not parse) are not states that waiting
+            # improves. Only 1, "there is no playable briefing yet", is.
+            if [ "$status" -eq 2 ] || [ "$status" -eq 4 ]; then break; fi
             if [ "$attempt" -lt 3 ]; then
               echo "no briefing yet; re-checking in 120s (attempt $attempt of 3)"
               sleep 120
@@ -169,6 +179,13 @@ jobs:
                    "\`R2_READONLY_SECRET_ACCESS_KEY\`, falling back to the" \
                    "generation credentials. Check they exist and that the token" \
                    "can still read the bucket."
+            elif [ "$CHECK_STATUS" = "4" ]; then
+              echo "\`app.cli check\` exited 4: storage refused or could not" \
+                   "parse what it read. Either the R2 token was rotated or" \
+                   "under-scoped, or the stored manifest object is corrupt." \
+                   "**Do not regenerate yet** — for a permissions problem that" \
+                   "spends real Gemini and TTS money on a briefing that already" \
+                   "exists. Read the step log; it names which read failed."
             else
               echo "The check step never ran to completion — checkout, Python" \
                    "setup or \`pip install\` failed. Read the step log above."

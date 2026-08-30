@@ -119,9 +119,29 @@ def test_check_does_not_report_a_read_failure_as_a_missing_briefing(
 
     monkeypatch.setattr(storage_at, "load_manifest", _boom, raising=True)
 
-    assert main(["check", "--briefing-id", "2026-08-21"]) == 1
+    # 4, not 1. The watchdog gates its "No usable briefing — go and regenerate"
+    # summary on exit 1, and a 403 is not evidence about the briefing at all.
+    assert main(["check", "--briefing-id", "2026-08-21"]) == 4
     out = capsys.readouterr().out
     assert "Could not read briefing" in out
+    assert "No briefing for" not in out
+
+
+def test_check_reports_a_corrupt_manifest_as_a_storage_problem(
+    storage_at, monkeypatch, capsys
+):
+    """A manifest that will not parse is not an absent one. Reporting it as
+    "nothing generated it, the scheduler must have dropped the run" names the
+    wrong cause and sends the operator to look in the wrong place."""
+    from app.synthesis.storage import UnreadableManifestError
+
+    def _corrupt(_briefing_id):
+        raise UnreadableManifestError("manifest for 2026-08-21 is not JSON")
+
+    monkeypatch.setattr(storage_at, "load_manifest", _corrupt, raising=True)
+
+    assert main(["check", "--briefing-id", "2026-08-21"]) == 4
+    out = capsys.readouterr().out
     assert "No briefing for" not in out
 
 

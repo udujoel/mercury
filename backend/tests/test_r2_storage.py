@@ -147,12 +147,31 @@ def test_missing_briefing_returns_none_not_an_error(monkeypatch):
     assert storage.load_audio("never-generated") is None
 
 
-def test_unreadable_manifest_returns_none(monkeypatch):
+def test_unreadable_manifest_raises_rather_than_reading_as_absent(monkeypatch):
+    """Returning None made a corrupt manifest indistinguishable from one that
+    was never written, so `app.cli check` blamed GitHub's scheduler for
+    dropping a run when the object was sitting right there and unparseable."""
+    from app.synthesis.storage import UnreadableManifestError
+
     storage = _configured(monkeypatch)
-    storage.__dict__["_client"].objects["bad.manifest.json"] = (
+    storage.__dict__["_client"].objects["2026-08-22.manifest.json"] = (
         b"{not json", "application/json"
     )
-    assert storage.load_manifest("bad") is None
+    with pytest.raises(UnreadableManifestError):
+        storage.load_manifest("2026-08-22")
+
+
+def test_a_corrupt_manifest_does_not_block_its_own_replacement(monkeypatch):
+    """Generation is idempotent, so the probe that asks "is it already there?"
+    must treat an unparseable manifest as NOT there. Otherwise the one state
+    that most needs regenerating is the one that can never be regenerated."""
+    from app.synthesis.storage import existing_manifest
+
+    storage = _configured(monkeypatch)
+    storage.__dict__["_client"].objects["2026-08-22.manifest.json"] = (
+        b"{not json", "application/json"
+    )
+    assert existing_manifest(storage, "2026-08-22") is None
 
 
 def test_build_storage_selects_local_by_default(monkeypatch):

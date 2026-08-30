@@ -28,7 +28,7 @@ from app.core.schemas import BriefingLength, BriefingManifest
 from app.pipeline.generate import generate_briefing
 from app.providers.fake import FakeLLMProvider
 from app.providers.fake_tts import FakeTTSProvider
-from app.synthesis.storage import build_storage
+from app.synthesis.storage import build_storage, existing_manifest
 
 log = logging.getLogger(__name__)
 
@@ -170,7 +170,9 @@ async def generate(
     storage = build_storage()
 
     # Already generated: hand it back without spending money regenerating it.
-    existing = await asyncio.to_thread(storage.load_manifest, briefing_id)
+    # existing_manifest treats an unparseable manifest as absent, so a corrupt
+    # one does not block its own replacement.
+    existing = await asyncio.to_thread(existing_manifest, storage, briefing_id)
     if existing is not None:
         return GenerateResponse(status="ready", briefing_id=briefing_id)
 

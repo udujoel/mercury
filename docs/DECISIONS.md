@@ -327,9 +327,10 @@ Three layers, each covering the layer above it failing:
    is the only signal this design has, and it stops being read the moment it is
    usually wrong. 32 minutes is more than ten times the observed 71-second
    generation, plus Actions queueing and checkout. The watchdog additionally
-   re-checks twice, 120 seconds apart, before failing — that covers GitHub's
-   own 05:27 backstop firing 19 minutes after the 05:08 dispatch, which the
-   checkpoint separation alone does not.
+   re-checks twice, 120 seconds apart, before failing, and GitHub's own first
+   backstop moved from 05:27 to 05:52 — 19 minutes after the 05:08 dispatch
+   was not margin, and the Actions load that eats 19 minutes is the condition
+   this watchdog exists to tolerate.
 
 Two details that carry more weight than their size:
 

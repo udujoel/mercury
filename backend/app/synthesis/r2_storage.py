@@ -34,6 +34,7 @@ from app.core.schemas import BriefingManifest
 from app.synthesis.storage import (
     AUDIO_MEDIA_TYPES,
     KNOWN_AUDIO_FORMATS,
+    UnreadableManifestError,
     briefing_id_from_key,
 )
 
@@ -194,9 +195,16 @@ class R2Storage:
             return None
         try:
             return BriefingManifest.model_validate(json.loads(raw))
-        except Exception:
+        except Exception as exc:
+            # Raise rather than return None. None means "never written", and
+            # `app.cli check` turns that into "the scheduler dropped the run,
+            # go and re-run the workflow" — the wrong cause, pointing the
+            # operator at GitHub while the broken object sits in the bucket.
             log.exception("manifest for %s in R2 is unreadable", briefing_id)
-            return None
+            raise UnreadableManifestError(
+                f"the manifest object for {briefing_id} in R2 is not a "
+                "readable BriefingManifest"
+            ) from exc
 
     def load_audio(self, briefing_id: str) -> tuple[bytes, str] | None:
         for fmt in KNOWN_AUDIO_FORMATS:

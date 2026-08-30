@@ -148,7 +148,7 @@ export default {
       return json({
         status: "ok",
         service: "mercury-worker",
-        timezone: env.USER_TIMEZONE || "UTC",
+        timezone: resolvedTimeZone(env),
       });
     }
 
@@ -187,7 +187,7 @@ export default {
     // can a human wondering "did it actually run?" — an answer that does not
     // depend on GitHub having noticed anything.
     if (url.pathname === "/status") {
-      const id = briefingIdFor(new Date(), env.USER_TIMEZONE || "UTC");
+      const id = briefingIdFor(new Date(), resolvedTimeZone(env));
       const state = await briefingState(env, id);
       return json({ briefing_id: id, state, ok: state === "ok" });
     }
@@ -219,7 +219,7 @@ export default {
    */
   async scheduled(controller, env) {
     const scheduledAt = new Date(controller.scheduledTime);
-    const id = briefingIdFor(scheduledAt, env.USER_TIMEZONE || "UTC");
+    const id = briefingIdFor(scheduledAt, resolvedTimeZone(env));
     const state = await briefingState(env, id);
 
     if (state === "ok") {
@@ -279,6 +279,36 @@ function briefingIdFor(date, timeZone) {
   }).formatToParts(date);
   const at = (type) => parts.find((part) => part.type === type).value;
   return `${at("year")}-${at("month")}-${at("day")}`;
+}
+
+/**
+ * The timezone this Worker will actually use — never one that throws.
+ *
+ * `Intl.DateTimeFormat` raises a RangeError for an unsupported zone, and that
+ * threw straight out of `scheduled()` before `briefingState` or any dispatch
+ * ran. One mistyped `wrangler secret put USER_TIMEZONE` therefore silenced
+ * every checkpoint, every morning: no generation AND no alarm, which is the
+ * whole failure mode ADR-010 exists to make impossible.
+ *
+ * UTC rather than refusing to start, because `_today_briefing_id` in
+ * backend/app/cli.py does exactly that. The two halves of one system have to
+ * name the same briefing the same way, and they still do while both are
+ * falling back. Loud in the log, since the ids will be a day off for anyone
+ * far enough from UTC.
+ */
+function resolvedTimeZone(env) {
+  const configured = env.USER_TIMEZONE || "UTC";
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: configured });
+    return configured;
+  } catch {
+    console.error(
+      `USER_TIMEZONE ${JSON.stringify(configured)} is not a timezone this ` +
+        "runtime knows; falling back to UTC. Briefing ids will be named in " +
+        "UTC until it is fixed (wrangler secret put USER_TIMEZONE).",
+    );
+    return "UTC";
+  }
 }
 
 /**

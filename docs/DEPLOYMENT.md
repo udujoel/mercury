@@ -219,7 +219,7 @@ the evidence and the trade-offs; this is what an operator has to do.
 | 04:20, 04:50 | Retry, if still missing | Cloudflare Cron Trigger |
 | 05:08 | Generate anyway — deadline blown | Cloudflare Cron Trigger |
 | 05:40 | Raise the alarm, **if still missing** | Cloudflare Cron Trigger |
-| 05:27, 06:56 | Alarm backstop, if the Worker itself is dead | GitHub `schedule` |
+| 05:52, 06:56 | Alarm backstop, if the Worker itself is dead | GitHub `schedule` |
 
 **The alarm is conditional, and it is not raised in the same tick as a
 generation dispatch.** 05:40 dispatches the watchdog only when R2 still has no
@@ -270,7 +270,7 @@ a repo slug and a branch name are not secrets.
 `dispatch of briefing.yml failed: HTTP 401` (Workers → mercury-briefings →
 Logs). Both dispatches use this token, so the 05:40 checkpoint cannot raise the
 alarm either. What is left is GitHub's own `schedule` — the 04:12/04:41
-generation backstops and the 05:27/06:56 watchdog backstops — which is the
+generation backstops and the 05:52/06:56 watchdog backstops — which is the
 best-effort scheduler this ADR exists to stop relying on, and may be delayed or
 dropped. **You lose punctuality AND timely alarming**, and the Worker's
 `/status` endpoint is then the only reliable way to ask whether the briefing is

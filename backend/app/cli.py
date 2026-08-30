@@ -17,6 +17,10 @@ the whole schedule exists to prevent:
     1  generation failed, or produced nothing playable
     2  configuration is wrong (missing credentials, bad storage config)
     3  a briefing shipped, but WITHOUT the user's inbox or calendar
+    4  storage could not answer — the read failed, or the stored manifest is
+       corrupt. NOT the same as 1: the watchdog gates its "go and regenerate"
+       instructions on 1, and a 403 or an unparseable object is not evidence
+       about the briefing at all.
 
 `check` is the other half of ADR-010. GitHub's scheduler is documented as
 best-effort ("some queued jobs may be dropped"), and a dropped run leaves no
@@ -102,12 +106,22 @@ def _check(briefing_id: str) -> int:
     try:
         manifest = storage.load_manifest(briefing_id)
     except Exception:
-        # A read failure is NOT "no briefing" — R2 raises on anything that is
-        # not a genuine 404 precisely so a rotated token cannot be reported as
-        # a missing briefing. Surface it rather than crying wolf.
+        # Exit 4, not 1. A read failure is NOT "no briefing" — R2 raises on
+        # anything that is not a genuine 404 precisely so a rotated token
+        # cannot be reported as a missing briefing, and an unparseable
+        # manifest object is not an absent one either. Both mean "storage
+        # could not answer the question", and the watchdog reports that
+        # differently from "the briefing is not there": the second sends the
+        # operator to regenerate, which for a 403 spends real Gemini and TTS
+        # money on a briefing that already exists.
         log.exception("could not read the manifest for %s", briefing_id)
-        print(f"::error::Could not read briefing {briefing_id} from storage.")
-        return 1
+        print(
+            f"::error::Could not read briefing {briefing_id} from storage. This "
+            "says nothing about whether the briefing exists — the object may be "
+            "there and unreadable, or the R2 credentials may have been rotated "
+            "or under-scoped. Check the R2 secrets before regenerating anything."
+        )
+        return 4
 
     if manifest is None:
         print(
@@ -132,8 +146,12 @@ def _check(briefing_id: str) -> int:
         audio = storage.load_audio(briefing_id)
     except Exception:
         log.exception("could not read the audio for %s", briefing_id)
-        print(f"::error::Could not read audio for briefing {briefing_id}.")
-        return 1
+        print(
+            f"::error::Could not read audio for briefing {briefing_id}. The "
+            "manifest read fine, so this is a storage problem, not a missing "
+            "briefing."
+        )
+        return 4
 
     if audio is None:
         print(
@@ -236,7 +254,7 @@ async def _generate(
 ) -> int:
     from app.pipeline.generate import generate_briefing
     from app.synthesis.stitch import EmptyBriefingError
-    from app.synthesis.storage import build_storage
+    from app.synthesis.storage import build_storage, existing_manifest
 
     try:
         storage = build_storage()
@@ -244,7 +262,11 @@ async def _generate(
         log.error("storage is not configured: %s", exc)
         return 2
 
-    if not force and storage.load_manifest(briefing_id) is not None:
+    # existing_manifest, not load_manifest: a manifest that will not parse must
+    # not block its own replacement. Generation is idempotent, so the one state
+    # that most needs regenerating would otherwise be the one state that never
+    # can be.
+    if not force and existing_manifest(storage, briefing_id) is not None:
         log.info(
             "briefing %s already exists; nothing to do (pass --force to "
             "regenerate, e.g. after fixing a run that shipped degraded)",

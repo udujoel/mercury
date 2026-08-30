@@ -312,3 +312,45 @@ describe("briefing ids", () => {
     assert.equal(leap.status, 404);
   });
 });
+
+describe("a broken USER_TIMEZONE", () => {
+  // Intl.DateTimeFormat THROWS a RangeError for an unsupported zone, and that
+  // threw straight out of scheduled() before briefingState or any dispatch
+  // ran. Every checkpoint, every morning: no generation and no alarm, from one
+  // mistyped Worker secret. app/cli.py has always fallen back to UTC here; the
+  // two halves of one system disagreeing about that is what made it a hole.
+  const broken = (objects = {}) => ({
+    ...envFor(objects),
+    USER_TIMEZONE: "Not/AZone",
+  });
+
+  test("does not stop the schedule", async () => {
+    const calls = recordFetch();
+    await worker.scheduled({ scheduledTime: GENERATE_CHECKPOINT }, broken());
+
+    assert.equal(calls.length, 1);
+    assert.equal(workflowOf(calls[0]), "briefing.yml");
+    // 03:40 UTC is still 2026-08-30 in UTC, so the id is usable.
+    assert.equal(calls[0].body.inputs.briefing_id, "2026-08-30");
+    assert.ok(logs.error.some((line) => line.includes("USER_TIMEZONE")));
+  });
+
+  test("does not stop the alarm either", async () => {
+    const calls = recordFetch();
+    await worker.scheduled({ scheduledTime: ALARM_CHECKPOINT }, broken());
+    assert.deepEqual(calls.map(workflowOf), ["briefing-watchdog.yml"]);
+  });
+
+  test("/health reports the zone actually in use, not the broken one", async () => {
+    // The iOS client caches this value to derive briefing ids locally
+    // (BriefingClock). Echoing back a zone the Worker itself could not use
+    // hands the phone a value it cannot use either.
+    const response = await worker.fetch(new Request("https://w/health"), broken());
+    assert.equal((await response.json()).timezone, "UTC");
+  });
+
+  test("a usable zone is still reported and used", async () => {
+    const response = await worker.fetch(new Request("https://w/health"), envFor({}));
+    assert.equal((await response.json()).timezone, "Europe/Lisbon");
+  });
+});

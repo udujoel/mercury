@@ -40,7 +40,11 @@ from app.notifications.apns import (
     TokenUnregisteredError,
 )
 from app.pipeline.generate import generate_briefing
-from app.synthesis.storage import BriefingStorage, build_storage
+from app.synthesis.storage import (
+    BriefingStorage,
+    build_storage,
+    existing_manifest,
+)
 
 log = logging.getLogger(__name__)
 
@@ -204,7 +208,7 @@ async def run_daily_briefing_job(
 
     # to_thread: this runs on the API process's event loop when the scheduler
     # is mounted on the FastAPI app, and R2Storage is synchronous boto3.
-    if await asyncio.to_thread(storage.load_manifest, briefing_id) is not None:
+    if await asyncio.to_thread(existing_manifest, storage, briefing_id) is not None:
         log.info(
             "briefing %s already exists; scheduled run is a no-op", briefing_id
         )
