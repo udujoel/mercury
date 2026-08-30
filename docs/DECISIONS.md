@@ -281,10 +281,21 @@ the hour.
 
 The deadline is: **the briefing is in R2 before 06:00 Europe/Lisbon.** Lisbon is
 UTC+1 in summer, so the tight case is 05:00 UTC and everything is sized against
-it; winter gets an extra hour of margin for free. Cron is UTC-only with no DST
-on both platforms, and the briefing is still NAMED in the user's timezone by
-`app.cli` — this project has had five separate date bugs and that is the one
-that matters.
+it. Cron is UTC-only with no DST on both platforms, and the briefing is still
+NAMED in the user's timezone by `app.cli` — this project has had five separate
+date bugs and that is the one that matters.
+
+**The deadline comparison is UTC, not local, and in winter it is an hour
+early.** In winter 06:00 Europe/Lisbon *is* 06:00 UTC, so a fixed 05:00 UTC
+deadline means the alarm can fire up to 52 minutes before the deadline it names.
+That is a deliberate choice in the safe direction, and the alternative does not
+fit: a DST-correct comparison needs an alarm checkpoint after 06:00 UTC for
+winter AND one before it for summer, and Cloudflare's free plan allows **five
+Cron Triggers per account**, which the four generation checkpoints plus one
+alarm already exhaust. Given the choice between alarming early in winter and
+alarming after the user has woken in summer, early wins: by the alarm
+checkpoint four generation attempts have failed and the last has had half an
+hour, so it is an early alarm about a real absence, not a false one.
 
 Three layers, each covering the layer above it failing:
 
@@ -304,9 +315,21 @@ Three layers, each covering the layer above it failing:
 3. **A watchdog that goes red.** `python -m app.cli check` asks storage whether
    today's briefing is there and playable, and `briefing-watchdog.yml` fails
    when it is not — which converts the absence into the failure email the user
-   already gets. The Worker dispatches it at 05:08 UTC if the deadline was
-   blown; the watchdog also has its own (late, best-effort) schedule for the
-   case where the Worker is the thing that died.
+   already gets. The watchdog also has its own (late, best-effort) schedule for
+   the case where the Worker is the thing that died.
+
+   **The alarm gets its own checkpoint, at 05:40 UTC, and dispatches nothing
+   else.** It was originally dispatched in the same tick as the 05:08
+   generation. `workflow_dispatch` only QUEUES a run, so the watchdog read R2
+   before the run it had just triggered had written anything, and reported a
+   missing briefing about a briefing being generated as it looked. A watchdog
+   that cries wolf every morning is worse than no watchdog: the email it sends
+   is the only signal this design has, and it stops being read the moment it is
+   usually wrong. 32 minutes is more than ten times the observed 71-second
+   generation, plus Actions queueing and checkout. The watchdog additionally
+   re-checks twice, 120 seconds apart, before failing — that covers GitHub's
+   own 05:27 backstop firing 19 minutes after the 05:08 dispatch, which the
+   checkpoint separation alone does not.
 
 Two details that carry more weight than their size:
 

@@ -53,6 +53,7 @@ class EmptyBriefingError(RuntimeError):
     produced no audible turns must fail loudly and must not persist.
     """
 
+
 # Pacing. Tuned by ear — these numbers matter more than they look.
 GAP_DIFFERENT_SPEAKER_MS = 220
 GAP_SAME_SPEAKER_MS = 80

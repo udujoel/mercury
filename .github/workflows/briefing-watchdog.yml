@@ -60,13 +60,19 @@ jobs:
       # reads R2. Giving a watchdog the ability to reach the user's inbox
       # would widen the blast radius of the thing whose entire job is to run
       # unattended every morning.
+      #
+      # For the same reason it prefers a READ-ONLY R2 token. R2_READONLY_* is
+      # an Object Read Only token; the fallback to the generation credential
+      # exists only so the watchdog keeps working until the owner mints one,
+      # and it should be removed once they have (docs/DEPLOYMENT.md).
       - name: Check today's briefing is present and playable
+        id: check
         env:
           USER_TIMEZONE: ${{ secrets.USER_TIMEZONE }}
           STORAGE_BACKEND: r2
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_READONLY_ACCESS_KEY_ID || secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_READONLY_SECRET_ACCESS_KEY || secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
           # Passed as env, not interpolated into the command. Expression
           # substitution happens BEFORE the shell runs, so an id containing a
@@ -76,10 +82,44 @@ jobs:
         run: |
           args=()
           if [ -n "$BRIEFING_ID" ]; then args+=(--briefing-id "$BRIEFING_ID"); fi
-          python -m app.cli check "${args[@]}"
+
+          # Ask again before crying wolf.
+          #
+          # The Worker's own alarm checkpoint is half an hour after the last
+          # generation dispatch, so it is never racing a run. The SCHEDULED
+          # backstops below are: 05:27 fires 19 minutes after the 05:08
+          # generation dispatch, and an Actions queue only has to be slow once
+          # for this to look before the run has written anything. A watchdog
+          # that cries wolf is worse than no watchdog — the email it sends is
+          # the only signal this design has, and it stops being read the
+          # moment it is usually wrong.
+          #
+          # Costs nothing on a healthy morning: the first attempt returns 0
+          # and the loop exits. Only a morning that is genuinely broken pays
+          # the four minutes.
+          for attempt in 1 2 3; do
+            set +e
+            python -m app.cli check "${args[@]}"
+            status=$?
+            set -e
+            if [ "$status" -eq 0 ]; then exit 0; fi
+            # 2 is "storage is misconfigured", which no amount of waiting fixes.
+            if [ "$status" -eq 2 ]; then break; fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "no briefing yet; re-checking in 120s (attempt $attempt of 3)"
+              sleep 120
+            fi
+          done
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit "$status"
 
       - name: Explain what to do about it
-        if: failure()
+        # Only when `check` itself answered "no briefing". A failed checkout,
+        # a failed pip install or a missing R2 secret used to produce this same
+        # "No usable briefing" summary, which reports an infrastructure problem
+        # as a missing briefing and sends the user to re-run a workflow that
+        # was never the thing that broke.
+        if: failure() && steps.check.outputs.status == '1'
         env:
           BRIEFING_ID: ${{ inputs.briefing_id }}
         run: |
@@ -109,4 +149,33 @@ jobs:
             echo "- **The Google token expired.** The consent screen must be" \
                  "published, not in Testing — Testing expires refresh tokens" \
                  "after 7 days. See docs/DEPLOYMENT.md."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: The watchdog could not answer the question
+        # Everything else that can fail: checkout, setup-python, pip install,
+        # a missing or wrong R2 secret (`check` exit 2). None of these are
+        # evidence about the briefing, and reporting them as "no briefing"
+        # sends the user to regenerate something that may be perfectly fine.
+        if: failure() && steps.check.outputs.status != '1'
+        env:
+          CHECK_STATUS: ${{ steps.check.outputs.status }}
+        run: |
+          {
+            echo "## The watchdog failed — this says NOTHING about the briefing"
+            echo
+            if [ "$CHECK_STATUS" = "2" ]; then
+              echo "\`app.cli check\` exited 2: storage is misconfigured. The R2" \
+                   "secrets this job reads are \`R2_READONLY_ACCESS_KEY_ID\` and" \
+                   "\`R2_READONLY_SECRET_ACCESS_KEY\`, falling back to the" \
+                   "generation credentials. Check they exist and that the token" \
+                   "can still read the bucket."
+            else
+              echo "The check step never ran to completion — checkout, Python" \
+                   "setup or \`pip install\` failed. Read the step log above."
+            fi
+            echo
+            echo "Whether today's briefing exists is still unknown. Ask directly:"
+            echo
+            echo '    curl -H "X-Mercury-Token: <token>" \'
+            echo '      https://mercury-briefings.udujoel.workers.dev/status'
           } >> "$GITHUB_STEP_SUMMARY"

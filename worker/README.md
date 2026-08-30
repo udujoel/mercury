@@ -57,9 +57,19 @@ prevent.
 ADR-010. GitHub's `schedule` event is best-effort by documentation — "some
 queued jobs may be dropped" — and seven consecutive days it created the 04:00
 run between 32 minutes and 12 hours late. Cloudflare Cron Triggers run on UTC
-time with no equivalent caveat, so the punctual trigger lives here: four
-checkpoints (`wrangler.toml`) that ask R2 whether today's briefing exists and
-call GitHub's `workflow_dispatch` only when it does not.
+time with no equivalent caveat, so the punctual trigger lives here: five
+checkpoints (`wrangler.toml`) that ask R2 whether today's briefing is
+**playable**, and call GitHub's `workflow_dispatch` only when it is not.
+
+Playable, not present — the distinction is why an existing briefing can still
+trigger regeneration. `briefingState()` reports `empty` when the manifest is
+missing, unparseable, has zero turns, has zero milliseconds of audio, or has no
+audio object of a plausible size behind it. All of those are 200s the phone
+cannot play, and an `empty` briefing is dispatched with `force: true` because
+generation is idempotent and would otherwise preserve it for the rest of the
+day. Only the last checkpoint raises the alarm, and it dispatches nothing else:
+sharing a tick with a generation dispatch is how the watchdog ended up checking
+R2 before the run it had just triggered had written anything.
 
 `GITHUB_DISPATCH_TOKEN` is the one credential that costs: a fine-grained token
 scoped to this repository with the Actions permission and nothing else. It is

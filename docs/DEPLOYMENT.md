@@ -63,13 +63,37 @@ GitHub repository → Settings → Secrets and variables → Actions:
 | `GOOGLE_TTS_CREDENTIALS_JSON` | The **service-account** key — Google Cloud Console → IAM & Admin → Service Accounts → Keys → Add key → JSON. Top-level keys include `client_email` and `private_key`. |
 | `GOOGLE_OAUTH_TOKEN_JSON` | The **user token** — `token.json` from the repo root, produced by running a spike locally. Contains `refresh_token`. |
 | `R2_ACCOUNT_ID` | Cloudflare account id (R2 overview page, right-hand sidebar) |
-| `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | From an R2 API token, **Object Read & Write** |
+| `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | From an R2 API token, **Object Read & Write**. Generation only. |
+| `R2_READONLY_ACCESS_KEY_ID` / `R2_READONLY_SECRET_ACCESS_KEY` | From a second R2 API token, **Object Read Only**. The watchdog only. See below. |
 | `R2_BUCKET` | `mercury-briefings` — already created |
 | `MERCURY_API_TOKEN` | Same value the iOS client sends |
 | `USER_EMAIL`, `USER_NAME`, `USER_TIMEZONE` | Personal config |
 
 The workflow writes the two JSON secrets to files at runtime. They are never
 committed — `.gitignore` covers `credentials/`, `token.json` and `.env`.
+
+### The watchdog's read-only R2 token — ACTION REQUIRED
+
+`briefing-watchdog.yml` only reads. It has no Google credentials and no ffmpeg
+for exactly that reason: it runs unattended every morning, so its blast radius
+should be as small as the job it does. Handing it the write-capable generation
+token contradicts that — a compromised dependency, or a mistyped command in
+that workflow, could delete or overwrite the briefings it exists to protect.
+
+**The repository owner must do this; nobody else can mint the token:**
+
+1. Cloudflare dashboard → **R2 → API → Manage API Tokens → Create API Token**
+2. Permission: **Object Read Only**. Scope it to the `mercury-briefings`
+   bucket, not "all buckets".
+3. Add the resulting pair as `R2_READONLY_ACCESS_KEY_ID` and
+   `R2_READONLY_SECRET_ACCESS_KEY` in Actions secrets.
+4. Then delete the fallback in `briefing-watchdog.yml` — the
+   `|| secrets.R2_ACCESS_KEY_ID` half of each line — so the write token can
+   never be reached from that workflow again.
+
+Until step 3 is done the workflow falls back to the generation credentials, so
+the watchdog keeps working rather than failing closed on a secret that does not
+exist yet. That fallback is a stopgap, not the design.
 
 ### Three JSON files, easy to confuse
 
@@ -193,14 +217,32 @@ the evidence and the trade-offs; this is what an operator has to do.
 | 03:40 | Generate, if today's briefing is missing | Cloudflare Cron Trigger |
 | 04:12, 04:41 | Generate, if still missing | GitHub `schedule` (backstop) |
 | 04:20, 04:50 | Retry, if still missing | Cloudflare Cron Trigger |
-| 05:08 | Generate **and raise the alarm** — deadline blown | Cloudflare Cron Trigger |
+| 05:08 | Generate anyway — deadline blown | Cloudflare Cron Trigger |
+| 05:40 | Raise the alarm, **if still missing** | Cloudflare Cron Trigger |
 | 05:27, 06:56 | Alarm backstop, if the Worker itself is dead | GitHub `schedule` |
+
+**The alarm is conditional, and it is not raised in the same tick as a
+generation dispatch.** 05:40 dispatches the watchdog only when R2 still has no
+playable briefing, and the watchdog only goes red when its own check agrees.
+The alarm used to be dispatched immediately after the 05:08 generation;
+`workflow_dispatch` merely queues a run, so the watchdog read R2 before that
+run had written anything and reported a missing briefing about one being
+generated as it looked. A watchdog that cries wolf every morning is worse than
+no watchdog.
+
+**Five Cloudflare crons is the ceiling.** The free plan allows 5 Cron Triggers
+*per account*, not per Worker. There is no room for a sixth checkpoint here or
+for a cron on any other Worker in this account without the paid plan.
 
 The deadline is **06:00 Europe/Lisbon**. Lisbon is UTC+1 in summer, so the
 tight case is 05:00 UTC and every time above is sized against it. Cron is
-UTC-only and has no DST on either platform, so these shift by an hour relative
-to local time across the year — deliberately, and winter simply gets more
-margin.
+UTC-only and has no DST on either platform, so in winter the fixed 05:00 UTC
+deadline sits an hour ahead of the local one and the alarm can fire up to 52
+minutes early. That is deliberate: by 05:40 four generation attempts have
+failed and the last has had half an hour, so it is an early alarm about a real
+absence — and the opposite error costs the user their morning. Making it
+DST-correct would need a checkpoint after 06:00 UTC for winter *and* one before
+it for summer, which is one cron more than the account limit allows.
 
 Every checkpoint first asks R2 whether a playable briefing already exists, so
 on a healthy morning all of them after the first are a single read.
@@ -226,9 +268,14 @@ a repo slug and a branch name are not secrets.
 
 **If this token expires or is revoked**, the Worker logs
 `dispatch of briefing.yml failed: HTTP 401` (Workers → mercury-briefings →
-Logs) and the system degrades to the GitHub backstop: the briefing still
-generates, late and unpredictably, and the watchdog still alarms. You lose
-punctuality, not the briefing.
+Logs). Both dispatches use this token, so the 05:40 checkpoint cannot raise the
+alarm either. What is left is GitHub's own `schedule` — the 04:12/04:41
+generation backstops and the 05:27/06:56 watchdog backstops — which is the
+best-effort scheduler this ADR exists to stop relying on, and may be delayed or
+dropped. **You lose punctuality AND timely alarming**, and the Worker's
+`/status` endpoint is then the only reliable way to ask whether the briefing is
+there. Do not read "the watchdog still alarms" into this: it alarms only if
+GitHub happens to run it.
 
 ### Checking on it yourself
 
