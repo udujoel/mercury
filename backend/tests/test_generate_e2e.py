@@ -37,6 +37,7 @@ from app.core.schemas import (
 from app.pipeline.generate import generate_briefing
 from app.providers.fake import FakeLLMProvider
 from app.providers.fake_tts import FakeTTSProvider
+from app.synthesis.stitch import EmptyBriefingError
 from app.synthesis.storage import LocalFilesystemStorage
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -333,3 +334,48 @@ async def test_both_personal_sources_failing_is_logged_loudly(caplog, tmp_path):
     from app.pipeline.generate import failed_personal_sources
 
     assert sorted(failed_personal_sources()) == ["calendar", "email"]
+
+
+async def test_a_total_tts_failure_persists_nothing(tmp_path):
+    """The most damaging shape this pipeline had.
+
+    Every TTS call fails, so there are no audible turns. The old behaviour was
+    to store a manifest anyway and exit 0: Actions went green, no failure
+    email was sent, and because generation is idempotent that empty briefing
+    then blocked its own replacement for the rest of the day. The failure was
+    not "no briefing this morning", it was "no briefing today and no way to
+    fix it without --force".
+
+    So the assertion that matters is not just that it raises — it is that
+    storage is left completely untouched, so tomorrow's run and a plain re-run
+    both still work.
+    """
+
+    class _TotallyBrokenTTS(FakeTTSProvider):
+        async def synthesize(self, text: str, voice_id: str) -> bytes:
+            raise RuntimeError("synthetic total TTS failure")
+
+    storage = LocalFilesystemStorage(base_dir=tmp_path)
+
+    with pytest.raises(EmptyBriefingError):
+        await generate_briefing(
+            briefing_id="2026-08-27",
+            length=BriefingLength.STANDARD,
+            llm=FakeLLMProvider(),
+            tts=_TotallyBrokenTTS(),
+            fetch_events=_fake_fetch_events,
+            fetch_weather=_fake_fetch_weather,
+            score_emails=_fake_score_emails,
+            select_for_briefing=_fake_select_for_briefing,
+            generate_script=_fake_generate_script,
+            storage=storage,
+            gmail_fixture=FIXTURES_DIR / "gmail_messages.json",
+            calendar_fixture=None,
+            weather_fixture=None,
+        )
+
+    assert storage.load_manifest("2026-08-27") is None
+    assert storage.load_audio("2026-08-27") is None
+    # Nothing at all, not even a zero-byte audio file that a later run would
+    # find and serve.
+    assert list(tmp_path.iterdir()) == []

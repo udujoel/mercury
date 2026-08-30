@@ -147,6 +147,7 @@ async def _generate(
     briefing_id: str, length: BriefingLength, *, force: bool = False
 ) -> int:
     from app.pipeline.generate import generate_briefing
+    from app.synthesis.stitch import EmptyBriefingError
     from app.synthesis.storage import build_storage
 
     try:
@@ -191,6 +192,17 @@ async def _generate(
         manifest = await generate_briefing(
             briefing_id=briefing_id, length=length, llm=llm, tts=tts, storage=storage
         )
+    except EmptyBriefingError as exc:
+        # Named separately from a generic failure because the operator action
+        # is different: nothing was stored, so there is no stale briefing to
+        # force past, and the thing to go and look at is the TTS provider.
+        log.error("generation produced no audio for %s: %s", briefing_id, exc)
+        print(
+            f"::error::Briefing {briefing_id} produced NO AUDIBLE TURNS and was "
+            "not stored. Every TTS call failed — check Google TTS credentials "
+            "and quota. Nothing was written, so a re-run needs no --force."
+        )
+        return 1
     except Exception:
         log.exception("generation failed for %s", briefing_id)
         return 1
