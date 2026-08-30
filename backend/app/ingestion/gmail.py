@@ -31,6 +31,7 @@ from bs4 import BeautifulSoup
 
 from app.core.config import get_settings
 from app.core.schemas import Item, Priority, SourceType
+from app.ingestion.drops import log_drop, report_drops
 
 log = logging.getLogger(__name__)
 
@@ -395,12 +396,18 @@ async def fetch_emails(
     else:
         raw_messages = _fetch_live_messages(max_messages)
 
+    considered = raw_messages[:max_messages]
     items: list[Item] = []
-    for raw in raw_messages[:max_messages]:
+    dropped = 0
+    for raw in considered:
         try:
             items.append(message_to_item(raw, user_email))
         except Exception:
             # A malformed message must never take down the whole run
-            # (CLAUDE.md rule 7 — graceful degradation).
-            continue
+            # (CLAUDE.md rule 7 — graceful degradation) — but it must be
+            # SEEN. See app/ingestion/drops.py for why the silent version of
+            # this was worse than no error handling at all.
+            dropped += 1
+            log_drop(log, "gmail", raw.get("id"))
+    report_drops(log, "gmail", total=len(considered), dropped=dropped)
     return items

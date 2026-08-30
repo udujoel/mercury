@@ -13,6 +13,7 @@ never creates, modifies or deletes calendar entries.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sys
 from datetime import date, datetime, timedelta
@@ -22,6 +23,9 @@ from zoneinfo import ZoneInfo
 
 from app.core.config import get_settings
 from app.core.schemas import CalendarEvent
+from app.ingestion.drops import log_drop, report_drops
+
+log = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────────────────────
 # Video-conference boilerplate stripping
@@ -240,6 +244,8 @@ async def fetch_events(
         calendars, events_by_cal = _fetch_live(now, window_end)
 
     all_events: list[CalendarEvent] = []
+    considered = 0
+    dropped = 0
     for cal in calendars:
         cal_id = cal["id"]
         # Google reports accessRole per calendar. Subscribed holiday, week
@@ -249,16 +255,26 @@ async def fetch_events(
         # ambient entries be ranked down instead of walked chronologically.
         owned = cal.get("accessRole") in ("owner", "writer")
         for raw_event in events_by_cal.get(cal_id, []):
+            considered += 1
             try:
                 event = event_to_calendar_event(
                     raw_event, tz, calendar_id=cal_id, owned=owned
                 )
             except Exception:
                 # A malformed event must never take down the whole run
-                # (CLAUDE.md rule 7 — graceful degradation).
+                # (CLAUDE.md rule 7 — graceful degradation) — but it must be
+                # SEEN. See app/ingestion/drops.py.
+                dropped += 1
+                log_drop(log, "calendar", raw_event.get("id"))
                 continue
+            # A None here is a deliberate filter, not a failure: cancelled
+            # events and ones the user declined are supposed to disappear.
+            # Counting them as drops would fire the escalation on a healthy
+            # calendar that simply had a cancelled standup on it.
             if event is not None:
                 all_events.append(event)
+
+    report_drops(log, "calendar", total=considered, dropped=dropped)
 
     all_events.sort(key=lambda e: e.start)
     return all_events
