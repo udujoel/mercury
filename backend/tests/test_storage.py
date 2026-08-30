@@ -5,6 +5,9 @@ Tests for app.synthesis.storage.LocalFilesystemStorage.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
 
 from app.core.schemas import BriefingManifest
 from app.synthesis.storage import AUDIO_MEDIA_TYPES, LocalFilesystemStorage
@@ -76,6 +79,39 @@ def test_save_removes_stale_audio_from_a_previous_format(tmp_path):
     audio_bytes, media_type = result
     assert audio_bytes == b"m4a bytes"
     assert media_type == AUDIO_MEDIA_TYPES["m4a"]
+
+
+def test_the_superseded_format_is_deleted_only_after_the_new_audio_lands(
+    tmp_path, monkeypatch
+):
+    """Same defect the R2 backend was already fixed for, still here in local
+    storage: the stale format was unlinked BEFORE the new bytes were written,
+    so a write that failed left the old manifest pointing at audio that no
+    longer existed — 200 on the manifest, 404 on the audio, and that is the
+    state of the day."""
+    storage = LocalFilesystemStorage(base_dir=tmp_path)
+    manifest = _manifest()
+    storage.save("2026-08-21", b"m4a bytes", "m4a", manifest)
+
+    def _fails(_self, _data):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(Path, "write_bytes", _fails, raising=True)
+    with pytest.raises(OSError):
+        storage.save("2026-08-21", b"wav bytes", "wav", manifest)
+
+    assert (tmp_path / "2026-08-21.m4a").read_bytes() == b"m4a bytes"
+    assert storage.load_audio("2026-08-21") is not None
+
+
+def test_delete_briefing_removes_objects_in_unknown_formats(tmp_path):
+    storage = LocalFilesystemStorage(base_dir=tmp_path)
+    storage.save("2026-08-21", b"wav bytes", "wav", _manifest())
+    (tmp_path / "2026-08-21.mp3").write_bytes(b"some other format")
+
+    storage.delete_briefing("2026-08-21")
+
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_audio_path_for_is_a_stable_api_route(tmp_path):

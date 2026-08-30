@@ -51,8 +51,8 @@ class _FakeS3:
     # quietly stop working at exactly the point it starts to matter.
     PAGE_SIZE = 2
 
-    def list_objects_v2(self, *, Bucket, ContinuationToken=None):  # noqa: N803
-        keys = sorted(self.objects)
+    def list_objects_v2(self, *, Bucket, ContinuationToken=None, Prefix=None):  # noqa: N803
+        keys = sorted(k for k in self.objects if not Prefix or k.startswith(Prefix))
         start = int(ContinuationToken or 0)
         page = keys[start : start + self.PAGE_SIZE]
         end = start + len(page)
@@ -337,6 +337,59 @@ def test_delete_briefing_removes_the_manifest_and_every_audio_format(monkeypatch
 
     assert client.objects == {}
     assert storage.list_briefing_ids() == []
+
+
+def test_delete_briefing_removes_objects_in_unknown_formats(monkeypatch):
+    """Retention deleted the manifest plus m4a and wav and nothing else, so
+    any other object for that briefing survived the deletion meant to reclaim
+    its space — invisible, unreferenced, and counted against the 10GB."""
+    storage = _configured(monkeypatch)
+    client = storage.__dict__["_client"]
+    storage.save("2026-08-22", b"A", "m4a", _manifest())
+    client.objects["2026-08-22.mp3"] = (b"x", "audio/mpeg")
+    client.objects["2026-08-22.script.json"] = (b"{}", "application/json")
+
+    storage.delete_briefing("2026-08-22")
+
+    assert client.objects == {}
+
+
+def test_a_delete_that_r2_rejects_is_not_reported_as_a_deletion(monkeypatch):
+    """`prune_briefings` names what it deleted and the workflow log prints
+    that list. Swallowing a 403 here made the list a claim about objects still
+    sitting in the bucket — retention that reports success and reclaims
+    nothing, every morning, until the free tier runs out."""
+    from app.synthesis.storage import prune_briefings
+
+    storage = _configured(monkeypatch)
+    client = storage.__dict__["_client"]
+    storage.save("2026-01-01", b"A", "m4a", _manifest("2026-01-01"))
+
+    def _denied(*, Bucket, Key):  # noqa: N803
+        raise _ClientError(403, "AccessDenied")
+
+    client.delete_object = _denied
+
+    with pytest.raises(_ClientError):
+        storage.delete_briefing("2026-01-01")
+
+    assert prune_briefings(storage, retention_days=30, today_id="2026-08-22") == []
+    assert "2026-01-01.m4a" in client.objects
+
+
+def test_deleting_a_key_that_is_already_gone_is_not_a_failure(monkeypatch):
+    """A 404 means the object is not there, which is the state deletion was
+    asking for. Only a real refusal is a failure."""
+    storage = _configured(monkeypatch)
+    client = storage.__dict__["_client"]
+    storage.save("2026-01-01", b"A", "m4a", _manifest("2026-01-01"))
+
+    def _missing(*, Bucket, Key):  # noqa: N803
+        raise _ClientError(404, "NoSuchKey")
+
+    client.delete_object = _missing
+
+    storage.delete_briefing("2026-01-01")  # must not raise
 
 
 def test_retention_against_r2_keeps_today(monkeypatch):

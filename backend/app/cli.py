@@ -30,7 +30,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import re
 import sys
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -54,17 +53,23 @@ def _today_briefing_id(tz_name: str) -> str:
 
 
 def _resolve_briefing_id(explicit: str | None, today_id: str) -> str | None:
-    """The id both subcommands operate on, or None if it is malformed.
+    r"""The id both subcommands operate on, or None if it is malformed.
 
     A malformed id silently becomes a storage key nothing ever reads — and
     `check` would then report a perfectly healthy briefing as missing, which
     is a worse outcome than the bad write it was originally guarding.
+
+    `is_briefing_id` rather than a local regex, because this used to be its
+    own `\d{4}-\d{2}-\d{2}` copy and accepted `2026-01-99` — a key retention
+    cannot parse as a date and could therefore never age out.
     """
+    from app.synthesis.storage import is_briefing_id
+
     briefing_id = explicit or today_id
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", briefing_id):
+    if not is_briefing_id(briefing_id):
         log.error(
-            "briefing id %r is not YYYY-MM-DD; refusing to act on an id "
-            "nothing will look for", briefing_id,
+            "briefing id %r is not a real YYYY-MM-DD date; refusing to act on "
+            "an id nothing will look for", briefing_id,
         )
         return None
     return briefing_id
@@ -86,7 +91,7 @@ def _check(briefing_id: str) -> int:
     Both look exactly like success from the Actions log. So this asks for the
     audio too, and calls a zero-turn briefing what it is.
     """
-    from app.synthesis.storage import build_storage
+    from app.synthesis.storage import MIN_PLAYABLE_AUDIO_BYTES, build_storage
 
     try:
         storage = build_storage()
@@ -138,6 +143,19 @@ def _check(briefing_id: str) -> int:
         )
         return 1
 
+    # Present is not playable. `audio is None` is false for a zero-byte object,
+    # so an upload that died mid-flight passed this check and the run went
+    # green while the phone got a 200 and nothing to play — and idempotency
+    # then preserved that state for the rest of the day.
+    audio_bytes, _ = audio
+    if len(audio_bytes) < MIN_PLAYABLE_AUDIO_BYTES:
+        print(
+            f"::error::Briefing {briefing_id} has a manifest and "
+            f"{len(audio_bytes)} bytes of audio, which is not audio. The "
+            "upload did not finish. Re-run with force=true."
+        )
+        return 1
+
     log.info(
         "briefing %s is present and playable: %d turns, %.0fs of audio",
         briefing_id, len(manifest.turns), manifest.duration_ms / 1000,
@@ -152,12 +170,26 @@ def _prune(retention_days: int, today_id: str, *, dry_run: bool) -> int:
     that it can never be the reason a morning reports failure. A storage error
     here is worth an exit code; it is not worth the briefing.
     """
-    from app.synthesis.storage import build_storage, prune_briefings
+    from app.synthesis.storage import (
+        build_storage,
+        prune_briefings,
+        validate_retention_days,
+    )
 
     try:
         storage = build_storage()
     except Exception as exc:
         log.error("storage is not configured: %s", exc)
+        return 2
+
+    # Before the dry-run branch, not inside prune_briefings alone. A preview
+    # of a command the real run would reject is not a preview of anything:
+    # `--dry-run --retention-days 0` listed today's briefing as doomed and
+    # exited 0, which reads as a description of what would happen.
+    try:
+        validate_retention_days(retention_days)
+    except ValueError as exc:
+        log.error("retention is misconfigured: %s", exc)
         return 2
 
     if dry_run:

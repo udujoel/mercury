@@ -177,10 +177,62 @@ def test_one_undeletable_briefing_does_not_stop_the_rest(tmp_path, monkeypatch):
         ("2026-8-3.wav", None),
         ("backup/2026-08-30.wav", None),
         ("2026-08-30", None),
+        # Date-SHAPED is not a date. The regex alone accepted all of these,
+        # and the only consumer of this function is the code that deletes.
+        ("2026-01-99.wav", None),
+        ("2026-02-30.m4a", None),
+        ("2026-13-01.manifest.json", None),
+        ("2026-00-10.wav", None),
+        # A real leap day must still parse — a validator that is too strict
+        # orphans one briefing a year and nothing ever cleans it up.
+        ("2024-02-29.m4a", "2024-02-29"),
     ],
 )
 def test_briefing_id_from_key(key, expected):
     assert briefing_id_from_key(key) == expected
+
+
+def test_a_date_shaped_impossible_id_is_not_treated_as_a_briefing(tmp_path):
+    """`2026-01-99` sorts before every cutoff, so retention read it as very
+    old and deleted it. Nothing this function cannot positively identify as a
+    calendar date is its business."""
+    storage = _storage_with(tmp_path, TODAY)
+    (tmp_path / "2026-01-99.wav").write_bytes(b"not a briefing")
+    (tmp_path / "2026-02-30.manifest.json").write_text("{}")
+
+    deleted = prune_briefings(storage, retention_days=30, today_id=TODAY)
+
+    assert deleted == []
+    assert (tmp_path / "2026-01-99.wav").exists()
+    assert (tmp_path / "2026-02-30.manifest.json").exists()
+    assert storage.list_briefing_ids() == [TODAY]
+
+
+def test_delete_briefing_removes_every_object_for_that_briefing(tmp_path):
+    """Retention used to remove the manifest plus m4a and wav only, so any
+    other object for the briefing survived the deletion that was supposed to
+    reclaim its space — and nothing ever looked at it again."""
+    storage = _storage_with(tmp_path, "2026-01-01")
+    (tmp_path / "2026-01-01.mp3").write_bytes(b"a format this layer never wrote")
+    (tmp_path / "2026-01-01.script.json").write_text("{}")
+
+    prune_briefings(storage, retention_days=30, today_id=TODAY)
+
+    assert sorted(p.name for p in tmp_path.iterdir()) == []
+
+
+def test_a_failed_delete_is_not_reported_as_deleted(tmp_path, monkeypatch):
+    """prune returns what it deleted, and the caller logs that list. A
+    delete_briefing that swallows its own failures makes that list a claim
+    about objects still sitting in the bucket."""
+    storage = _storage_with(tmp_path, "2026-01-01")
+
+    def _fails(briefing_id: str) -> None:
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(storage, "delete_briefing", _fails)
+
+    assert prune_briefings(storage, retention_days=30, today_id=TODAY) == []
 
 
 # ── the CLI wrapper ──────────────────────────────────────────
@@ -232,3 +284,20 @@ def test_prune_reports_a_bad_window_as_a_configuration_error(
 
     assert main(["prune", "--retention-days", "0"]) == 2
     assert storage.load_manifest(TODAY) is not None
+
+
+@pytest.mark.parametrize("window", ["0", "-1"])
+def test_dry_run_refuses_a_window_the_real_command_would_refuse(
+    monkeypatch, tmp_path, window
+):
+    """A preview of a command that cannot run is not a preview. `--dry-run
+    --retention-days 0` used to list today's briefing as doomed and exit 0,
+    which reads as "this is what would happen" about something that would in
+    fact be rejected."""
+    storage = _storage_with(tmp_path, "2026-01-01", TODAY)
+    monkeypatch.setattr(
+        "app.synthesis.storage.build_storage", lambda: storage, raising=True
+    )
+    monkeypatch.setattr("app.cli._today_briefing_id", lambda _tz: TODAY)
+
+    assert main(["prune", "--dry-run", "--retention-days", window]) == 2

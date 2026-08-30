@@ -32,6 +32,13 @@ AUDIO_MEDIA_TYPES: dict[str, str] = {
     "wav": "audio/wav",
 }
 
+# A briefing that is present but silent is not a briefing. A real one is ~3MB
+# and a bare WAV header is 44 bytes, so a kilobyte is three orders of magnitude
+# below anything genuine and cannot reject a real file — while still catching
+# the zero-byte and truncated objects an upload that died mid-flight leaves.
+# Kept in sync with MIN_PLAYABLE_AUDIO_BYTES in worker/src/index.js.
+MIN_PLAYABLE_AUDIO_BYTES = 1024
+
 # Every object this layer writes is "{YYYY-MM-DD}.{something}". Retention reads
 # the id back out of the key rather than trusting a listing to be only
 # manifests, so an audio file orphaned by a half-failed run is still found and
@@ -39,10 +46,46 @@ AUDIO_MEDIA_TYPES: dict[str, str] = {
 _BRIEFING_KEY = re.compile(r"^(\d{4}-\d{2}-\d{2})\.")
 
 
+def is_briefing_id(value: str) -> bool:
+    r"""Is this a real YYYY-MM-DD day?
+
+    The single place this question is answered. It used to be answered by a
+    bare `\d{4}-\d{2}-\d{2}` regex in three places — here, `app.cli` and the
+    Worker — and all three agreed that `2026-01-99` was a date. Retention
+    parses ids as dates to decide what is old, so a date-SHAPED id sorted
+    before every cutoff and got deleted; `app.cli generate` would have stored
+    a briefing under a key retention could then never age out.
+    """
+    if not _BRIEFING_KEY.match(f"{value}."):
+        return False
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
 def briefing_id_from_key(key: str) -> str | None:
     """The briefing id in a storage key, or None if the key is not ours."""
     match = _BRIEFING_KEY.match(key)
-    return match.group(1) if match else None
+    if match is None:
+        return None
+    briefing_id = match.group(1)
+    return briefing_id if is_briefing_id(briefing_id) else None
+
+
+def validate_retention_days(retention_days: int) -> None:
+    """Raise if this window is not one retention is allowed to run with.
+
+    Its own function so `--dry-run` cannot preview a command the real run
+    would reject: a preview of something that cannot happen is worse than no
+    preview, because it reads as a description of what would happen.
+    """
+    if retention_days < 1:
+        raise ValueError(
+            f"retention_days must be at least 1, got {retention_days}. A "
+            "window of zero days would delete today's briefing."
+        )
 
 
 class BriefingStorage(Protocol):
@@ -77,7 +120,19 @@ class BriefingStorage(Protocol):
         ...
 
     def delete_briefing(self, briefing_id: str) -> None:
-        """Remove a briefing entirely — manifest and every audio format."""
+        """Remove a briefing entirely — every object stored under its id.
+
+        Every object, not "the manifest plus the formats this module knows
+        about". Retention exists to reclaim space, and an object in any other
+        format survived the deletion meant to reclaim it: unreferenced,
+        invisible, and still counted against the 10GB.
+
+        Failures PROPAGATE. `prune_briefings` reports what it deleted and the
+        workflow log prints that list; a delete that swallows its own errors
+        turns that list into a claim about objects still sitting in the
+        bucket. A key that is already gone is not a failure — that is the
+        state deletion was asking for.
+        """
         ...
 
     def delete_audio(self, briefing_id: str) -> None:
@@ -123,15 +178,25 @@ class LocalFilesystemStorage:
         audio_format: str,
         manifest: BriefingManifest,
     ) -> None:
-        # Remove any stale audio file left in another format from a
-        # previous run (e.g. a wav fallback superseded by a later m4a run).
+        audio_path = self._audio_path(briefing_id, audio_format)
+        audio_path.write_bytes(audio_bytes)
+
+        # Only NOW remove audio left behind in a different format by an
+        # earlier run (a wav fallback superseded by a later m4a, or the
+        # reverse). load_audio returns the first format it finds in
+        # KNOWN_AUDIO_FORMATS order, so a stale m4a would outrank a fresh wav
+        # and the phone would play old audio against new timings.
+        #
+        # The ordering is the point, and it is the same ordering R2Storage
+        # already uses. This ran BEFORE the write, so a write that failed —
+        # disk full, container killed — left the old manifest pointing at
+        # audio that no longer existed: 200 on the manifest, 404 on the audio,
+        # and that was the state of the day. Nothing is deleted on the
+        # strength of a write that has not happened yet.
         for fmt in KNOWN_AUDIO_FORMATS:
             stale = self._audio_path(briefing_id, fmt)
             if fmt != audio_format and stale.exists():
                 stale.unlink()
-
-        audio_path = self._audio_path(briefing_id, audio_format)
-        audio_path.write_bytes(audio_bytes)
 
         manifest_path = self._manifest_path(briefing_id)
         manifest_path.write_text(manifest.model_dump_json(indent=2))
@@ -169,8 +234,9 @@ class LocalFilesystemStorage:
         return sorted(ids)
 
     def delete_briefing(self, briefing_id: str) -> None:
-        self.delete_audio(briefing_id)
-        self._manifest_path(briefing_id).unlink(missing_ok=True)
+        for path in self._base_dir.iterdir():
+            if path.is_file() and briefing_id_from_key(path.name) == briefing_id:
+                path.unlink(missing_ok=True)
 
 
 def prune_briefings(
@@ -194,11 +260,7 @@ def prune_briefings(
     guessed at. This function deletes things; it should be the least clever
     code in the module.
     """
-    if retention_days < 1:
-        raise ValueError(
-            f"retention_days must be at least 1, got {retention_days}. A "
-            "window of zero days would delete today's briefing."
-        )
+    validate_retention_days(retention_days)
 
     try:
         cutoff = date.fromisoformat(today_id) - timedelta(days=retention_days)

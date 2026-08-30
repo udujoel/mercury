@@ -180,51 +180,74 @@ class R2Storage:
         return None
 
     def list_briefing_ids(self) -> list[str]:
-        ids: set[str] = set()
+        ids = {
+            briefing_id
+            for key in self._iter_keys()
+            if (briefing_id := briefing_id_from_key(key)) is not None
+        }
+        return sorted(ids)
+
+    def delete_briefing(self, briefing_id: str) -> None:
+        # Every object under this id, not just the manifest and the two audio
+        # formats this module writes. Retention exists to reclaim space, and
+        # anything else stored for the briefing survived the deletion meant to
+        # reclaim it — unreferenced, invisible, still counted against the
+        # 10GB.
+        # The listing is materialised before anything is deleted: paginating
+        # a listing while mutating what it lists skips whatever slides into
+        # the page boundary.
+        keys = [
+            key
+            for key in self._iter_keys(prefix=f"{briefing_id}.")
+            if briefing_id_from_key(key) == briefing_id
+        ]
+        for key in keys:
+            self._delete(key)
+
+    def delete_audio(self, briefing_id: str) -> None:
+        for fmt in KNOWN_AUDIO_FORMATS:
+            self._delete(self._audio_key(briefing_id, fmt))
+
+    # ── internals ─────────────────────────────────────────────
+
+    def _iter_keys(self, prefix: str | None = None):
+        """Every key in the bucket, or every key under a prefix.
+
+        Paginates properly. A bucket holding more than 1000 objects would
+        otherwise silently return only the first page, and retention would
+        quietly stop working at exactly the point it starts to matter.
+        """
         token: str | None = None
         while True:
             kwargs: dict = {"Bucket": self._bucket}
+            if prefix:
+                kwargs["Prefix"] = prefix
             if token:
                 kwargs["ContinuationToken"] = token
             response = self._client.list_objects_v2(**kwargs)
             for item in response.get("Contents", []):
-                briefing_id = briefing_id_from_key(item["Key"])
-                if briefing_id is not None:
-                    ids.add(briefing_id)
-            # Paginate properly. A bucket holding more than 1000 objects would
-            # otherwise silently return only the first page, and retention
-            # would quietly stop working at exactly the point it starts to
-            # matter.
+                yield item["Key"]
             if not response.get("IsTruncated"):
-                break
+                return
             token = response.get("NextContinuationToken")
             if not token:
-                break
-        return sorted(ids)
+                return
 
-    def delete_briefing(self, briefing_id: str) -> None:
-        self.delete_audio(briefing_id)
+    def _delete(self, key: str) -> None:
+        """Delete a key. A 404 is success; anything else is a real failure.
+
+        It used to swallow everything, so `prune_briefings` reported briefings
+        as deleted while a 403 from a rotated or under-scoped token left every
+        object exactly where it was — retention that claims success and
+        reclaims nothing, every morning, until the free tier runs out.
+        """
         try:
-            self._client.delete_object(
-                Bucket=self._bucket, Key=self._manifest_key(briefing_id)
-            )
-        except Exception:
-            log.debug(
-                "R2 delete of the manifest for %s did nothing",
-                briefing_id, exc_info=True,
-            )
-
-    def delete_audio(self, briefing_id: str) -> None:
-        for fmt in KNOWN_AUDIO_FORMATS:
-            key = self._audio_key(briefing_id, fmt)
-            try:
-                self._client.delete_object(Bucket=self._bucket, Key=key)
-            except Exception:
-                # Deleting a key that is not there is fine; anything else is
-                # worth knowing about but must not stop a regeneration.
-                log.debug("R2 delete of %s did nothing", key, exc_info=True)
-
-    # ── internals ─────────────────────────────────────────────
+            self._client.delete_object(Bucket=self._bucket, Key=key)
+        except Exception as exc:
+            if self._status_code(exc) == 404 or type(exc).__name__ == "NoSuchKey":
+                log.debug("R2 key %s was already gone", key)
+                return
+            raise
 
     @staticmethod
     def _status_code(exc: Exception) -> int | None:

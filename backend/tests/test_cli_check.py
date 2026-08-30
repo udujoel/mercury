@@ -41,6 +41,12 @@ def _manifest(
     )
 
 
+# Enough bytes to be audio. `check` now has a size floor, because a zero-byte
+# object passed the old `audio is None` test and shipped a green run over a
+# briefing the phone could not play.
+PLAUSIBLE_AUDIO = b"RIFF" + b"\0" * 4096
+
+
 @pytest.fixture
 def storage_at(monkeypatch, tmp_path):
     """Point build_storage at a temp directory for the duration of a test."""
@@ -52,7 +58,7 @@ def storage_at(monkeypatch, tmp_path):
 
 
 def test_check_passes_for_a_real_briefing(storage_at):
-    storage_at.save("2026-08-21", b"fake wav bytes", "wav", _manifest())
+    storage_at.save("2026-08-21", PLAUSIBLE_AUDIO, "wav", _manifest())
 
     assert main(["check", "--briefing-id", "2026-08-21"]) == 0
 
@@ -81,7 +87,7 @@ def test_check_fails_when_the_manifest_has_no_audio_behind_it(storage_at, capsys
     """`--force` used to delete the audio before regenerating, so a failed
     retry stranded a manifest pointing at an object that no longer exists —
     200 on the manifest, 404 on the audio."""
-    storage_at.save("2026-08-21", b"fake wav bytes", "wav", _manifest())
+    storage_at.save("2026-08-21", PLAUSIBLE_AUDIO, "wav", _manifest())
     storage_at.delete_audio("2026-08-21")
 
     assert main(["check", "--briefing-id", "2026-08-21"]) == 1
@@ -119,6 +125,30 @@ def test_check_does_not_report_a_read_failure_as_a_missing_briefing(
     assert "No briefing for" not in out
 
 
+def test_check_fails_on_a_zero_byte_audio_object(storage_at, capsys):
+    """`audio is None` is false for an empty payload, so check exited 0 while
+    the phone got a 200 and nothing to play. An upload that dies mid-flight
+    leaves exactly this."""
+    storage_at.save("2026-08-21", b"", "wav", _manifest())
+
+    assert main(["check", "--briefing-id", "2026-08-21"]) == 1
+    assert "0 bytes" in capsys.readouterr().out
+
+
+def test_check_fails_on_a_truncated_audio_object(storage_at):
+    storage_at.save("2026-08-21", b"RIFF" + b"\0" * 40, "wav", _manifest())
+
+    assert main(["check", "--briefing-id", "2026-08-21"]) == 1
+
+
+@pytest.mark.parametrize("briefing_id", ["2026-01-99", "2026-02-30", "2026-13-01"])
+def test_check_rejects_a_date_shaped_impossible_id(storage_at, briefing_id):
+    """The shape check passed these, so generation would store a key under an
+    id that is not a day — and retention, which parses ids as dates, could
+    then never age it out."""
+    assert main(["check", "--briefing-id", briefing_id]) == 2
+
+
 def test_check_rejects_a_malformed_briefing_id(storage_at):
     assert main(["check", "--briefing-id", "not-a-date"]) == 2
 
@@ -131,6 +161,6 @@ def test_check_defaults_to_today_in_the_users_timezone(storage_at, monkeypatch):
     monkeypatch.setattr(
         "app.cli._today_briefing_id", lambda _tz: "2026-08-21", raising=True
     )
-    storage_at.save("2026-08-21", b"fake wav bytes", "wav", _manifest())
+    storage_at.save("2026-08-21", PLAUSIBLE_AUDIO, "wav", _manifest())
 
     assert main(["check"]) == 0
