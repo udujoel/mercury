@@ -21,22 +21,37 @@ import worker from "../src/index.js";
 
 const TOKEN = "x".repeat(40);
 
-/** An R2 stub. `objects` maps key -> {json, size}. */
+/**
+ * An R2 stub. `objects` maps key -> {json, size, etag}.
+ *
+ * `onlyIf` is modelled the way R2 actually behaves, because that is the whole
+ * mechanism the conditional-GET path relies on: R2 evaluates the conditional
+ * request headers itself, and when the precondition fails it returns an
+ * R2Object with NO `body` property rather than null. `isNotModified` in the
+ * Worker tests exactly that, so a stub that always returned a body would make
+ * the 304 path untestable and quietly green.
+ */
 function bucket(objects = {}) {
-  const body = (key) => {
+  const body = (key, options) => {
     const stored = objects[key];
     if (stored === undefined) return null;
-    return {
+    const etag = stored.etag ?? '"etag"';
+    const object = {
       size: stored.size ?? 1,
-      httpEtag: '"etag"',
-      body: "body",
+      httpEtag: etag,
       json: async () => {
         if (stored.json === undefined) throw new Error("not json");
         return stored.json;
       },
     };
+    const ifNoneMatch = options?.onlyIf?.get?.("if-none-match");
+    if (ifNoneMatch && ifNoneMatch === etag) return object; // precondition failed
+    return { ...object, body: "body" };
   };
-  return { get: async (key) => body(key), head: async (key) => body(key) };
+  return {
+    get: async (key, options) => body(key, options),
+    head: async (key) => body(key),
+  };
 }
 
 /** A manifest the phone could actually play. */
@@ -221,6 +236,55 @@ describe("briefingState", () => {
     });
     assert.equal(body.state, "ok");
   });
+});
+
+describe("conditional GET", () => {
+  // `private, no-cache` tells the phone to revalidate on every open, which is
+  // only cheap if revalidation can answer 304. The iOS client caches the
+  // prefetched audio and sends If-None-Match precisely because `--force`
+  // regeneration reuses the same briefing id, so freshness alone proves
+  // nothing. Without a 304 the phone re-downloads ~3MB every morning and the
+  // background prefetch (PRD F-17) buys nothing.
+  const objects = {
+    "2026-08-30.manifest.json": { ...PLAYABLE, etag: '"m-1"' },
+    "2026-08-30.m4a": { ...REAL_AUDIO, etag: '"a-1"' },
+  };
+
+  const request = (path, ifNoneMatch) =>
+    worker.fetch(
+      new Request(`https://w${path}`, {
+        headers: ifNoneMatch
+          ? { "X-Mercury-Token": TOKEN, "If-None-Match": ifNoneMatch }
+          : { "X-Mercury-Token": TOKEN },
+      }),
+      envFor(objects),
+    );
+
+  for (const [what, path, etag] of [
+    ["manifest", "/briefing/2026-08-30", '"m-1"'],
+    ["audio", "/briefing/2026-08-30/audio", '"a-1"'],
+  ]) {
+    test(`a matching If-None-Match on the ${what} is a bodyless 304`, async () => {
+      const response = await request(path, etag);
+      assert.equal(response.status, 304);
+      assert.equal(response.headers.get("etag"), etag);
+      assert.equal(response.body, null);
+      assert.equal(await response.text(), "");
+    });
+
+    test(`a stale If-None-Match on the ${what} returns the body`, async () => {
+      const response = await request(path, '"stale"');
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("etag"), etag);
+      assert.ok((await response.text()).length > 0);
+    });
+
+    test(`no If-None-Match on the ${what} returns the body`, async () => {
+      const response = await request(path);
+      assert.equal(response.status, 200);
+      assert.ok((await response.text()).length > 0);
+    });
+  }
 });
 
 describe("briefing ids", () => {
