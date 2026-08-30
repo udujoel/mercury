@@ -71,6 +71,21 @@ def check_monologues(turns: list[Turn]) -> list[dict]:
 # segments only — see check_disagreement docstring below.
 # ──────────────────────────────────────────────────────────────
 
+# Markers are written with ASCII apostrophes, but models emit the
+# typographic form ("I\u2019d argue") at least as often. That used to be
+# invisible: script_chain.parse_json_response normalised every curly quote
+# in the response before parsing, so these markers only ever saw ASCII.
+# Fixing that pre-pass (it corrupted valid JSON) means real apostrophes now
+# reach this gate intact — and "i'd argue" stops matching "i\u2019d argue".
+# The gate would have got quietly worse while every test stayed green, so
+# normalise here instead, where the comparison actually happens.
+_APOSTROPHES = str.maketrans({"\u2019": "'", "\u2018": "'"})
+
+
+def _normalise(text: str) -> str:
+    return text.lower().translate(_APOSTROPHES)
+
+
 _CHALLENGE_MARKERS = [
     "push back", "actually", "i'd disagree", "disagree", "not quite",
     "hold on", "to be fair", "i'd argue", "counterpoint", "fair, but",
@@ -113,7 +128,7 @@ def check_disagreement(turns: list[Turn]) -> list[dict]:
     for segment, seg_turns in by_segment.items():
         if segment not in _DISAGREEMENT_SEGMENTS:
             continue
-        text_blob = " ".join(t.text.lower() for t in seg_turns)
+        text_blob = " ".join(_normalise(t.text) for t in seg_turns)
         has_challenge = any(m in text_blob for m in _CHALLENGE_MARKERS)
         agreeable_count = sum(1 for m in _AGREEABLE_MARKERS if m in text_blob)
         if not has_challenge and len(seg_turns) > 1:

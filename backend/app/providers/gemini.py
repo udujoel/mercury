@@ -31,6 +31,38 @@ MAX_ATTEMPTS = 5
 BASE_DELAY_S = 1.5
 
 
+def _generation_config(
+    temperature: float, json_mode: bool, response_schema: dict | None
+) -> dict:
+    """Build the single generation config a request uses.
+
+    There is exactly one of these per call. It goes to GenerativeModel at
+    construction and generate_content() is passed none, so there is no
+    second config that could shadow this one.
+
+    On the 2026-08-27 outage this was suspected of dropping
+    response_mime_type — a model-level setting plus a per-call
+    {"temperature": ...} looks like it would replace it. It does not:
+    GenerativeModel._prepare_request does `merged_gc =
+    self._generation_config.copy(); merged_gc.update(generation_config)`,
+    so the MIME type was reaching the API all along. Merging is the real
+    behaviour but it is undocumented, and keeping two settings alive across
+    a dict.update() nobody owns is a bet with no upside. One config, one
+    place, pinned by a test.
+
+    The genuine gap was response_schema. `response_mime_type` alone only
+    ASKS the model for JSON; the schema is what constrains the decoder.
+    Without one the model is free to emit a stray unescaped quote inside a
+    string value, which is exactly what it did.
+    """
+    config: dict = {"temperature": temperature}
+    if json_mode:
+        config["response_mime_type"] = "application/json"
+        if response_schema is not None:
+            config["response_schema"] = response_schema
+    return config
+
+
 class GeminiProvider:
     """LLMProvider backed by google-generativeai / Gemini 2.5 Flash."""
 
@@ -51,20 +83,11 @@ class GeminiProvider:
         self._genai = genai
         self._model_name = model or settings.llm_model
 
-    def _build_model(self, system: str, json_mode: bool):
-        generation_config = {}
-        if json_mode:
-            # The reliable way to get parseable JSON out of Gemini: ask the
-            # SDK to constrain the response MIME type rather than hoping the
-            # prompt's "return JSON only" instruction is obeyed. Even so,
-            # keep robust parsing downstream — it can still wrap output in
-            # markdown fences or add stray whitespace/prose on some calls.
-            generation_config["response_mime_type"] = "application/json"
-
+    def _build_model(self, system: str, generation_config: dict):
         return self._genai.GenerativeModel(
             model_name=self._model_name,
             system_instruction=system,
-            generation_config=generation_config or None,
+            generation_config=generation_config,
         )
 
     def _log_usage(self, response) -> None:
@@ -79,12 +102,14 @@ class GeminiProvider:
         )
 
     def _sync_complete(self, system: str, prompt: str, temperature: float,
-                        json_mode: bool) -> str:
-        model = self._build_model(system, json_mode)
-        response = model.generate_content(
-            prompt,
-            generation_config={"temperature": temperature},
+                        json_mode: bool, response_schema: dict | None) -> str:
+        # One config, built once, handed to the model at construction, with
+        # nothing passed per-call. generate_content() takes no
+        # generation_config here on purpose — see _generation_config below.
+        model = self._build_model(
+            system, _generation_config(temperature, json_mode, response_schema)
         )
+        response = model.generate_content(prompt)
         self._log_usage(response)
         return response.text
 
@@ -95,6 +120,7 @@ class GeminiProvider:
         *,
         temperature: float = 0.85,
         json_mode: bool = False,
+        response_schema: dict | None = None,
     ) -> str:
         last_error: Exception | None = None
         for attempt in range(1, MAX_ATTEMPTS + 1):
@@ -103,7 +129,8 @@ class GeminiProvider:
                 # thread so this provider is genuinely async and never blocks
                 # the event loop the rest of the pipeline runs on.
                 return await asyncio.to_thread(
-                    self._sync_complete, system, prompt, temperature, json_mode
+                    self._sync_complete, system, prompt, temperature,
+                    json_mode, response_schema,
                 )
             except Exception as exc:  # noqa: BLE001 - broad: SDK raises varied types
                 last_error = exc
@@ -123,12 +150,12 @@ class GeminiProvider:
         where time-to-first-audio matters more than total latency."""
 
         def _sync_stream():
-            model = self._build_model(system, json_mode=False)
-            return model.generate_content(
-                prompt,
-                generation_config={"temperature": temperature},
-                stream=True,
+            model = self._build_model(
+                system,
+                _generation_config(temperature, json_mode=False,
+                                    response_schema=None),
             )
+            return model.generate_content(prompt, stream=True)
 
         # generate_content(stream=True) still blocks synchronously while
         # iterating, so pull the whole iterator construction and each next()

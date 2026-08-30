@@ -20,8 +20,17 @@ class LLMProvider(Protocol):
         *,
         temperature: float = 0.85,
         json_mode: bool = False,
+        response_schema: dict | None = None,
     ) -> str:
-        """Single completion. Returns raw text."""
+        """Single completion. Returns raw text.
+
+        `response_schema` is an OpenAPI-subset JSON schema describing the
+        shape the caller expects back. `json_mode` on its own only ASKS for
+        JSON; a schema is what actually constrains the decoder, which is the
+        difference between "usually parses" and "parses". Providers that
+        cannot constrain decoding may ignore it — every caller still parses
+        defensively regardless.
+        """
         ...
 
     async def stream(self, system: str, prompt: str, *, temperature: float = 0.85):
