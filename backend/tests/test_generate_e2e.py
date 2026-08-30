@@ -381,8 +381,8 @@ async def test_a_total_tts_failure_persists_nothing(tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
-async def test_a_failed_personal_source_records_the_exception_not_just_a_label(
-    tmp_path,
+async def test_an_expired_token_survives_the_real_calendar_ingestion(
+    tmp_path, monkeypatch
 ):
     """`app.cli` distinguishes an expired OAuth token from a transient API
     error by exception TYPE, so the type has to survive ingestion.
@@ -391,11 +391,26 @@ async def test_a_failed_personal_source_records_the_exception_not_just_a_label(
     credential error as a plain RuntimeError, which flattened the one subtype
     that carries a known cause and a permanent fix. Matching on message text
     instead would have broken the first time a string was reworded.
+
+    This drives the REAL `app.ingestion.calendar.fetch_events`, with no
+    fixture, down to the real `_google_auth.get_credentials`, and makes the
+    stored token fail to refresh with an invalid_grant. The whole chain is
+    exercised, so a future re-wrap in `_fetch_live` fails here.
+
+    An earlier version injected a fake that raised ExpiredCredentialsError
+    directly. It bypassed both ingestion modules entirely and could only ever
+    prove that `_ingest_concurrently` records whatever it was handed — the
+    re-wrap it claimed to guard was never executed, and a regression to a
+    plain RuntimeError would have passed it. CLAUDE.md names "tests that
+    encode the bug" as a recurring class in this project; this was one.
     """
     import sys as _sys
     from pathlib import Path as _Path
 
+    from google.auth.exceptions import RefreshError
+
     _sys.path.insert(0, str(_Path(__file__).resolve().parents[2] / "scripts"))
+    import _google_auth
     from _google_auth import ExpiredCredentialsError
 
     from app.pipeline.generate import (
@@ -403,15 +418,35 @@ async def test_a_failed_personal_source_records_the_exception_not_just_a_label(
         failed_personal_sources,
     )
 
-    async def _expired_events(*, fixture, hours_ahead: int):
-        raise ExpiredCredentialsError("token could not be refreshed")
+    # A token.json that exists and cannot be refreshed — the Actions shape,
+    # seven days after the last manual re-mint.
+    token = tmp_path / "token.json"
+    token.write_text("{}")
+    monkeypatch.setenv("GOOGLE_TOKEN_FILE", str(token))
+    monkeypatch.setenv("GOOGLE_CREDENTIALS_FILE", str(tmp_path / "absent.json"))
+
+    class _Expired:
+        valid = False
+        expired = True
+        refresh_token = "refresh-me"
+
+        def refresh(self, _request):
+            raise RefreshError("invalid_grant: Token has been expired or revoked.")
+
+    monkeypatch.setattr(
+        _google_auth.Credentials,
+        "from_authorized_user_file",
+        classmethod(lambda cls, path, scopes: _Expired()),
+        raising=True,
+    )
 
     await generate_briefing(
         briefing_id="2026-08-27",
         length=BriefingLength.STANDARD,
         llm=FakeLLMProvider(),
         tts=FakeTTSProvider(),
-        fetch_events=_expired_events,
+        # fetch_events deliberately NOT injected: the real ingestion module is
+        # the code under test.
         fetch_weather=_fake_fetch_weather,
         score_emails=_fake_score_emails,
         select_for_briefing=_fake_select_for_briefing,
@@ -426,4 +461,7 @@ async def test_a_failed_personal_source_records_the_exception_not_just_a_label(
     assert failed_personal_sources() == ["calendar"]
 
     errors = failed_personal_source_errors()
-    assert isinstance(errors["calendar"], ExpiredCredentialsError)
+    assert isinstance(errors["calendar"], ExpiredCredentialsError), (
+        f"calendar ingestion flattened the type to {type(errors['calendar'])}; "
+        "app.cli can no longer tell an expired token from any other failure"
+    )
