@@ -164,20 +164,21 @@ async def _generate(
         )
         return 0
     if force:
-        # Remove every stored format first. save() overwrites only the format
-        # it writes, and load_audio returns the FIRST format it finds — so an
-        # m4a left by an earlier run would outrank a freshly written wav and
-        # the phone would play old audio against the new manifest.
-        log.info("--force: clearing existing audio for %s before regenerating",
+        # Note what this deliberately does NOT do any more: delete the existing
+        # audio first. It used to, so that a stale m4a could not outrank a
+        # freshly written wav in load_audio's format order. But deleting before
+        # regenerating means a regeneration that then FAILS leaves the old
+        # manifest pointing at audio that no longer exists — the phone gets 200
+        # on the manifest and 404 on the audio, which is a worse briefing than
+        # the stale one it replaced, and it is now the state of the day.
+        #
+        # The stale-format problem belongs to the storage layer, which is the
+        # only place that knows what it just wrote: both backends now clear the
+        # other formats immediately AFTER the new audio lands, and before the
+        # manifest that points at it. Nothing is ever deleted on the strength
+        # of a regeneration that has not happened yet.
+        log.info("--force: regenerating %s over the existing briefing",
                  briefing_id)
-        try:
-            storage.delete_audio(briefing_id)
-        except Exception:
-            log.exception(
-                "could not clear existing audio for %s; a stale file in the "
-                "other format may be served instead of the new one",
-                briefing_id,
-            )
 
     try:
         from app.providers.gemini import GeminiProvider

@@ -56,11 +56,14 @@ class BriefingStorage(Protocol):
     def delete_audio(self, briefing_id: str) -> None:
         """Remove every stored audio format for this briefing.
 
-        Needed before a forced regeneration. `load_audio` returns the FIRST
-        format it finds in KNOWN_AUDIO_FORMATS order, so an m4a left behind by
-        an earlier run outranks a freshly written wav — the phone would play
-        the old audio against the new manifest and every turn boundary would
-        be wrong.
+        NOT part of the regeneration path any more. `--force` used to call this
+        before regenerating, and a regeneration that then failed left a
+        manifest pointing at audio that no longer existed. Clearing a
+        superseded format is `save`'s job, because `save` is the only caller
+        that knows the replacement has actually landed.
+
+        What is left for this to do is retention, where deleting audio whose
+        manifest is going away too is exactly the intent.
         """
         ...
 

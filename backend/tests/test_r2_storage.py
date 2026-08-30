@@ -35,9 +35,16 @@ class _ClientError(Exception):
 class _FakeS3:
     def __init__(self) -> None:
         self.objects: dict[str, tuple[bytes, str]] = {}
+        # Ordering is load-bearing in this module twice over, so record it.
+        self.calls: list[tuple[str, str]] = []
 
     def put_object(self, *, Bucket, Key, Body, ContentType):  # noqa: N803
         self.objects[Key] = (Body, ContentType)
+        self.calls.append(("put", Key))
+
+    def delete_object(self, *, Bucket, Key):  # noqa: N803
+        self.objects.pop(Key, None)
+        self.calls.append(("delete", Key))
 
     def get_object(self, *, Bucket, Key):  # noqa: N803
         if Key not in self.objects:
@@ -204,11 +211,6 @@ def test_delete_audio_removes_every_format(monkeypatch):
     storage = _configured(monkeypatch)
     client = storage.__dict__["_client"]
 
-    def _delete(*, Bucket, Key):  # noqa: N803
-        client.objects.pop(Key, None)
-
-    client.delete_object = _delete
-
     client.objects["2026-08-23.m4a"] = (b"OLD", "audio/mp4")
     client.objects["2026-08-23.wav"] = (b"NEW", "audio/wav")
 
@@ -216,3 +218,65 @@ def test_delete_audio_removes_every_format(monkeypatch):
 
     assert "2026-08-23.m4a" not in client.objects
     assert "2026-08-23.wav" not in client.objects
+
+
+def test_save_clears_audio_left_in_the_other_format(monkeypatch):
+    """A wav fallback superseding an earlier m4a, or the reverse.
+
+    `load_audio` returns the FIRST format it finds in KNOWN_AUDIO_FORMATS
+    order, so an m4a from an earlier run outranks a freshly written wav — the
+    phone plays the old audio against the new manifest and every turn boundary
+    is wrong. LocalFilesystemStorage.save has always done this; R2 did not, and
+    `--force` was papering over it from the CLI.
+    """
+    storage = _configured(monkeypatch)
+    client = storage.__dict__["_client"]
+
+    storage.save("2026-08-23", b"OLD", "m4a", _manifest("2026-08-23"))
+    storage.save("2026-08-23", b"NEW", "wav", _manifest("2026-08-23"))
+
+    assert "2026-08-23.m4a" not in client.objects
+    audio = storage.load_audio("2026-08-23")
+    assert audio is not None
+    assert audio[0] == b"NEW"
+
+
+def test_the_superseded_format_is_deleted_only_after_the_new_audio_lands(
+    monkeypatch,
+):
+    """The ordering finding. `--force` used to delete the old audio BEFORE
+    regenerating, so a regeneration that then failed left a manifest pointing
+    at an object that no longer existed — 200 on the manifest, 404 on the
+    audio, and that was the state of the day. Nothing may be deleted on the
+    strength of a write that has not happened yet."""
+    storage = _configured(monkeypatch)
+    client = storage.__dict__["_client"]
+
+    storage.save("2026-08-23", b"OLD", "m4a", _manifest("2026-08-23"))
+    client.calls.clear()
+    storage.save("2026-08-23", b"NEW", "wav", _manifest("2026-08-23"))
+
+    put_new = client.calls.index(("put", "2026-08-23.wav"))
+    delete_old = client.calls.index(("delete", "2026-08-23.m4a"))
+    put_manifest = client.calls.index(("put", "2026-08-23.manifest.json"))
+
+    assert put_new < delete_old, "old audio deleted before the new audio landed"
+    assert delete_old < put_manifest, "manifest published before the stale file went"
+
+
+def test_save_survives_a_failed_cleanup_of_the_stale_format(monkeypatch):
+    """Being unable to tidy up the superseded file is worth a warning, not a
+    lost briefing: the new audio and its manifest are already correct."""
+    storage = _configured(monkeypatch)
+    client = storage.__dict__["_client"]
+    storage.save("2026-08-23", b"OLD", "m4a", _manifest("2026-08-23"))
+
+    def _boom(*, Bucket, Key):  # noqa: N803
+        raise _ClientError(403, "AccessDenied")
+
+    client.delete_object = _boom
+
+    storage.save("2026-08-23", b"NEW", "wav", _manifest("2026-08-23"))
+
+    assert storage.load_manifest("2026-08-23") is not None
+    assert client.objects["2026-08-23.wav"][0] == b"NEW"

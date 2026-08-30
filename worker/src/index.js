@@ -38,6 +38,25 @@ const DEADLINE_UTC_MINUTES = 5 * 60;
 const GENERATE_WORKFLOW = "briefing.yml";
 const WATCHDOG_WORKFLOW = "briefing-watchdog.yml";
 
+/**
+ * PRIVATE, and revalidated every time.
+ *
+ * "private" rather than "public" because these responses are the transcript
+ * and audio of the user's email and calendar, returned only after a token
+ * check; "public" would authorise shared caches — Cloudflare's own edge, any
+ * proxy in between — to store and re-serve them, which is at odds with the
+ * entire reason the bucket is private.
+ *
+ * "no-cache" rather than "max-age=3600" because a briefing can be REPLACED.
+ * A forced regeneration fixes a briefing that shipped empty or degraded, and
+ * with an hour of freely reusable cache the phone would keep playing the
+ * broken one for up to an hour after it was fixed — with no way to invalidate
+ * it. "no-cache" still lets the client store the response; it just has to ask
+ * first. Paired with the etag below that costs one conditional request and a
+ * 304, not a re-download of ~3MB of audio.
+ */
+const CACHE_CONTROL = "private, no-cache";
+
 // Same floor as MIN_TOKEN_LENGTH in app/core/auth.py. Without it the Worker
 // would happily serve private briefings behind a secret the backend rejects
 // as too weak — two halves of one system disagreeing about what counts as
@@ -142,14 +161,14 @@ export default {
     if (audio) {
       const id = safeDecode(audio[1]);
       if (id === null) return json({ detail: "Invalid briefing id." }, 400);
-      return serveAudio(env, id);
+      return serveAudio(request, env, id);
     }
 
     const manifest = url.pathname.match(/^\/briefing\/([^/]+)$/);
     if (manifest) {
       const id = safeDecode(manifest[1]);
       if (id === null) return json({ detail: "Invalid briefing id." }, 400);
-      return serveManifest(env, id);
+      return serveManifest(request, env, id);
     }
 
     return json({ detail: "Not found." }, 404);
@@ -313,47 +332,66 @@ async function dispatchWorkflow(env, workflow, inputs) {
   return true;
 }
 
-async function serveManifest(env, id) {
+/**
+ * R2 returns an object with no `body` when a conditional request's
+ * precondition fails — that is the 304 case, and the only way to tell it
+ * apart from a hit.
+ */
+function isNotModified(object) {
+  return !("body" in object);
+}
+
+function notModified(object) {
+  return new Response(null, {
+    status: 304,
+    headers: { "cache-control": CACHE_CONTROL, etag: object.httpEtag },
+  });
+}
+
+async function serveManifest(request, env, id) {
   if (!validBriefingId(id)) return json({ detail: "Invalid briefing id." }, 400);
 
-  const object = await env.BRIEFINGS.get(`${id}.manifest.json`);
+  // Handing R2 the request headers lets it evaluate If-None-Match itself,
+  // rather than this code hand-parsing etag lists and weak validators.
+  const object = await env.BRIEFINGS.get(`${id}.manifest.json`, {
+    onlyIf: request.headers,
+  });
   if (!object) return json({ detail: `No briefing for ${id}.` }, 404);
+  if (isNotModified(object)) return notModified(object);
 
   return new Response(object.body, {
     headers: {
       "content-type": "application/json",
-      // PRIVATE, not public. This response is returned only after a token
-      // check and its body is the transcript of the user's email and
-      // calendar. "public" would authorise shared caches — Cloudflare's own
-      // edge, any proxy in between — to store and re-serve it, which is at
-      // odds with the entire reason the bucket is private. "private" keeps
-      // the client-side caching benefit, the only one actually wanted.
-      "cache-control": "private, max-age=3600",
+      "cache-control": CACHE_CONTROL,
       etag: object.httpEtag,
     },
   });
 }
 
-async function serveAudio(env, id) {
+async function serveAudio(request, env, id) {
   if (!validBriefingId(id)) return json({ detail: "Invalid briefing id." }, 400);
 
-  // Same order as KNOWN_AUDIO_FORMATS in app/synthesis/storage.py. A forced
-  // regeneration deletes every format first, so only one should ever exist.
+  // Same order as KNOWN_AUDIO_FORMATS in app/synthesis/storage.py. save()
+  // clears the superseded format once the replacement has landed, so only one
+  // should ever exist.
   for (const ext of ["m4a", "wav"]) {
-    const object = await env.BRIEFINGS.get(`${id}.${ext}`);
-    if (object) {
-      return new Response(object.body, {
-        headers: {
-          "content-type": AUDIO_TYPES[ext],
-          // No explicit content-length: the runtime derives it from the R2
-          // body. Setting it by hand only adds a way for the declared and
-          // actual byte counts to disagree, which surfaces on the client as
-          // an undiagnosable transport failure.
-          "cache-control": "private, max-age=3600",
-          etag: object.httpEtag,
-        },
-      });
-    }
+    const object = await env.BRIEFINGS.get(`${id}.${ext}`, {
+      onlyIf: request.headers,
+    });
+    if (!object) continue;
+    if (isNotModified(object)) return notModified(object);
+
+    return new Response(object.body, {
+      headers: {
+        "content-type": AUDIO_TYPES[ext],
+        // No explicit content-length: the runtime derives it from the R2
+        // body. Setting it by hand only adds a way for the declared and
+        // actual byte counts to disagree, which surfaces on the client as
+        // an undiagnosable transport failure.
+        "cache-control": CACHE_CONTROL,
+        etag: object.httpEtag,
+      },
+    });
   }
   return json({ detail: `No audio for ${id}.` }, 404);
 }

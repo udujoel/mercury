@@ -112,6 +112,31 @@ class R2Storage:
             Body=audio_bytes,
             ContentType=AUDIO_MEDIA_TYPES.get(audio_format, "application/octet-stream"),
         )
+
+        # Clear any audio left behind in a DIFFERENT format, now that the
+        # replacement is durably stored. load_audio returns the first format it
+        # finds in KNOWN_AUDIO_FORMATS order, so an m4a from an earlier run
+        # would outrank a freshly written wav and the phone would play the old
+        # audio against the new manifest, putting every turn boundary wrong.
+        #
+        # Ordering is the whole point. `--force` used to do this BEFORE
+        # regenerating, which meant a failed regeneration left the old manifest
+        # pointing at an object that no longer existed — 200 on the manifest,
+        # 404 on the audio. Doing it here means nothing is deleted until its
+        # replacement exists, and the old manifest is still the one being
+        # served throughout, so the pair stays consistent the whole way.
+        for fmt in KNOWN_AUDIO_FORMATS:
+            if fmt == audio_format:
+                continue
+            stale = self._audio_key(briefing_id, fmt)
+            try:
+                self._client.delete_object(Bucket=self._bucket, Key=stale)
+            except Exception:
+                log.warning(
+                    "could not remove stale audio %s; it may be served instead "
+                    "of the file just written", stale, exc_info=True,
+                )
+
         # Manifest LAST, deliberately. It is what the client polls for, so
         # writing it only after the audio is durably stored means the phone
         # can never see a briefing whose audio is still uploading.
