@@ -11,6 +11,20 @@ import XCTest
 /// the real `APIClient` through a stubbed `URLProtocol`, so the caching,
 /// the conditional request and the 304 handling are exercised end to end
 /// without a backend.
+/// Audio-shaped test payloads.
+///
+/// These tests originally used a 13-byte string as the audio body. That
+/// passed until `downloadAudio` started refusing to revalidate a cached file
+/// too small to be audio, at which point the fixture, not the code, was the
+/// thing that was wrong: a real briefing is ~3MB and the shortest conceivable
+/// one is tens of KB. Padding to a plausible size keeps the tests exercising
+/// the path the app actually takes.
+func audioPayload(_ marker: String) -> Data {
+    var body = Data(marker.utf8)
+    body.append(Data(repeating: 0x41, count: 4096))
+    return body
+}
+
 final class APIClientCacheTests: XCTestCase {
 
     private var directory: URL!
@@ -120,23 +134,58 @@ final class APIClientCacheTests: XCTestCase {
                 return (304, [:], Data())
             }
             return (200, ["Content-Type": "audio/wav", "Etag": "\"etag-1\""],
-                    Data("first payload".utf8))
+                    audioPayload("first payload"))
         }
 
         let client = makeClient()
         let first = try await client.downloadAudio(briefingId: briefingId)
-        XCTAssertEqual(try Data(contentsOf: first), Data("first payload".utf8))
+        XCTAssertEqual(try Data(contentsOf: first), audioPayload("first payload"))
         XCTAssertEqual(first.pathExtension, "wav", "format comes from Content-Type")
         XCTAssertEqual(APIClient.cachedETag(briefingId: briefingId), "\"etag-1\"")
 
         let second = try await client.downloadAudio(briefingId: briefingId)
 
         XCTAssertEqual(second, first, "a 304 must reuse the file already on disk")
-        XCTAssertEqual(try Data(contentsOf: second), Data("first payload".utf8))
+        XCTAssertEqual(try Data(contentsOf: second), audioPayload("first payload"))
         XCTAssertEqual(StubURLProtocol.conditionalRequestCount, 1,
                        "the second call must actually ask If-None-Match")
 
         try? FileManager.default.removeItem(at: first)
+    }
+
+    /// Finding 3 from the self-review on PR #12.
+    ///
+    /// A truncated or zero-byte install used to be permanent: the ETag stored
+    /// beside it still matched, so every later request answered 304 and
+    /// returned the broken file, and nothing would ever fetch the bytes
+    /// again. The cache poisoned itself and the player got an unplayable file
+    /// every morning.
+    func testAnUnusableCachedFileIsRefetchedRatherThanRevalidated() async throws {
+        let briefingId = "2026-08-30"
+        let directory = try APIClient.audioCacheDirectory()
+        let empty = APIClient.audioURL(briefingId: briefingId, ext: "wav", in: directory)
+        try Data().write(to: empty)
+        APIClient.rememberETag("\"etag-1\"", briefingId: briefingId)
+        StubURLProtocol.conditionalRequestCount = 0
+
+        StubURLProtocol.handler = { request in
+            if request.value(forHTTPHeaderField: "If-None-Match") != nil {
+                return (304, [:], Data())
+            }
+            return (200, ["Content-Type": "audio/wav", "Etag": "\"etag-2\""],
+                    audioPayload("repaired"))
+        }
+
+        let result = try await makeClient().downloadAudio(briefingId: briefingId)
+
+        XCTAssertEqual(
+            StubURLProtocol.conditionalRequestCount, 0,
+            "a zero-byte cache must not be revalidated — a 304 has an empty "
+                + "body, so trusting one here is what makes the damage permanent"
+        )
+        XCTAssertEqual(try Data(contentsOf: result), audioPayload("repaired"))
+
+        try? FileManager.default.removeItem(at: result)
     }
 
     /// A regenerated briefing keeps its id but gets a new ETag, so the
@@ -148,11 +197,11 @@ final class APIClientCacheTests: XCTestCase {
         defer { clearETag(briefingId) }
 
         StubURLProtocol.handler = { _ in
-            (200, ["Content-Type": "audio/wav", "Etag": "\"etag-1\""], Data("v1".utf8))
+            (200, ["Content-Type": "audio/wav", "Etag": "\"etag-1\""], audioPayload("v1"))
         }
         let client = makeClient()
         let first = try await client.downloadAudio(briefingId: briefingId)
-        XCTAssertEqual(try Data(contentsOf: first), Data("v1".utf8))
+        XCTAssertEqual(try Data(contentsOf: first), audioPayload("v1"))
 
         // `--force` regeneration: same id, different audio, different ETag.
         StubURLProtocol.handler = { _ in

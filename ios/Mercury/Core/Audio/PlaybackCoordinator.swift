@@ -72,6 +72,16 @@ final class PlaybackCoordinator {
     /// `.shouldResume` only resumes something that was actually playing.
     private var wasPlayingBeforeInterruption = false
 
+    /// True between an interruption beginning and it being resolved.
+    ///
+    /// The generation counter alone is not enough here. The system tears the
+    /// engine down and the notification arrives on the main queue, and the
+    /// two are not ordered against each other — so a completion handler can
+    /// reach `playbackDidComplete` before `.began` has bumped the
+    /// generation. This flag closes that window: an interruption is never
+    /// the end of a briefing, whatever the position says.
+    private var isInterrupted = false
+
     /// Token handles for the audio-session notifications, removed in
     /// `deinit`.
     private var sessionObservers: [NSObjectProtocol] = []
@@ -160,6 +170,13 @@ final class PlaybackCoordinator {
     func play() {
         guard file != nil else { return }
 
+        // An interruption stops the engine, and nothing else here restarts
+        // it. Without this, the manual resume path — the user tapping play
+        // after declining the system's auto-resume — called player.play()
+        // inside a stopped engine and produced silence for the rest of the
+        // session, which is the dead state this whole file exists to remove.
+        guard ensureEngineRunning() else { return }
+
         // Nothing queued, or the last schedule already drained. A finished
         // briefing replays from the top; anything else picks up where the
         // reported position left off.
@@ -179,12 +196,19 @@ final class PlaybackCoordinator {
         isPlaying = false
         stopTicking()
         nowPlaying.setPlaybackState(isPlaying: false, positionMs: positionMs, rate: rate)
-        persistPosition()
+        persistPosition(force: true)
     }
 
-    /// Reports the current position, at most once per interval unless
-    /// `force`d (pause and finish always report).
-    private func persistPosition(force: Bool = true) {
+    /// Reports the current position, throttled to `positionPersistIntervalMs`
+    /// unless the caller explicitly forces it.
+    ///
+    /// The throttle is the DEFAULT deliberately. It was the other way round,
+    /// with only `tick` opting out — which meant any future caller on a
+    /// frequent path (a scrub handler, a rate change, the route-change
+    /// pause) got an unthrottled disk write just by writing
+    /// `persistPosition()`. The safe behaviour should be the one you get for
+    /// free; the two callers that genuinely mean "write it now" say so.
+    private func persistPosition(force: Bool = false) {
         guard force || abs(positionMs - lastPersistedMs) >= Self.positionPersistIntervalMs
         else { return }
         lastPersistedMs = positionMs
@@ -419,7 +443,39 @@ final class PlaybackCoordinator {
         return positionMs >= audioDurationMs - toleranceMs
     }
 
+    /// Starts the engine if something stopped it, most often an
+    /// interruption. Returns false when the audio stack cannot be revived,
+    /// so callers can decline rather than pretend to play.
+    @discardableResult
+    private func ensureEngineRunning() -> Bool {
+        guard !engine.isRunning else { return true }
+        do {
+            try AVAudioSession.sharedInstance().setActive(true)
+            try engine.start()
+            return true
+        } catch {
+            print("[Mercury] Could not restart the audio engine: \(error)")
+            return false
+        }
+    }
+
+    /// Marks whatever is on the player node as gone.
+    ///
+    /// An interruption flushes the node, so `hasScheduled` stops describing
+    /// reality the moment one begins. Bumping the generation at the same
+    /// time makes the flushed schedule's completion handler a no-op.
+    private func invalidateSchedule() {
+        scheduleGeneration &+= 1
+        hasScheduled = false
+    }
+
     private func playbackDidComplete(generation: Int) {
+        // An interruption is not an ending, however close to the end it
+        // lands. Without this, a call arriving at 5:59 of a 6:00 briefing
+        // was indistinguishable from having listened to the whole thing:
+        // finish() fired, the briefing was marked complete, and the resume
+        // position was reset to zero.
+        guard !isInterrupted else { return }
         guard generation == scheduleGeneration else { return }
         guard Self.isEndOfPlayback(
             positionMs: positionMs, audioDurationMs: audioDurationMs
@@ -491,7 +547,11 @@ final class PlaybackCoordinator {
         switch type {
         case .began:
             wasPlayingBeforeInterruption = isPlaying
+            isInterrupted = true
             if isPlaying { pause() }
+            // The system has flushed the node; say so, or a later play()
+            // will call player.play() on nothing.
+            invalidateSchedule()
         case .ended:
             guard let optionsRaw =
                     note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt
@@ -502,9 +562,11 @@ final class PlaybackCoordinator {
             // would talk over whatever they picked.
             guard options.contains(.shouldResume), wasPlayingBeforeInterruption else {
                 wasPlayingBeforeInterruption = false
+                isInterrupted = false
                 return
             }
             wasPlayingBeforeInterruption = false
+            isInterrupted = false
             resumeAfterInterruption()
         @unknown default:
             break
@@ -527,13 +589,7 @@ final class PlaybackCoordinator {
     }
 
     private func resumeAfterInterruption() {
-        do {
-            try AVAudioSession.sharedInstance().setActive(true)
-            if !engine.isRunning { try engine.start() }
-        } catch {
-            print("[Mercury] Could not reactivate audio after interruption: \(error)")
-            return
-        }
+        guard ensureEngineRunning() else { return }
         // An interruption tears the engine down, which flushes the player
         // node — so this is a fresh schedule from where we stopped, not a
         // `player.play()` on something still queued.
@@ -590,7 +646,7 @@ final class PlaybackCoordinator {
                      / playerTime.sampleRate * 1000)
         positionMs = ms
         resolveTurn(atMs: ms, animated: true)
-        persistPosition(force: false)
+        persistPosition()
     }
 
     /// Moves the transcript and chapter to whatever covers `ms`.
@@ -618,3 +674,25 @@ final class PlaybackCoordinator {
         }
     }
 }
+
+#if DEBUG
+// Test seams, Debug-only.
+//
+// `handleInterruption` and `handleRouteChange` were already internal so a
+// test could post a synthetic Notification at them — but the state they
+// change is private, so nothing could assert on the result, and nothing did.
+// That is how the interruption dead state survived a green suite in the same
+// PR that set out to remove it. These expose the minimum needed to observe
+// it, and ship in Debug only.
+extension PlaybackCoordinator {
+    /// Whether the coordinator believes audio is queued on the player node.
+    var hasScheduledAudio: Bool { hasScheduled }
+
+    var isInterruptedForTesting: Bool { isInterrupted }
+
+    /// Lets a test set up the one precondition the route-change privacy
+    /// check needs — that something was playing — without an audio file,
+    /// an engine, or real hardware.
+    func setIsPlayingForTesting(_ value: Bool) { isPlaying = value }
+}
+#endif

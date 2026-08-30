@@ -151,3 +151,118 @@ final class PlaybackCoordinatorTests: XCTestCase {
         )
     }
 }
+
+// MARK: - Interruptions and route changes
+//
+// Findings 1 and 2 from the self-review on PR #12. `handleInterruption` and
+// `handleRouteChange` were internal rather than private specifically so a
+// test could post a synthetic Notification at them, and nothing did — which
+// is how the dead state below survived a green suite in the very PR that set
+// out to remove it.
+
+final class InterruptionHandlingTests: XCTestCase {
+
+    private func interruption(
+        _ type: AVAudioSession.InterruptionType,
+        options: AVAudioSession.InterruptionOptions? = nil
+    ) -> Notification {
+        var info: [AnyHashable: Any] = [
+            AVAudioSessionInterruptionTypeKey: type.rawValue
+        ]
+        if let options {
+            info[AVAudioSessionInterruptionOptionKey] = options.rawValue
+        }
+        return Notification(
+            name: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance(),
+            userInfo: info
+        )
+    }
+
+    private func routeChange(_ reason: AVAudioSession.RouteChangeReason) -> Notification {
+        Notification(
+            name: AVAudioSession.routeChangeNotification,
+            object: AVAudioSession.sharedInstance(),
+            userInfo: [AVAudioSessionRouteChangeReasonKey: reason.rawValue]
+        )
+    }
+
+    /// The bug this PR claimed to fix, surviving on the path the auto-resume
+    /// does not cover: the user declines the system's resume and taps play
+    /// themselves.
+    @MainActor
+    func testInterruptionWithoutShouldResumeLeavesPlayReschedulable() {
+        let coordinator = PlaybackCoordinator()
+
+        coordinator.handleInterruption(interruption(.began))
+        // `.ended` with no options at all is what arrives when the user
+        // starts another app's audio.
+        coordinator.handleInterruption(interruption(.ended))
+
+        // The node was flushed by the interruption. If the coordinator still
+        // believes something is scheduled, `play()` calls `player.play()` on
+        // nothing and the transport claims to play silence forever.
+        XCTAssertFalse(
+            coordinator.hasScheduledAudio,
+            "an interruption flushes the player node; the coordinator must "
+                + "not still believe a schedule is live, or play() will start "
+                + "silence it can never recover from"
+        )
+    }
+
+    @MainActor
+    func testInterruptionIsNeverTreatedAsTheEndOfTheBriefing() {
+        let coordinator = PlaybackCoordinator()
+        coordinator.handleInterruption(interruption(.began))
+
+        // A call landing inside the end-of-playback tolerance used to reach
+        // finish(), which marks the briefing complete and rewinds the resume
+        // position — indistinguishable from having listened to the end.
+        XCTAssertTrue(coordinator.isInterruptedForTesting)
+        XCTAssertFalse(
+            coordinator.hasFinished,
+            "an interruption is not an ending, however close to the end it lands"
+        )
+    }
+
+    @MainActor
+    func testInterruptionEndedClearsTheInterruptedFlag() {
+        let coordinator = PlaybackCoordinator()
+        coordinator.handleInterruption(interruption(.began))
+        coordinator.handleInterruption(interruption(.ended, options: []))
+        XCTAssertFalse(
+            coordinator.isInterruptedForTesting,
+            "leaving this set would make every later completion a no-op, so "
+                + "the briefing could never register as finished again"
+        )
+    }
+
+    /// PRIVACY. Unplugging headphones reroutes to the built-in speaker, and a
+    /// Mercury briefing is the user's inbox read out loud.
+    @MainActor
+    func testOldDeviceUnavailablePausesPlayback() {
+        let coordinator = PlaybackCoordinator()
+        coordinator.setIsPlayingForTesting(true)
+
+        coordinator.handleRouteChange(routeChange(.oldDeviceUnavailable))
+
+        XCTAssertFalse(
+            coordinator.isPlaying,
+            "unplugging headphones must pause, or the briefing plays the "
+                + "user's email out loud to whoever is nearby"
+        )
+    }
+
+    @MainActor
+    func testUnrelatedRouteChangesDoNotPause() {
+        let coordinator = PlaybackCoordinator()
+        coordinator.setIsPlayingForTesting(true)
+
+        coordinator.handleRouteChange(routeChange(.newDeviceAvailable))
+
+        XCTAssertTrue(
+            coordinator.isPlaying,
+            "plugging headphones IN must not stop playback"
+        )
+    }
+}

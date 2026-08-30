@@ -103,7 +103,13 @@ final class APIClient: APIClientProtocol {
         // `--briefing-id` work in the backend), so an id match alone proves
         // nothing about whether the audio changed. The Worker already sends
         // an ETag on every audio response; ask it to tell us.
-        if cached != nil, let etag = Self.cachedETag(briefingId: briefingId) {
+        //
+        // Only ask when the file we would keep is worth keeping. Sending the
+        // header for a truncated or zero-byte cache would earn a 304 whose
+        // body is empty by definition, and installing THAT is how a bad
+        // download becomes permanent.
+        let revalidating = cached.map(Self.isUsable) ?? false
+        if revalidating, let etag = Self.cachedETag(briefingId: briefingId) {
             request.setValue(etag, forHTTPHeaderField: "If-None-Match")
         }
 
@@ -111,9 +117,18 @@ final class APIClient: APIClientProtocol {
             let (tempURL, response) = try await session.download(for: request)
             let http = response as? HTTPURLResponse
 
-            if http?.statusCode == 304, let cached {
-                // Unchanged: keep the ~4MB already on disk.
+            if http?.statusCode == 304 {
                 try? FileManager.default.removeItem(at: tempURL)
+                guard revalidating, let cached else {
+                    // A 304 we did not ask for. The body is empty, so there
+                    // is nothing to install and nothing to fall back on.
+                    throw APIError.badStatus(
+                        304,
+                        "the audio was reported unchanged, but there is no "
+                            + "usable copy on this device"
+                    )
+                }
+                // Unchanged: keep the ~4MB already on disk.
                 return cached
             }
 
@@ -170,6 +185,21 @@ final class APIClient: APIClientProtocol {
     /// Probes BOTH known extensions: which one exists depends on whether the
     /// server had ffmpeg when it generated, which the client cannot know
     /// ahead of asking.
+    /// Whether a cached file is worth trusting.
+    ///
+    /// Without this a truncated or zero-byte install was permanent: the ETag
+    /// recorded alongside it still matched, so every later request answered
+    /// 304 and returned the broken file, and nothing would ever fetch the
+    /// bytes again. The cache poisoned itself and the player got an
+    /// unplayable file every morning. A few hundred bytes is well under any
+    /// real briefing and well over an empty file.
+    static let minimumUsableAudioBytes = 1_024
+
+    static func isUsable(_ url: URL) -> Bool {
+        let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? Int
+        return (size ?? 0) >= minimumUsableAudioBytes
+    }
+
     static func cachedAudioURL(briefingId: String, in directory: URL) -> URL? {
         for ext in knownAudioExtensions {
             let candidate = audioURL(briefingId: briefingId, ext: ext, in: directory)
@@ -188,7 +218,16 @@ final class APIClient: APIClientProtocol {
     /// onto an existing file and throws. `replaceItemAt` closes the gap.
     static func install(_ source: URL, at destination: URL) throws {
         if FileManager.default.fileExists(atPath: destination.path) {
-            _ = try FileManager.default.replaceItemAt(destination, withItemAt: source)
+            // replaceItemAt returns the URL of the resulting item, which is
+            // not contractually the destination passed in. Same-directory
+            // replacement makes them coincide today, but discarding it and
+            // assuming otherwise would surface as a missing file at playback
+            // rather than as an error here.
+            let replaced = try FileManager.default.replaceItemAt(destination, withItemAt: source)
+            if let replaced, replaced != destination {
+                try? FileManager.default.removeItem(at: destination)
+                try FileManager.default.moveItem(at: replaced, to: destination)
+            }
             return
         }
         do {
