@@ -1,4 +1,5 @@
 import BackgroundTasks
+import Observation
 import XCTest
 @testable import Mercury
 
@@ -157,6 +158,69 @@ final class OnboardingStatePersistenceTests: XCTestCase {
             "must still persist — UserDefaults remains the storage layer"
         )
         XCTAssertTrue(AppState().hasCompletedOnboarding, "and survive a relaunch")
+    }
+
+    // MARK: - Observation
+
+    /// The regression the round-trip tests above could never catch.
+    ///
+    /// A computed property over `UserDefaults` round-trips perfectly and
+    /// persists perfectly — which is all the two tests above assert — while
+    /// emitting no observation event at all, because `@Observable` only
+    /// instruments *stored* properties. That is exactly the shape the bug
+    /// came back in: every persistence assertion stayed green and Done in
+    /// onboarding still did nothing until the app was relaunched.
+    ///
+    /// `withObservationTracking` is the only thing that tells the two apart:
+    /// it reads the property inside a tracked scope and fails if mutating it
+    /// does not call back.
+    func testCompletingOnboardingPublishesAnObservationChange() {
+        let state = AppState()
+        var didChange = false
+
+        withObservationTracking {
+            _ = state.hasCompletedOnboarding
+        } onChange: {
+            didChange = true
+        }
+
+        state.hasCompletedOnboarding = true
+
+        XCTAssertTrue(
+            didChange,
+            "RootView switches on hasCompletedOnboarding; without an "
+            + "observation event it never re-renders and Done appears dead"
+        )
+    }
+
+    func testWakeTimeChangePublishesAnObservationChange() {
+        let state = AppState()
+        var didChange = false
+
+        withObservationTracking {
+            _ = state.wakeTimeMinutesFromMidnight
+        } onChange: {
+            didChange = true
+        }
+
+        state.wakeTimeMinutesFromMidnight = 6 * 60 + 15
+
+        XCTAssertTrue(didChange, "the schedule picker binds to this")
+    }
+
+    func testBriefingLengthChangePublishesAnObservationChange() {
+        let state = AppState()
+        var didChange = false
+
+        withObservationTracking {
+            _ = state.briefingLength
+        } onChange: {
+            didChange = true
+        }
+
+        state.briefingLength = .express
+
+        XCTAssertTrue(didChange, "the length picker binds to this")
     }
 
     func testWakeTimeAndLengthRoundTripAndPersist() {

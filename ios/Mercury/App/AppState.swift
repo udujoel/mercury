@@ -26,9 +26,23 @@ enum LoadState: Equatable {
 @Observable
 final class AppState {
 
+    /// STORED, not computed, and that distinction is the whole bug.
+    ///
+    /// `@Observable` instruments stored properties only. When this was a
+    /// computed property reading and writing `UserDefaults` directly, setting
+    /// it persisted the value and emitted no change event, so `RootView` —
+    /// which switches on exactly this flag — never re-rendered. Tapping Done
+    /// on the schedule screen did nothing visible until the app was
+    /// relaunched. The value was right the whole time; the view had no idea.
+    ///
+    /// `UserDefaults` is still the storage layer: seeded in `init`, written
+    /// through in `didSet`. Regression covered by
+    /// `OnboardingStatePersistenceTests.testCompletingOnboardingPublishes...`,
+    /// which drives it through `withObservationTracking` — the only check
+    /// that can tell a stored property from a computed one, since both
+    /// round-trip and both persist.
     var hasCompletedOnboarding: Bool {
-        get { UserDefaults.standard.bool(forKey: Self.onboardingKey) }
-        set { UserDefaults.standard.set(newValue, forKey: Self.onboardingKey) }
+        didSet { UserDefaults.standard.set(hasCompletedOnboarding, forKey: Self.onboardingKey) }
     }
 
     /// The length chosen during onboarding. Sent with every generate request
@@ -36,13 +50,7 @@ final class AppState {
     /// rather than held in the onboarding view, which is torn down the moment
     /// onboarding finishes.
     var briefingLength: BriefingLength {
-        get {
-            guard let raw = UserDefaults.standard.string(forKey: Self.lengthKey),
-                  let value = BriefingLength(rawValue: raw)
-            else { return .standard }
-            return value
-        }
-        set { UserDefaults.standard.set(newValue.rawValue, forKey: Self.lengthKey) }
+        didSet { UserDefaults.standard.set(briefingLength.rawValue, forKey: Self.lengthKey) }
     }
 
     var manifest: BriefingManifest?
@@ -60,11 +68,9 @@ final class AppState {
     /// the server-side cron schedule. Defaults to 7:00 AM, matching the
     /// default shown in the onboarding picker.
     var wakeTimeMinutesFromMidnight: Int {
-        get {
-            let stored = UserDefaults.standard.object(forKey: Self.wakeTimeKey) as? Int
-            return stored ?? 7 * 60
+        didSet {
+            UserDefaults.standard.set(wakeTimeMinutesFromMidnight, forKey: Self.wakeTimeKey)
         }
-        set { UserDefaults.standard.set(newValue, forKey: Self.wakeTimeKey) }
     }
 
     /// The next calendar date/time matching the configured wake time —
@@ -92,9 +98,21 @@ final class AppState {
     private static let lengthKey = "mercury.briefingLength"
     private static let wakeTimeKey = "mercury.wakeTimeMinutesFromMidnight"
 
+    /// The default wake time shown in the onboarding picker, and the value
+    /// used until the user chooses one.
+    static let defaultWakeTimeMinutes = 7 * 60
+
     init(api: APIClientProtocol = APIClient()) {
         self.api = api
 
+        // Seed the stored properties from UserDefaults. Assigning inside
+        // `init` does not fire `didSet`, so this reads without writing back.
+        let defaults = UserDefaults.standard
+        self.hasCompletedOnboarding = defaults.bool(forKey: Self.onboardingKey)
+        self.briefingLength = defaults.string(forKey: Self.lengthKey)
+            .flatMap(BriefingLength.init(rawValue:)) ?? .standard
+        self.wakeTimeMinutesFromMidnight =
+            defaults.object(forKey: Self.wakeTimeKey) as? Int ?? Self.defaultWakeTimeMinutes
     }
 
     /// Tapping the greeting card is the primary action of the entire app.
