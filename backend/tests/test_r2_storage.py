@@ -283,22 +283,63 @@ def test_the_superseded_format_is_deleted_only_after_the_new_audio_lands(
     assert delete_old < put_manifest, "manifest published before the stale file went"
 
 
-def test_save_survives_a_failed_cleanup_of_the_stale_format(monkeypatch):
-    """Being unable to tidy up the superseded file is worth a warning, not a
-    lost briefing: the new audio and its manifest are already correct."""
+def test_a_failed_cleanup_of_a_LOWER_ranked_stale_file_is_only_a_warning(
+    monkeypatch,
+):
+    """wav is superseded by m4a. m4a outranks wav in load_audio's order, so the
+    leftover wav is never served and publishing the manifest is exactly what
+    makes the pair consistent. Being unable to tidy up is worth a warning, not
+    a lost briefing."""
     storage = _configured(monkeypatch)
     client = storage.__dict__["_client"]
-    storage.save("2026-08-23", b"OLD", "m4a", _manifest("2026-08-23"))
+    storage.save("2026-08-23", b"OLD", "wav", _manifest("2026-08-23"))
 
     def _boom(*, Bucket, Key):  # noqa: N803
         raise _ClientError(403, "AccessDenied")
 
     client.delete_object = _boom
 
-    storage.save("2026-08-23", b"NEW", "wav", _manifest("2026-08-23"))
+    storage.save("2026-08-23", b"NEW", "m4a", _manifest("2026-08-23"))
 
     assert storage.load_manifest("2026-08-23") is not None
-    assert client.objects["2026-08-23.wav"][0] == b"NEW"
+    audio = storage.load_audio("2026-08-23")
+    assert audio is not None and audio[0] == b"NEW"
+
+
+def test_a_failed_cleanup_of_a_HIGHER_ranked_stale_file_refuses_the_manifest(
+    monkeypatch,
+):
+    """m4a superseded by wav, and the m4a will not delete.
+
+    m4a outranks wav, so that leftover m4a is what `load_audio` and the Worker
+    will serve. Publishing the new manifest over it hands the phone OLD audio
+    against NEW turn timings — every boundary wrong, permanently, and it looks
+    like a healthy briefing from the Actions log.
+
+    The old manifest and the old m4a are still a consistent pair, so refusing
+    to publish leaves the user with the briefing they already had and fails the
+    run loudly. The orphaned wav is cleaned up by retention.
+
+    The previous behaviour was a warning and a published manifest, and there
+    was a test asserting that — a test that encoded the bug.
+    """
+    storage = _configured(monkeypatch)
+    client = storage.__dict__["_client"]
+    storage.save("2026-08-23", b"OLD", "m4a", _manifest("2026-08-23"))
+    old_manifest_body = client.objects["2026-08-23.manifest.json"][0]
+
+    def _boom(*, Bucket, Key):  # noqa: N803
+        raise _ClientError(403, "AccessDenied")
+
+    client.delete_object = _boom
+
+    with pytest.raises(_ClientError):
+        storage.save("2026-08-23", b"NEW", "wav", _manifest("2026-08-23"))
+
+    # What the phone sees is unchanged, and it is still self-consistent.
+    assert client.objects["2026-08-23.manifest.json"][0] == old_manifest_body
+    audio = storage.load_audio("2026-08-23")
+    assert audio is not None and audio[0] == b"OLD"
 
 
 def test_list_briefing_ids_reads_every_page(monkeypatch):

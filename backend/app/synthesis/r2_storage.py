@@ -136,16 +136,42 @@ class R2Storage:
         # 404 on the audio. Doing it here means nothing is deleted until its
         # replacement exists, and the old manifest is still the one being
         # served throughout, so the pair stays consistent the whole way.
+        #
+        # A cleanup that FAILS is treated differently depending on which way
+        # round the two formats rank, because the consequences are opposite.
+        #
+        #   stale outranks the new file (an m4a superseded by a wav): the
+        #   leftover is what load_audio and the Worker will serve. Publishing
+        #   the new manifest over it hands the phone OLD audio against NEW turn
+        #   timings — every boundary wrong, permanently, and indistinguishable
+        #   from success in the Actions log. The old manifest and that old m4a
+        #   are still a consistent pair, so the run fails and leaves the user
+        #   the briefing they already had. Retention clears the orphan.
+        #
+        #   the new file outranks the stale one (a wav superseded by an m4a):
+        #   the leftover is never served, and publishing the manifest is
+        #   exactly what makes the pair consistent. A warning, not a failure —
+        #   a briefing must not be lost over a tidying-up problem.
+        rank = {fmt: i for i, fmt in enumerate(KNOWN_AUDIO_FORMATS)}
         for fmt in KNOWN_AUDIO_FORMATS:
             if fmt == audio_format:
                 continue
             stale = self._audio_key(briefing_id, fmt)
             try:
-                self._client.delete_object(Bucket=self._bucket, Key=stale)
+                self._delete(stale)
             except Exception:
+                if rank.get(fmt, len(rank)) < rank.get(audio_format, len(rank)):
+                    log.error(
+                        "could not remove stale audio %s, which outranks the "
+                        "%s just written; refusing to publish a manifest that "
+                        "would describe audio the phone will not be served",
+                        stale, audio_format,
+                    )
+                    raise
                 log.warning(
-                    "could not remove stale audio %s; it may be served instead "
-                    "of the file just written", stale, exc_info=True,
+                    "could not remove stale audio %s; it is outranked by the "
+                    "%s just written, so nothing will serve it",
+                    stale, audio_format, exc_info=True,
                 )
 
         # Manifest LAST, deliberately. It is what the client polls for, so
