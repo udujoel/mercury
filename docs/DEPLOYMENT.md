@@ -180,8 +180,8 @@ asks for the wrong day whenever the user's zone is not UTC.
 Deploying prints a `*.workers.dev` URL. That becomes `API_HOST` below.
 
 **Cost: zero.** Workers free tier is 100,000 requests a day; Mercury makes
-about two. R2 free tier is 10GB with no egress charge; a 7-day retention of
-~3MB briefings uses about 20MB.
+about two. R2 free tier is 10GB with no egress charge; 30 days of ~3MB
+briefings uses about 90MB.
 
 ## The schedule
 
@@ -251,6 +251,29 @@ MERCURY_API_TOKEN = <same value as the Actions secret>
 **Set scheme and host separately.** xcconfig treats `//` as a comment, so
 pasting a full URL silently truncates it to `https:` — a valid URL with no
 host, which fails at runtime with no useful error. This has bitten twice.
+
+## Retention
+
+Old briefings are deleted after **30 days**, by a `python -m app.cli prune`
+step in the daily workflow. Change the window with a repository *variable*
+(Settings → Secrets and variables → Actions → Variables) named
+`RETENTION_DAYS`, or locally in `backend/.env`.
+
+It cannot delete today's briefing — there are two independent guards, and a
+test for each. `RETENTION_DAYS=0` is refused rather than read as "delete
+everything"; the minimum is 1.
+
+To see what it would do without doing it:
+
+```bash
+cd backend && python -m app.cli prune --dry-run
+```
+
+**A correction, since this file was part of the problem.** Both this document
+and `r2_storage.py` described a "7-day retention" for months. There was no such
+thing — not in the code, not in the workflow, not in a bucket lifecycle rule.
+Storage had been growing without limit the whole time, and the docs said
+otherwise in the reassuring direction. See ADR-011.
 
 ## Running locally
 

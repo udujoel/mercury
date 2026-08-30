@@ -7,6 +7,7 @@ the finished briefing to R2, and the phone reads from R2 directly.
 
     python -m app.cli generate [--length standard] [--briefing-id 2026-08-22]
     python -m app.cli check    [--briefing-id 2026-08-22]
+    python -m app.cli prune    [--retention-days 30] [--dry-run]
 
 Exit codes matter here — Actions decides whether to mark the run failed and
 email you, and a briefing that silently did not generate is the failure mode
@@ -52,14 +53,14 @@ def _today_briefing_id(tz_name: str) -> str:
     return datetime.now(tz).strftime("%Y-%m-%d")
 
 
-def _resolve_briefing_id(explicit: str | None, tz_name: str) -> str | None:
+def _resolve_briefing_id(explicit: str | None, today_id: str) -> str | None:
     """The id both subcommands operate on, or None if it is malformed.
 
     A malformed id silently becomes a storage key nothing ever reads — and
     `check` would then report a perfectly healthy briefing as missing, which
     is a worse outcome than the bad write it was originally guarding.
     """
-    briefing_id = explicit or _today_briefing_id(tz_name)
+    briefing_id = explicit or today_id
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", briefing_id):
         log.error(
             "briefing id %r is not YYYY-MM-DD; refusing to act on an id "
@@ -141,6 +142,56 @@ def _check(briefing_id: str) -> int:
         "briefing %s is present and playable: %d turns, %.0fs of audio",
         briefing_id, len(manifest.turns), manifest.duration_ms / 1000,
     )
+    return 0
+
+
+def _prune(retention_days: int, today_id: str, *, dry_run: bool) -> int:
+    """Delete briefings past the retention window.
+
+    Housekeeping, and it runs in the same workflow as generation, so the bar is
+    that it can never be the reason a morning reports failure. A storage error
+    here is worth an exit code; it is not worth the briefing.
+    """
+    from app.synthesis.storage import build_storage, prune_briefings
+
+    try:
+        storage = build_storage()
+    except Exception as exc:
+        log.error("storage is not configured: %s", exc)
+        return 2
+
+    if dry_run:
+        from datetime import date, timedelta
+
+        try:
+            cutoff = (
+                date.fromisoformat(today_id) - timedelta(days=retention_days)
+            ).isoformat()
+            doomed = [
+                briefing_id
+                for briefing_id in storage.list_briefing_ids()
+                if briefing_id < today_id and briefing_id < cutoff
+            ]
+        except Exception:
+            log.exception("could not list briefings")
+            return 1
+        log.info(
+            "--dry-run: retention is %d days (cutoff %s); would delete %d "
+            "briefing(s): %s",
+            retention_days, cutoff, len(doomed), ", ".join(doomed) or "none",
+        )
+        return 0
+
+    try:
+        prune_briefings(
+            storage, retention_days=retention_days, today_id=today_id
+        )
+    except ValueError as exc:
+        log.error("retention is misconfigured: %s", exc)
+        return 2
+    except Exception:
+        log.exception("retention failed")
+        return 1
     return 0
 
 
@@ -319,10 +370,39 @@ def main(argv: list[str] | None = None) -> int:
     )
     chk.add_argument("--briefing-id", default=None, help="defaults to today, local")
 
+    prune = sub.add_parser(
+        "prune", help="delete briefings older than the retention window"
+    )
+    prune.add_argument(
+        "--retention-days",
+        type=int,
+        default=None,
+        help="defaults to RETENTION_DAYS",
+    )
+    prune.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="report what retention would consider, delete nothing",
+    )
+
     args = parser.parse_args(argv)
     settings = get_settings()
 
-    briefing_id = _resolve_briefing_id(args.briefing_id, settings.user_timezone)
+    # "Today" is resolved once, in the USER's timezone, and every subcommand
+    # uses the same answer — including prune, whose entire safety argument
+    # rests on knowing which briefing is today's.
+    today_id = _today_briefing_id(settings.user_timezone)
+
+    if args.command == "prune":
+        return _prune(
+            args.retention_days
+            if args.retention_days is not None
+            else settings.retention_days,
+            today_id,
+            dry_run=args.dry_run,
+        )
+
+    briefing_id = _resolve_briefing_id(args.briefing_id, today_id)
     if briefing_id is None:
         return 2
 

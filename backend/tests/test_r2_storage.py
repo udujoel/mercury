@@ -46,6 +46,25 @@ class _FakeS3:
         self.objects.pop(Key, None)
         self.calls.append(("delete", Key))
 
+    # Paginates two keys at a time. Real R2 returns at most 1000 per page, and
+    # a listing that silently stops at the first page would make retention
+    # quietly stop working at exactly the point it starts to matter.
+    PAGE_SIZE = 2
+
+    def list_objects_v2(self, *, Bucket, ContinuationToken=None):  # noqa: N803
+        keys = sorted(self.objects)
+        start = int(ContinuationToken or 0)
+        page = keys[start : start + self.PAGE_SIZE]
+        end = start + len(page)
+        truncated = end < len(keys)
+        response = {
+            "Contents": [{"Key": key} for key in page],
+            "IsTruncated": truncated,
+        }
+        if truncated:
+            response["NextContinuationToken"] = str(end)
+        return response
+
     def get_object(self, *, Bucket, Key):  # noqa: N803
         if Key not in self.objects:
             # Shaped like a real botocore ClientError, because the whole
@@ -280,3 +299,58 @@ def test_save_survives_a_failed_cleanup_of_the_stale_format(monkeypatch):
 
     assert storage.load_manifest("2026-08-23") is not None
     assert client.objects["2026-08-23.wav"][0] == b"NEW"
+
+
+def test_list_briefing_ids_reads_every_page(monkeypatch):
+    """R2 returns at most 1000 objects per page. Retention that read only the
+    first page would work fine on a small bucket and stop working on the
+    bucket that actually needed it."""
+    storage = _configured(monkeypatch)
+    for day in ("2026-08-20", "2026-08-21", "2026-08-22", "2026-08-23"):
+        storage.save(day, b"A", "m4a", _manifest(day))
+
+    # Eight objects, two per page, so this is four round trips.
+    assert storage.list_briefing_ids() == [
+        "2026-08-20", "2026-08-21", "2026-08-22", "2026-08-23",
+    ]
+
+
+def test_list_briefing_ids_ignores_keys_that_are_not_briefings(monkeypatch):
+    storage = _configured(monkeypatch)
+    client = storage.__dict__["_client"]
+    storage.save("2026-08-22", b"A", "m4a", _manifest())
+    client.objects["notes.txt"] = (b"x", "text/plain")
+    client.objects["backup/2026-08-01.m4a"] = (b"x", "audio/mp4")
+
+    assert storage.list_briefing_ids() == ["2026-08-22"]
+
+
+def test_delete_briefing_removes_the_manifest_and_every_audio_format(monkeypatch):
+    """Retention has to reclaim the audio, which is ~3MB of the ~3MB. A
+    manifest-only delete would leave the growth exactly where it was."""
+    storage = _configured(monkeypatch)
+    client = storage.__dict__["_client"]
+    storage.save("2026-08-22", b"A", "m4a", _manifest())
+    client.objects["2026-08-22.wav"] = (b"OLD", "audio/wav")
+
+    storage.delete_briefing("2026-08-22")
+
+    assert client.objects == {}
+    assert storage.list_briefing_ids() == []
+
+
+def test_retention_against_r2_keeps_today(monkeypatch):
+    """The same safety property as the local backend, through the backend that
+    actually runs in production."""
+    from app.synthesis.storage import prune_briefings
+
+    storage = _configured(monkeypatch)
+    for day in ("2026-01-01", "2026-08-22"):
+        storage.save(day, b"A", "m4a", _manifest(day))
+
+    deleted = prune_briefings(
+        storage, retention_days=30, today_id="2026-08-22"
+    )
+
+    assert deleted == ["2026-01-01"]
+    assert storage.load_manifest("2026-08-22") is not None

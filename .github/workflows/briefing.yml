@@ -192,6 +192,30 @@ jobs:
           if [ "$FORCE" = "true" ]; then args+=(--force); fi
           python -m app.cli generate "${args[@]}"
 
+      - name: Prune old briefings
+        # Housekeeping, and it runs in the same job as generation, so it must
+        # never be the reason a morning reports failure — hence
+        # continue-on-error. It runs even when generation failed (if: always)
+        # because retention is independent of whether today worked, and it can
+        # never touch today's briefing in any case.
+        #
+        # Nothing deleted anything before this step existed. The docs claimed a
+        # 7-day retention for months; there was no such thing anywhere.
+        if: always()
+        continue-on-error: true
+        env:
+          USER_TIMEZONE: ${{ secrets.USER_TIMEZONE }}
+          STORAGE_BACKEND: r2
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          # A repository variable, not a secret. Defaulted here rather than
+          # left blank: an empty string is not an integer and would fail
+          # settings validation.
+          RETENTION_DAYS: ${{ vars.RETENTION_DAYS || '30' }}
+        run: python -m app.cli prune
+
       - name: Scrub credentials
         # Belt and braces. The runner is destroyed anyway, but a half-failed
         # run should not leave a Google refresh token sitting in a workspace

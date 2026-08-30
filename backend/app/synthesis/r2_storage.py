@@ -7,8 +7,15 @@ and nothing that depends on a laptop being awake.
 
 R2 rather than S3 for one reason that dominates at this scale: **zero egress
 fees**. The phone downloads roughly 4MB every morning, and egress is what makes
-object storage expensive elsewhere. 10GB of storage is free, and a 7-day
-retention of ~4MB briefings uses about 30MB of it.
+object storage expensive elsewhere. 10GB of storage is free.
+
+That last number used to be followed by "and a 7-day retention of ~4MB
+briefings uses about 30MB of it". There was no 7-day retention. Nothing deleted
+anything, here or in the workflow or in any configuration — the sentence
+described a policy that was never implemented, and it read as reassurance every
+time anyone looked. Retention is real now (`prune_briefings`, 30 days by
+default, `RETENTION_DAYS`), which is what makes the arithmetic true rather than
+aspirational: ~3MB a day for 30 days is about 90MB of the 10GB.
 
 R2 speaks the S3 API, so this is boto3 against a custom endpoint. Satisfies the
 same `BriefingStorage` protocol as `LocalFilesystemStorage`, so nothing in the
@@ -24,7 +31,11 @@ from functools import cached_property
 
 from app.core.config import get_settings
 from app.core.schemas import BriefingManifest
-from app.synthesis.storage import AUDIO_MEDIA_TYPES, KNOWN_AUDIO_FORMATS
+from app.synthesis.storage import (
+    AUDIO_MEDIA_TYPES,
+    KNOWN_AUDIO_FORMATS,
+    briefing_id_from_key,
+)
 
 log = logging.getLogger(__name__)
 
@@ -167,6 +178,41 @@ class R2Storage:
             if data is not None:
                 return data, AUDIO_MEDIA_TYPES.get(fmt, "application/octet-stream")
         return None
+
+    def list_briefing_ids(self) -> list[str]:
+        ids: set[str] = set()
+        token: str | None = None
+        while True:
+            kwargs: dict = {"Bucket": self._bucket}
+            if token:
+                kwargs["ContinuationToken"] = token
+            response = self._client.list_objects_v2(**kwargs)
+            for item in response.get("Contents", []):
+                briefing_id = briefing_id_from_key(item["Key"])
+                if briefing_id is not None:
+                    ids.add(briefing_id)
+            # Paginate properly. A bucket holding more than 1000 objects would
+            # otherwise silently return only the first page, and retention
+            # would quietly stop working at exactly the point it starts to
+            # matter.
+            if not response.get("IsTruncated"):
+                break
+            token = response.get("NextContinuationToken")
+            if not token:
+                break
+        return sorted(ids)
+
+    def delete_briefing(self, briefing_id: str) -> None:
+        self.delete_audio(briefing_id)
+        try:
+            self._client.delete_object(
+                Bucket=self._bucket, Key=self._manifest_key(briefing_id)
+            )
+        except Exception:
+            log.debug(
+                "R2 delete of the manifest for %s did nothing",
+                briefing_id, exc_info=True,
+            )
 
     def delete_audio(self, briefing_id: str) -> None:
         for fmt in KNOWN_AUDIO_FORMATS:

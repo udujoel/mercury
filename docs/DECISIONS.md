@@ -361,3 +361,68 @@ Weighing it:
 - **A third-party cron service** (cron-job.org and similar). Same PAT exposure
   as the Worker, on infrastructure we do not control, for a job the Worker can
   already do.
+
+## ADR-011 — 30-day retention, and an admission about the 7-day one
+
+**Status:** accepted
+
+Nothing deleted old briefings. Each morning writes roughly 3MB of audio plus a
+manifest and nothing ever removed either, against a 10GB free tier. At that
+rate the tier lasts about nine years, so this was never urgent — it was
+unbounded, which is a different and quieter problem.
+
+**The part worth recording is that we already believed this was solved.**
+`r2_storage.py` opened with "a 7-day retention of ~4MB briefings uses about
+30MB of it", and `docs/DEPLOYMENT.md` said the same thing in its cost table.
+There was no 7-day retention. Not in the code, not in the workflow, not in a
+bucket lifecycle rule, not anywhere. Two documents described a policy nobody
+had implemented, and both read as reassurance every time anyone checked
+whether storage was handled.
+
+That is this project's own recurring failure mode — the same shape as the
+degraded-briefing warning that keyed off a signal which structurally always
+existed, and the same shape as inferring that R2 reads worked because R2
+writes did. So it is written down here rather than quietly corrected in a
+docstring: **the documentation was wrong, for months, in the reassuring
+direction.**
+
+**The decision:** `prune_briefings` in `app/synthesis/storage.py`, 30 days by
+default via `RETENTION_DAYS`, run as a step of the daily workflow.
+
+30 rather than 7 because the constraint was never really storage — 30 days is
+about 90MB — and being able to go back and listen to something from three
+weeks ago is worth more than 99.1% of the free tier versus 99.7%.
+
+The design is dominated by one risk: this is code whose job is deletion,
+running unattended every morning, next to the object the user is about to
+listen to. So:
+
+- **Two overlapping guards on today's briefing.** The arithmetic already keeps
+  it (a window of at least one day cannot reach today), and there is an
+  explicit `>= today_id` check as well. The second guard costs one string
+  comparison, and "the retention job deleted this morning's briefing" is not a
+  bug worth discovering in production.
+- **`RETENTION_DAYS=0` is refused, not obeyed.** A zero-day window is a
+  misconfiguration; reading it as "delete everything including today" would be
+  technically consistent and catastrophic.
+- **Anything not positively identifiable as a briefing is left alone.**
+  Retention matches `YYYY-MM-DD.` at the start of a key and ignores the rest.
+- **Future-dated briefings are kept.** `--briefing-id` accepts any date, so
+  they can exist, and they are not old whatever the subtraction says.
+- **It never fails the morning.** One undeletable object is logged and skipped,
+  and the workflow step is `continue-on-error`. Housekeeping must not be the
+  reason a briefing run reports failure.
+
+Listing is keyed off object names rather than manifests, so audio orphaned by a
+run that died between writing the audio and writing the manifest is still found
+and still reclaimed — that audio is ~3MB of the ~3MB.
+
+**Rejected: an R2 bucket lifecycle rule.** It is the obvious answer, it is free,
+and Cloudflare supports it. Two reasons against. It cannot express "never
+delete today" — lifecycle rules work on object age, and a briefing regenerated
+with `--force` gets a fresh timestamp while an old one that was never replaced
+keeps its original, so age and briefing date are not the same thing. And it is
+configuration that lives only in a dashboard, which is precisely how the
+imaginary 7-day retention survived for months: nobody could tell by reading the
+repository whether it existed. This way it is in the code, it is in the
+workflow, and it is tested.

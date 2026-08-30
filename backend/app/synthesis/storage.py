@@ -11,6 +11,8 @@ pipeline change.
 from __future__ import annotations
 
 import logging
+import re
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Protocol
 
@@ -29,6 +31,18 @@ AUDIO_MEDIA_TYPES: dict[str, str] = {
     "mp4": "audio/mp4",
     "wav": "audio/wav",
 }
+
+# Every object this layer writes is "{YYYY-MM-DD}.{something}". Retention reads
+# the id back out of the key rather than trusting a listing to be only
+# manifests, so an audio file orphaned by a half-failed run is still found and
+# still cleaned up.
+_BRIEFING_KEY = re.compile(r"^(\d{4}-\d{2}-\d{2})\.")
+
+
+def briefing_id_from_key(key: str) -> str | None:
+    """The briefing id in a storage key, or None if the key is not ours."""
+    match = _BRIEFING_KEY.match(key)
+    return match.group(1) if match else None
 
 
 class BriefingStorage(Protocol):
@@ -51,6 +65,19 @@ class BriefingStorage(Protocol):
 
     def load_audio(self, briefing_id: str) -> tuple[bytes, str] | None:
         """Returns (audio_bytes, media_type), or None if not found."""
+        ...
+
+    def list_briefing_ids(self) -> list[str]:
+        """Every briefing id this storage holds anything for, sorted.
+
+        Derived from the keys rather than from manifests specifically, so
+        retention still finds audio left behind by a run that died between
+        writing the audio and writing the manifest.
+        """
+        ...
+
+    def delete_briefing(self, briefing_id: str) -> None:
+        """Remove a briefing entirely — manifest and every audio format."""
         ...
 
     def delete_audio(self, briefing_id: str) -> None:
@@ -131,6 +158,79 @@ class LocalFilesystemStorage:
     def delete_audio(self, briefing_id: str) -> None:
         for fmt in KNOWN_AUDIO_FORMATS:
             self._audio_path(briefing_id, fmt).unlink(missing_ok=True)
+
+    def list_briefing_ids(self) -> list[str]:
+        ids = {
+            briefing_id
+            for path in self._base_dir.iterdir()
+            if path.is_file()
+            and (briefing_id := briefing_id_from_key(path.name)) is not None
+        }
+        return sorted(ids)
+
+    def delete_briefing(self, briefing_id: str) -> None:
+        self.delete_audio(briefing_id)
+        self._manifest_path(briefing_id).unlink(missing_ok=True)
+
+
+def prune_briefings(
+    storage: BriefingStorage, *, retention_days: int, today_id: str
+) -> list[str]:
+    """Delete briefings older than the retention window. Returns what went.
+
+    Nothing deleted these before, so R2 grew forever — roughly 3MB of audio
+    plus a manifest every morning against a 10GB free tier. Not urgent, and
+    unbounded, which is the kind of thing that is fine until the morning it is
+    not.
+
+    Two guards, deliberately overlapping. The arithmetic already keeps today
+    (a window of at least one day cannot reach it), and there is an explicit
+    `>= today_id` check as well, because "the retention job deleted the
+    briefing the user was about to listen to" is not a bug worth discovering
+    in production and the second guard costs one comparison. Ids are
+    zero-padded YYYY-MM-DD, so lexicographic ordering is date ordering.
+
+    Anything that is not a well-formed briefing id is left alone rather than
+    guessed at. This function deletes things; it should be the least clever
+    code in the module.
+    """
+    if retention_days < 1:
+        raise ValueError(
+            f"retention_days must be at least 1, got {retention_days}. A "
+            "window of zero days would delete today's briefing."
+        )
+
+    try:
+        cutoff = date.fromisoformat(today_id) - timedelta(days=retention_days)
+    except ValueError as exc:
+        raise ValueError(
+            f"today_id must be YYYY-MM-DD, got {today_id!r}"
+        ) from exc
+    cutoff_id = cutoff.isoformat()
+
+    deleted: list[str] = []
+    for briefing_id in storage.list_briefing_ids():
+        if briefing_id >= today_id:
+            continue
+        if briefing_id >= cutoff_id:
+            continue
+        try:
+            storage.delete_briefing(briefing_id)
+        except Exception:
+            # Housekeeping must never be the reason a morning run reports
+            # failure. Log it and move on to the next one.
+            log.exception("could not delete old briefing %s", briefing_id)
+            continue
+        deleted.append(briefing_id)
+
+    if deleted:
+        log.info(
+            "retention: deleted %d briefing(s) older than %s: %s",
+            len(deleted), cutoff_id, ", ".join(deleted),
+        )
+    else:
+        log.info("retention: nothing older than %s", cutoff_id)
+    return deleted
 
 
 def build_storage() -> BriefingStorage:
