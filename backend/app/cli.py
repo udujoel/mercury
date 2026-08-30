@@ -15,6 +15,7 @@ the whole schedule exists to prevent:
     0  a briefing exists for this id (generated now, or already there)
     1  generation failed, or produced nothing playable
     2  configuration is wrong (missing credentials, bad storage config)
+    3  a briefing shipped, but WITHOUT the user's inbox or calendar
 
 `check` is the other half of ADR-010. GitHub's scheduler is documented as
 best-effort ("some queued jobs may be dropped"), and a dropped run leaves no
@@ -144,7 +145,11 @@ def _check(briefing_id: str) -> int:
 
 
 async def _generate(
-    briefing_id: str, length: BriefingLength, *, force: bool = False
+    briefing_id: str,
+    length: BriefingLength,
+    *,
+    force: bool = False,
+    allow_degraded: bool = False,
 ) -> int:
     from app.pipeline.generate import generate_briefing
     from app.synthesis.stitch import EmptyBriefingError
@@ -213,25 +218,73 @@ async def _generate(
         manifest.briefing_id, len(manifest.turns), manifest.duration_ms / 1000,
     )
 
-    # Surface a degraded briefing to the runner. A GitHub ::warning:: shows on
-    # the run summary, so a briefing that shipped without the user's actual day
-    # is visible without reading the log.
+    # Surface a degraded briefing to the runner.
     #
     # Keyed off the ingestion failures, NOT the manifest's segment ids: the
     # script chain requires all seven canonical segments, so "calendar" and
     # "inbox" are present even when nothing was behind them. An earlier version
     # of this check inspected segment ids and could never fire.
-    from app.pipeline.generate import failed_personal_sources
+    from app.pipeline.generate import (
+        failed_personal_source_errors,
+        failed_personal_sources,
+    )
 
     failed = failed_personal_sources()
-    if failed:
+    if not failed:
+        return 0
+
+    print(
+        f"::warning::Briefing {manifest.briefing_id} shipped without "
+        f"{' and '.join(failed)}. It generated successfully but is missing "
+        "personal content Mercury exists for — see the ingestion errors "
+        "above."
+    )
+
+    # The one failure with a known cause and a permanent fix. While the OAuth
+    # consent screen is in Testing mode Google expires refresh tokens after
+    # seven days, so unattended generation stops every week — and because rule
+    # 7 drops a failed source rather than raising, the only symptom is a
+    # briefing that quietly stopped mentioning the user's inbox. Say the whole
+    # thing, including the console path: this recurs, and the point is that it
+    # is recognised instantly the second time.
+    expired = sorted(
+        label
+        for label, exc in failed_personal_source_errors().items()
+        if type(exc).__name__ == "ExpiredCredentialsError"
+    )
+    if expired:
         print(
-            f"::warning::Briefing {manifest.briefing_id} shipped without "
-            f"{' and '.join(failed)}. It generated successfully but is missing "
-            "personal content Mercury exists for — see the ingestion errors "
-            "above."
+            f"::error::The Google OAuth token has EXPIRED — {' and '.join(expired)} "
+            "could not be read. While the consent screen is in Testing mode "
+            "Google expires refresh tokens after 7 days, so this will now "
+            "happen every week until it is fixed. Permanent fix: Google Cloud "
+            "Console -> Google Auth Platform -> Audience -> Publish app (no "
+            "verification review is needed for a single user on read-only "
+            "scopes). Then re-mint token.json locally and update the "
+            "GOOGLE_OAUTH_TOKEN_JSON secret."
         )
-    return 0
+
+    if allow_degraded:
+        log.warning(
+            "briefing %s is degraded but --allow-degraded was passed; "
+            "reporting success", manifest.briefing_id,
+        )
+        return 0
+
+    # Exit non-zero even though the briefing was stored. Rule 7 is about what
+    # SHIPS, not about what gets reported: the briefing is in R2 and the phone
+    # will play it, and stale-free audio beats none. What changes is that the
+    # run stops claiming success, because a green tick over a briefing with no
+    # inbox in it is exactly how the 2026-08-27 failure went unnoticed for
+    # days. GitHub emails on a failed run, and that email is the entire point.
+    print(
+        f"::error::Briefing {manifest.briefing_id} is DEGRADED: no "
+        f"{' and no '.join(failed)}. The audio is in storage and the phone "
+        "will play it, so this run is marked failed to tell you, not to stop "
+        "you. Pass --allow-degraded if a degraded briefing should report "
+        "success."
+    )
+    return 3
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -247,6 +300,11 @@ def main(argv: list[str] | None = None) -> int:
         "--force",
         action="store_true",
         help="regenerate even if this briefing already exists",
+    )
+    gen.add_argument(
+        "--allow-degraded",
+        action="store_true",
+        help="exit 0 even if the briefing shipped without email or calendar",
     )
     gen.add_argument(
         "--length",
@@ -278,7 +336,14 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError:
             log.error("invalid briefing length %r", raw_length)
             return 2
-        return asyncio.run(_generate(briefing_id, length, force=args.force))
+        return asyncio.run(
+            _generate(
+                briefing_id,
+                length,
+                force=args.force,
+                allow_degraded=args.allow_degraded,
+            )
+        )
 
     return 2
 

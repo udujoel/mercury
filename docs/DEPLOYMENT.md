@@ -87,20 +87,62 @@ The workflow validates the shape of both before generating, so a mix-up fails
 in ten seconds with a message naming the wrong secret, rather than after
 install with a google.auth stack trace.
 
-## The one thing that will break weekly if you skip it
+## Publishing the OAuth consent screen is REQUIRED, not optional
 
-The Google OAuth consent screen is in **Testing** mode, where **refresh tokens
-expire after 7 days**. Unattended generation will stop every week, silently,
-with a `invalid_grant` in the Actions log.
+Not a hardening step, not a nice-to-have. **Until this is done, Mercury breaks
+every seven days**, permanently and on a repeating cycle.
 
-Fix once: Google Cloud Console → **Google Auth Platform → Audience →
-Publish app**. For a single user on `gmail.readonly` and `calendar.readonly`
-this needs no verification review. Then regenerate `token.json` locally and
-update the `GOOGLE_OAUTH_TOKEN_JSON` secret.
+The Google OAuth consent screen is in **Testing** mode, where Google expires
+refresh tokens after **7 days**. When that happens, Gmail and Calendar
+ingestion fail — and CLAUDE.md rule 7 drops a failed source rather than failing
+the run, so the briefing still ships, still sounds fine, and simply stops
+mentioning the user's inbox and calendar. That is most of the product, gone,
+with no error anyone sees.
+
+**Do this once:**
+
+1. https://console.cloud.google.com/auth/audience — or Google Cloud Console →
+   **Google Auth Platform → Audience**
+2. Under *Publishing status: Testing*, click **Publish app**
+3. Confirm. For a single user on `gmail.readonly` and `calendar.readonly` this
+   needs **no verification review** — it is one dialog.
+4. Re-mint `token.json` locally (`python scripts/spike_02_gmail.py`) and update
+   the `GOOGLE_OAUTH_TOKEN_JSON` secret. The old token stays expired; publishing
+   does not revive it.
+
+**How you will know if you skipped it.** The run now goes red and GitHub emails
+you, with this in the log:
+
+    ::error::The Google OAuth token has EXPIRED — email and calendar could not
+    be read. While the consent screen is in Testing mode Google expires refresh
+    tokens after 7 days...
+
+That error is keyed off the exception type (`ExpiredCredentialsError`), not off
+message text, so it cannot drift out of sync with the thing it describes.
 
 Your own risk register rates "OAuth refresh token expires and the scheduler
-breaks silently" as High impact, High likelihood. This is that risk, and this
-is the mitigation.
+breaks silently" as High impact, High likelihood. This is that risk. Publishing
+the app is the mitigation; the loud error is only the smoke alarm.
+
+## When a run goes red
+
+Three distinct failures, three different exit codes from `app.cli`, all of them
+reaching you as GitHub's ordinary failed-run email:
+
+| Exit | Meaning | What to do |
+|---|---|---|
+| 1 | Generation failed, or produced nothing playable | Read the log. If it says NO AUDIBLE TURNS, check Google TTS credentials and quota — nothing was stored, so a re-run needs no `force` |
+| 2 | Configuration is wrong | A secret is missing or malformed; the message names which |
+| 3 | The briefing shipped **without** the inbox or calendar | Usually the expired token above. The audio is in R2 and the phone will play it — the red tick is there to tell you, not to stop you |
+
+Exit 3 is the one that used to be exit 0. A briefing that shipped without the
+user's actual day exited successfully, so Actions went green and no email was
+sent; the 2026-08-27 failure was found days later by reading `gh run list`.
+Pass `--allow-degraded` if you would rather a degraded briefing reported
+success.
+
+A run that never happened at all reports nothing, because there is nothing to
+report — that is what the watchdog above is for.
 
 ## The read Worker
 

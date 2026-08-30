@@ -27,7 +27,7 @@ from app.core.schemas import BriefingLength, BriefingManifest
 from app.pipeline.generate import generate_briefing
 from app.providers.fake import FakeLLMProvider
 from app.providers.fake_tts import FakeTTSProvider
-from app.synthesis.storage import LocalFilesystemStorage
+from app.synthesis.storage import build_storage
 
 log = logging.getLogger(__name__)
 
@@ -166,7 +166,7 @@ async def generate(
     calendar_fixture = FIXTURES_DIR / "calendar_events.json" if offline else None
 
     briefing_id = request.briefing_id or _today_briefing_id()
-    storage = LocalFilesystemStorage()
+    storage = build_storage()
 
     # Already generated: hand it back without spending money regenerating it.
     existing = storage.load_manifest(briefing_id)
@@ -192,7 +192,7 @@ async def generate(
 @router.get("/{briefing_id}/status", response_model=StatusResponse)
 async def status(briefing_id: str) -> StatusResponse:
     """Where a generation has got to. Cheap enough to poll every second."""
-    if LocalFilesystemStorage().load_manifest(briefing_id) is not None:
+    if build_storage().load_manifest(briefing_id) is not None:
         return StatusResponse(briefing_id=briefing_id, status="ready")
 
     job = jobs.get(briefing_id)
@@ -208,7 +208,7 @@ async def status(briefing_id: str) -> StatusResponse:
 
 @router.get("/{briefing_id}", response_model=BriefingManifest)
 async def get_manifest(briefing_id: str) -> BriefingManifest:
-    storage = LocalFilesystemStorage()
+    storage = build_storage()
     manifest = storage.load_manifest(briefing_id)
     if manifest is None:
         raise HTTPException(
@@ -219,7 +219,7 @@ async def get_manifest(briefing_id: str) -> BriefingManifest:
 
 @router.get("/{briefing_id}/audio")
 async def get_audio(briefing_id: str) -> Response:
-    storage = LocalFilesystemStorage()
+    storage = build_storage()
     result = storage.load_audio(briefing_id)
     if result is None:
         raise HTTPException(

@@ -10,7 +10,9 @@ is only equivalent when the second half succeeds.
 
 from __future__ import annotations
 
+import sys
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -18,6 +20,13 @@ from app.cli import main
 from app.core.schemas import BriefingManifest, Turn
 from app.synthesis.stitch import EmptyBriefingError
 from app.synthesis.storage import LocalFilesystemStorage
+
+# The real ExpiredCredentialsError, not a look-alike. app.cli identifies it by
+# type name, and a stand-in defined here would pass whether or not the two
+# names still agree — which is the whole thing being asserted.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+from _google_auth import ExpiredCredentialsError  # noqa: E402
 
 
 def _manifest(briefing_id: str = "2026-08-27") -> BriefingManifest:
@@ -122,3 +131,96 @@ def test_an_empty_briefing_failure_is_reported_distinctly(
     out = capsys.readouterr().out
     assert "NO AUDIBLE TURNS" in out
     assert "no --force" in out
+
+
+def _succeeds_but_degraded(monkeypatch, storage, failures):
+    """A generation that stores a real briefing while some personal source
+    failed — which is exactly what CLAUDE.md rule 7 asks the pipeline to do,
+    and exactly the run that used to exit 0 and tell nobody."""
+    from app.pipeline import generate as generate_module
+
+    async def _ok(*, briefing_id, **_kwargs):
+        manifest = _manifest(briefing_id)
+        storage.save(briefing_id, b"REAL AUDIO", "wav", manifest)
+        generate_module._record_failed_sources(failures)
+        return manifest
+
+    monkeypatch.setattr(
+        "app.pipeline.generate.generate_briefing", _ok, raising=True
+    )
+
+
+def test_a_degraded_briefing_fails_the_run_but_still_ships(
+    cli, monkeypatch, capsys
+):
+    """The 2026-08-27 lesson. A briefing that shipped without the user's inbox
+    exited 0, so Actions went green and no email was sent, and it was found
+    days later by reading `gh run list`. The audio must still be stored — rule
+    7 — but the run must stop claiming success."""
+    _succeeds_but_degraded(monkeypatch, cli, {"email": RuntimeError("Gmail 500")})
+
+    assert main(["generate", "--briefing-id", "2026-08-27"]) == 3
+
+    out = capsys.readouterr().out
+    assert "::warning::" in out
+    assert "::error::" in out
+    assert "DEGRADED" in out
+
+    # Shipped anyway: the phone has something to play.
+    audio = cli.load_audio("2026-08-27")
+    assert audio is not None and audio[0] == b"REAL AUDIO"
+
+
+def test_allow_degraded_opts_back_out(cli, monkeypatch):
+    _succeeds_but_degraded(monkeypatch, cli, {"calendar": RuntimeError("boom")})
+
+    assert (
+        main(["generate", "--allow-degraded", "--briefing-id", "2026-08-27"]) == 0
+    )
+
+
+def test_a_healthy_briefing_is_still_a_clean_zero(cli, monkeypatch, capsys):
+    """The guard against the opposite mistake: turning every run red teaches
+    the user to ignore the email, which is the same outcome as sending none."""
+    _succeeds_but_degraded(monkeypatch, cli, {})
+
+    assert main(["generate", "--briefing-id", "2026-08-27"]) == 0
+    out = capsys.readouterr().out
+    assert "::warning::" not in out
+    assert "::error::" not in out
+
+
+def test_an_expired_google_token_says_so_and_names_the_permanent_fix(
+    cli, monkeypatch, capsys
+):
+    """The most likely production failure in this deployment, and it arrives
+    as a bare invalid_grant that says nothing. While the consent screen is in
+    Testing mode Google expires refresh tokens after 7 days, so this recurs
+    weekly until it is fixed — the error has to be recognisable on sight."""
+    _succeeds_but_degraded(
+        monkeypatch,
+        cli,
+        {
+            "email": ExpiredCredentialsError("token could not be refreshed"),
+            "calendar": ExpiredCredentialsError("token could not be refreshed"),
+        },
+    )
+
+    assert main(["generate", "--briefing-id", "2026-08-27"]) == 3
+
+    out = capsys.readouterr().out
+    assert "EXPIRED" in out
+    assert "Testing mode" in out
+    assert "Publish app" in out
+    assert "GOOGLE_OAUTH_TOKEN_JSON" in out
+
+
+def test_a_transient_failure_is_not_reported_as_an_expired_token(
+    cli, monkeypatch, capsys
+):
+    """Identified by exception TYPE, not by message text. A Gmail 500 is not a
+    reason to go and republish an OAuth consent screen."""
+    _succeeds_but_degraded(monkeypatch, cli, {"email": RuntimeError("Gmail 500")})
+
+    assert main(["generate", "--briefing-id", "2026-08-27"]) == 3
+    assert "Testing mode" not in capsys.readouterr().out

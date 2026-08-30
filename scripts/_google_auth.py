@@ -41,6 +41,22 @@ class MissingCredentialsError(RuntimeError):
     """Raised when credentials.json is absent. Never invent credentials."""
 
 
+class ExpiredCredentialsError(MissingCredentialsError):
+    """The stored token exists but can no longer be refreshed.
+
+    A separate type, not just a different message, because this is the one
+    credential failure with a KNOWN cause and a permanent fix, and callers need
+    to be able to say so without pattern-matching on prose. While the OAuth
+    consent screen is in Testing mode Google expires refresh tokens after seven
+    days, so unattended generation stops every week — and CLAUDE.md rule 7
+    means a failed source is dropped rather than raised, so the only symptom
+    the user ever sees is a briefing that quietly stopped mentioning their
+    inbox. `app.cli` keys its loudest error off this type.
+
+    Still a MissingCredentialsError so every existing handler keeps working.
+    """
+
+
 def _credentials_path() -> Path:
     default = str(DEFAULT_CREDENTIALS_FILE)
     return Path(os.environ.get("GOOGLE_CREDENTIALS_FILE", default))
@@ -101,7 +117,7 @@ def get_credentials() -> Credentials:
             # refresh tokens after SEVEN DAYS, so an unattended schedule stops
             # weekly. Name the cause and the permanent fix, or the same
             # breakage looks like a different bug every time.
-            raise MissingCredentialsError(
+            raise ExpiredCredentialsError(
                 f"The stored Google token at {token_path} could not be "
                 f"refreshed: {exc}\n"
                 "The usual cause is the OAuth consent screen still being in "

@@ -379,3 +379,51 @@ async def test_a_total_tts_failure_persists_nothing(tmp_path):
     # Nothing at all, not even a zero-byte audio file that a later run would
     # find and serve.
     assert list(tmp_path.iterdir()) == []
+
+
+async def test_a_failed_personal_source_records_the_exception_not_just_a_label(
+    tmp_path,
+):
+    """`app.cli` distinguishes an expired OAuth token from a transient API
+    error by exception TYPE, so the type has to survive ingestion.
+
+    It nearly did not: the Gmail and Calendar modules used to re-wrap every
+    credential error as a plain RuntimeError, which flattened the one subtype
+    that carries a known cause and a permanent fix. Matching on message text
+    instead would have broken the first time a string was reworded.
+    """
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[2] / "scripts"))
+    from _google_auth import ExpiredCredentialsError
+
+    from app.pipeline.generate import (
+        failed_personal_source_errors,
+        failed_personal_sources,
+    )
+
+    async def _expired_events(*, fixture, hours_ahead: int):
+        raise ExpiredCredentialsError("token could not be refreshed")
+
+    await generate_briefing(
+        briefing_id="2026-08-27",
+        length=BriefingLength.STANDARD,
+        llm=FakeLLMProvider(),
+        tts=FakeTTSProvider(),
+        fetch_events=_expired_events,
+        fetch_weather=_fake_fetch_weather,
+        score_emails=_fake_score_emails,
+        select_for_briefing=_fake_select_for_briefing,
+        generate_script=_fake_generate_script,
+        storage=LocalFilesystemStorage(base_dir=tmp_path),
+        gmail_fixture=FIXTURES_DIR / "gmail_messages.json",
+        calendar_fixture=None,
+        weather_fixture=None,
+    )
+
+    # Rule 7: the briefing still shipped, minus the calendar.
+    assert failed_personal_sources() == ["calendar"]
+
+    errors = failed_personal_source_errors()
+    assert isinstance(errors["calendar"], ExpiredCredentialsError)

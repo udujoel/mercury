@@ -315,3 +315,41 @@ async def test_unregistered_token_is_pruned_not_retried_forever(tmp_path, monkey
     assert "dead-token-aaaaaaaaaaaaaaaa" not in remaining, "410 token must be pruned"
     assert "live-token-bbbbbbbbbbbbbbbb" in remaining, "healthy token must survive"
     assert push.sent == ["live-token-bbbbbbbbbbbbbbbb"]
+
+
+async def test_the_scheduled_job_honours_storage_backend(monkeypatch, tmp_path):
+    """STORAGE_BACKEND used to be honoured by app.cli alone; this path
+    hardcoded local disk.
+
+    On a host configured for R2 that means the scheduled run writes a briefing
+    to a filesystem the phone cannot reach, logs success, and sends the push
+    telling the phone a briefing is ready. Every signal says it worked. It is
+    the same failure `build_storage` was written to prevent, reached through a
+    different door.
+    """
+    from app.scheduler import cron as cron_module
+    from app.synthesis.storage import LocalFilesystemStorage
+
+    chosen = LocalFilesystemStorage(base_dir=tmp_path)
+    used: list[object] = []
+
+    def _build():
+        used.append(chosen)
+        return chosen
+
+    monkeypatch.setattr(cron_module, "build_storage", _build, raising=True)
+
+    calls: list[dict] = []
+
+    async def _fake_generate(**kwargs):
+        calls.append(kwargs)
+        raise RuntimeError("stop here; storage selection is what is under test")
+
+    monkeypatch.setattr(
+        cron_module, "generate_briefing", _fake_generate, raising=True
+    )
+
+    await run_daily_briefing_job(llm=object(), tts=object(), push_provider=None)
+
+    assert used == [chosen], "the job did not ask build_storage for a backend"
+    assert calls and calls[0]["storage"] is chosen

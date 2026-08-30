@@ -39,7 +39,7 @@ from app.notifications.apns import (
     TokenUnregisteredError,
 )
 from app.pipeline.generate import generate_briefing
-from app.synthesis.storage import BriefingStorage, LocalFilesystemStorage
+from app.synthesis.storage import BriefingStorage, build_storage
 
 log = logging.getLogger(__name__)
 
@@ -188,7 +188,12 @@ async def run_daily_briefing_job(
       bare traceback from three layers of async machinery).
     """
     settings = get_settings()
-    storage = storage or LocalFilesystemStorage()
+    # build_storage, not LocalFilesystemStorage. STORAGE_BACKEND used to be
+    # honoured by app.cli alone, so a briefing generated through this path
+    # landed on the host's local disk while the phone read R2 — a run that
+    # looks completely successful and produces a briefing nobody can reach.
+    # That is the same failure build_storage's own docstring was written for.
+    storage = storage or build_storage()
     _, _, crosses_midnight = _compute_fire_time(
         settings.wake_time, settings.generation_lead_minutes
     )
