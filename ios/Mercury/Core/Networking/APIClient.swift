@@ -49,9 +49,7 @@ final class APIClient: APIClientProtocol {
             config.timeoutIntervalForResource = 300
             return URLSession(configuration: config)
         }()
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        self.decoder = decoder
+        self.decoder = JSONDecoder.mercury()
     }
 
     func generateBriefing(length: BriefingLength) async throws -> BriefingManifest {
@@ -312,5 +310,89 @@ struct GenerationStatus: Decodable, Sendable {
         case status
         case elapsedS = "elapsed_s"
         case error
+    }
+}
+
+
+// MARK: - Date decoding
+
+/// Parses the two ISO 8601 shapes the backend can produce.
+///
+/// `backend/app/synthesis/stitch.py` stamps `generated_at` with
+/// `datetime.now(UTC)` and pydantic's `model_dump_json` serialises it at
+/// microsecond precision — a real manifest in `backend/out/` reads
+/// `"2026-08-23T10:49:22.073032Z"`.
+///
+/// `JSONDecoder`'s built-in `.iso8601` strategy is VERSION DEPENDENT here,
+/// which is the whole reason this exists:
+///
+/// - Through iOS 17 — this app's deployment target — it is backed by
+///   `ISO8601DateFormatter` with `.withInternetDateTime` only, an option
+///   set that rejects fractional seconds outright. Measured directly:
+///   `ISO8601DateFormatter(.withInternetDateTime).date(from:)` returns nil
+///   for the string above. On iOS 17 every real manifest fetch fails to
+///   decode.
+/// - On the swift-foundation rewrite (iOS 18+) the same strategy parses it
+///   and keeps full precision. Measured: 1787482162.073032.
+///
+/// So the bug is invisible on any simulator installed on this machine
+/// (iOS 26.5 and 27.0 are the only runtimes present) and fatal on the
+/// oldest OS the project claims to support. A `.custom` strategy removes
+/// the version dependence entirely rather than betting on which Foundation
+/// the device ships.
+///
+/// Both forms are accepted deliberately: a timestamp landing exactly on a
+/// whole second serialises without a fractional part, so a parser that only
+/// handled microseconds would fail on a one-in-a-million morning.
+///
+/// Resolution is MILLISECONDS: `.withFractionalSeconds` reads three
+/// fractional digits and discards the rest, so `.073032` becomes `.073`.
+/// `generated_at` dates and orders one briefing per day, so this is
+/// irrelevant in practice — but it is a real difference from the iOS 18+
+/// built-in, and `testTimestampParserAcceptsBothWireShapes` pins it so it
+/// stays a decision rather than a surprise.
+enum ISO8601Timestamp {
+
+    private static let withFractionalSeconds: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static let wholeSeconds: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    static func date(from text: String) -> Date? {
+        withFractionalSeconds.date(from: text) ?? wholeSeconds.date(from: text)
+    }
+}
+
+extension JSONDecoder {
+
+    /// The one decoder configuration the app uses for backend JSON.
+    ///
+    /// Exposed (rather than configured privately inside `APIClient.init`)
+    /// so tests decode fixtures through exactly what production uses.
+    /// `ManifestDecodingTests` previously built its own `JSONDecoder` with
+    /// its own `.iso8601` strategy, which meant the decoding tests could
+    /// not have caught a wrong strategy in `APIClient` even with a faithful
+    /// fixture — they were testing a copy.
+    static func mercury() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let text = try container.decode(String.self)
+            guard let date = ISO8601Timestamp.date(from: text) else {
+                throw DecodingError.dataCorruptedError(
+                    in: container,
+                    debugDescription: "Expected an ISO 8601 timestamp, got \"\(text)\"."
+                )
+            }
+            return date
+        }
+        return decoder
     }
 }

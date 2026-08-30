@@ -8,7 +8,7 @@ final class ManifestDecodingTests: XCTestCase {
 
         XCTAssertEqual(manifest.briefingId, "2026-08-21")
         XCTAssertEqual(manifest.durationMs, 26000)
-        XCTAssertEqual(manifest.audioUrl, "https://cdn.example.com/briefings/2026-08-21/audio.wav")
+        XCTAssertEqual(manifest.audioUrl, "/briefing/2026-08-21/audio")
         XCTAssertEqual(manifest.segments.count, 4)
         XCTAssertEqual(manifest.turns.count, 8)
         XCTAssertEqual(manifest.sources.count, 2)
@@ -36,12 +36,19 @@ final class ManifestDecodingTests: XCTestCase {
         XCTAssertEqual(secondSource.clusterSize, 1)
     }
 
-    func testAudioURLDoesNotHardcodeExtension() throws {
-        // The fixture emits .wav (the no-ffmpeg fallback path). Decoding
-        // must not assume .m4a anywhere.
+    /// The audio format is NOT derivable from `audio_url`.
+    ///
+    /// The fixture used to carry a hand-written
+    /// `https://cdn.example.com/briefings/2026-08-21/audio.wav`, which
+    /// invited exactly the assumption the client must never make. A real
+    /// manifest (`backend/out/2026-08-23.manifest.json`) carries
+    /// `"/briefing/2026-08-23/audio"` — a relative path with no extension
+    /// at all. Format comes from the response `Content-Type`, nowhere else.
+    func testAudioURLCarriesNoFormatInformation() throws {
         let manifest = try Self.loadFixture()
-        XCTAssertTrue(manifest.audioUrl.hasSuffix(".wav"))
-        XCTAssertEqual(manifest.audioURL?.pathExtension, "wav")
+        XCTAssertEqual(manifest.audioUrl, "/briefing/2026-08-21/audio")
+        XCTAssertEqual(manifest.audioURL?.pathExtension, "",
+                       "a real backend audio_url has no extension to read")
     }
 
     func testGeneratedAtDecodesAsISO8601Date() throws {
@@ -53,17 +60,128 @@ final class ManifestDecodingTests: XCTestCase {
         XCTAssertEqual(components.day, 21)
     }
 
+    // MARK: - Regression: fractional seconds
+
+    /// The backend stamps `generated_at` with `datetime.now(UTC)` and
+    /// pydantic serialises it at microsecond precision. Foundation's
+    /// `.iso8601` strategy rejects fractional seconds outright, so every
+    /// real manifest failed to decode — while this suite stayed green,
+    /// because the fixture had been hand-written as `"...T07:00:00Z"`.
+    ///
+    /// This is the exact string out of `backend/out/2026-08-23.manifest.json`.
+    func testDecodesTheMicrosecondTimestampTheBackendActuallyEmits() throws {
+        let json = Data("""
+        {"briefing_id":"2026-08-23","generated_at":"2026-08-23T10:49:22.073032Z",
+         "duration_ms":322036,"audio_url":"/briefing/2026-08-23/audio",
+         "segments":[],"turns":[],"sources":[]}
+        """.utf8)
+
+        let manifest = try JSONDecoder.mercury().decode(BriefingManifest.self, from: json)
+
+        var components = DateComponents()
+        components.year = 2026
+        components.month = 8
+        components.day = 23
+        components.hour = 10
+        components.minute = 49
+        components.second = 22
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        let wholeSecond = try XCTUnwrap(calendar.date(from: components))
+
+        XCTAssertEqual(manifest.generatedAt.timeIntervalSince1970,
+                       wholeSecond.timeIntervalSince1970 + 0.073032,
+                       accuracy: 0.001,
+                       "the fractional part must survive, not just parse")
+    }
+
+    /// The other half: a timestamp landing exactly on a whole second
+    /// serialises without a fractional part, so the parser must accept that
+    /// form too. A fix that only handled microseconds would have the same
+    /// bug on a one-in-a-million morning.
+    func testDecodesAWholeSecondTimestampToo() throws {
+        let json = Data("""
+        {"briefing_id":"2026-08-23","generated_at":"2026-08-23T10:49:22Z",
+         "duration_ms":1,"audio_url":"/briefing/2026-08-23/audio",
+         "segments":[],"turns":[],"sources":[]}
+        """.utf8)
+
+        let manifest = try JSONDecoder.mercury().decode(BriefingManifest.self, from: json)
+
+        var components = DateComponents()
+        components.year = 2026
+        components.month = 8
+        components.day = 23
+        components.hour = 10
+        components.minute = 49
+        components.second = 22
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        XCTAssertEqual(manifest.generatedAt, try XCTUnwrap(calendar.date(from: components)))
+    }
+
+    /// Pins the PARSER, not the decoder.
+    ///
+    /// The decoder-level tests above can only fail on an OS whose built-in
+    /// `.iso8601` strategy is strict — which no simulator on this machine
+    /// is (iOS 26.5 / 27.0 only). This one fails on any OS if
+    /// `ISO8601Timestamp` is ever narrowed back to a single
+    /// `.withInternetDateTime` formatter, which is the actual regression
+    /// to guard against.
+    func testTimestampParserAcceptsBothWireShapes() throws {
+        let fractional = try XCTUnwrap(
+            ISO8601Timestamp.date(from: "2026-08-23T10:49:22.073032Z"),
+            "the shape pydantic actually emits"
+        )
+        let whole = try XCTUnwrap(
+            ISO8601Timestamp.date(from: "2026-08-23T10:49:22Z"),
+            "the shape a whole-second timestamp emits"
+        )
+        // MILLISECOND precision, deliberately pinned.
+        // `ISO8601DateFormatter` with `.withFractionalSeconds` parses three
+        // fractional digits and drops the rest, so pydantic's `.073032`
+        // arrives as `.073`. That is ample for a field used to date and
+        // sort one briefing per day, but it is a real difference from the
+        // built-in strategy on iOS 18+, which keeps all six digits — so it
+        // is asserted rather than left to be discovered later.
+        XCTAssertEqual(fractional.timeIntervalSince1970 - whole.timeIntervalSince1970,
+                       0.073, accuracy: 0.000_5,
+                       "the sub-second part must survive to millisecond precision")
+
+        // A strict `[.withInternetDateTime]` formatter is exactly what the
+        // old strategy used on iOS 17, and exactly what must not come back.
+        let strict = ISO8601DateFormatter()
+        strict.formatOptions = [.withInternetDateTime]
+        XCTAssertNil(strict.date(from: "2026-08-23T10:49:22.073032Z"),
+                     "documents why a fractional-seconds formatter is needed")
+    }
+
+    /// An unparseable timestamp must throw, not silently become some
+    /// default date — a briefing dated "now" would sort and cache wrong
+    /// everywhere downstream.
+    func testAGarbageTimestampFailsLoudly() {
+        let json = Data("""
+        {"briefing_id":"x","generated_at":"not a date","duration_ms":1,
+         "audio_url":"/x","segments":[],"turns":[],"sources":[]}
+        """.utf8)
+
+        XCTAssertThrowsError(try JSONDecoder.mercury().decode(BriefingManifest.self, from: json))
+    }
+
     // MARK: - Fixture loading
 
+    /// Decodes through `JSONDecoder.mercury()` — the SAME configuration
+    /// `APIClient` uses. Building a local `JSONDecoder` here, as this did
+    /// before, meant the decoding suite was testing a copy of the
+    /// production configuration rather than the configuration itself: a
+    /// wrong `dateDecodingStrategy` in `APIClient` could not have been
+    /// caught here at any fixture fidelity.
     static func loadFixture() throws -> BriefingManifest {
         let url = try XCTUnwrap(
             Bundle(for: ManifestDecodingTests.self)
                 .url(forResource: "sample_manifest", withExtension: "json")
         )
-        let data = try Data(contentsOf: url)
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return try decoder.decode(BriefingManifest.self, from: data)
+        return try JSONDecoder.mercury().decode(BriefingManifest.self, from: Data(contentsOf: url))
     }
 }
 
@@ -170,8 +288,6 @@ enum ManifestFixtures {
          "duration_ms":1000,"audio_url":"/briefing/2026-08-23/audio",
          "segments":[],"turns":[],"sources":[]}
         """
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return try! decoder.decode(BriefingManifest.self, from: Data(json.utf8))
+        return try! JSONDecoder.mercury().decode(BriefingManifest.self, from: Data(json.utf8))
     }
 }
