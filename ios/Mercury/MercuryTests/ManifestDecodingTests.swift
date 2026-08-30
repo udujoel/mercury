@@ -192,12 +192,31 @@ final class RecordingAPI: APIClientProtocol {
     var calls: [String] = []
     var manifestResult: Result<BriefingManifest, Error>
 
+    /// Holds `fetchManifest` open so a second tap can arrive while the
+    /// first is still in flight. `nil` means "return immediately".
+    var gate: CheckedContinuation<Void, Never>?
+    var shouldGateFetch = false
+    private var gateWaiters: [CheckedContinuation<Void, Never>] = []
+
     init(manifestResult: Result<BriefingManifest, Error>) {
         self.manifestResult = manifestResult
     }
 
+    /// Lets every held `fetchManifest` proceed.
+    func openGate() {
+        shouldGateFetch = false
+        let waiters = gateWaiters
+        gateWaiters = []
+        waiters.forEach { $0.resume() }
+    }
+
     func fetchManifest(briefingId: String) async throws -> BriefingManifest {
         calls.append("fetchManifest")
+        if shouldGateFetch {
+            await withCheckedContinuation { continuation in
+                gateWaiters.append(continuation)
+            }
+        }
         return try manifestResult.get()
     }
 
@@ -263,6 +282,60 @@ final class PlayBriefingRoutingTests: XCTestCase {
         } else {
             XCTFail("expected a failed load state, got \(state.loadState)")
         }
+    }
+
+    // MARK: - Regression: one tap at a time
+
+    /// Tapping the greeting card twice used to start two concurrent
+    /// fetches. They collided on the same destination file in
+    /// `downloadAudio` and both then called `playback.load` on the same
+    /// coordinator.
+    ///
+    /// Deterministic form: a load is already in flight, so a fresh tap must
+    /// reach the network not at all.
+    func testATapWhileAlreadyLoadingIsIgnored() async {
+        let api = RecordingAPI(manifestResult: .success(ManifestFixtures.minimal))
+        let state = AppState(api: api)
+        state.loadState = .loading
+
+        await state.playBriefing()
+
+        XCTAssertTrue(api.calls.isEmpty,
+                      "a second tap must not start a second fetch, got \(api.calls)")
+    }
+
+    /// And the real shape of it: two taps genuinely overlapping, with the
+    /// first held open inside `fetchManifest`.
+    func testTwoOverlappingTapsProduceOneFetch() async {
+        let api = RecordingAPI(manifestResult: .success(ManifestFixtures.minimal))
+        api.shouldGateFetch = true
+        let state = AppState(api: api)
+
+        async let first: Void = state.playBriefing()
+        // Let the first tap reach the gate before the second one lands.
+        await Task.yield()
+        await Task.yield()
+        async let second: Void = state.playBriefing()
+        await Task.yield()
+        api.openGate()
+        _ = await (first, second)
+
+        XCTAssertEqual(api.calls.filter { $0 == "fetchManifest" }.count, 1,
+                       "the second tap must be swallowed, got \(api.calls)")
+    }
+
+    /// `playPrefetched(id: nil)` delegates to `playBriefing` — and it does
+    /// so having already set `loadState` to `.loading`. If it does not
+    /// release the guard first, the fallback silently does nothing and the
+    /// user is left on the spinner that fallback exists to prevent.
+    func testPlayPrefetchedWithNoIdStillFallsThroughToTheOrdinaryPath() async {
+        let api = RecordingAPI(manifestResult: .success(ManifestFixtures.minimal))
+        let state = AppState(api: api)
+
+        await state.playPrefetched(id: nil)
+
+        XCTAssertTrue(api.calls.contains("fetchManifest"),
+                      "the guard must not swallow its own fallback, got \(api.calls)")
     }
 
     /// A 404 is the ordinary "not generated yet" answer, and only then is

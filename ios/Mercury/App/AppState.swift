@@ -128,6 +128,16 @@ final class AppState {
     /// backend, where producing one on demand is genuinely useful.
     @MainActor
     func playBriefing() async {
+        // One tap at a time.
+        //
+        // The greeting card is a big, satisfying target and the first thing
+        // it does is go quiet for several seconds, so tapping it twice is
+        // the natural thing to do. That started two fetches which collided
+        // on the same destination file in `downloadAudio`, and then both
+        // called `playback.load` on the same coordinator. `AppState` is
+        // `@MainActor`, so this guard is genuinely exclusive: the second tap
+        // cannot observe `loadState` before the first has set it.
+        guard loadState != .loading else { return }
         loadState = .loading
         do {
             let manifest = try await fetchTodayOrGenerate()
@@ -213,6 +223,10 @@ final class AppState {
     /// best-effort optimization per ADR-001, never a precondition.
     @MainActor
     func playPrefetched(id: String?) async {
+        // Same guard as `playBriefing`: the notification's "Play" action and
+        // a tap on the card can both land, and the notification path is the
+        // one most likely to arrive while a fetch is already running.
+        guard loadState != .loading else { return }
         loadState = .loading
         do {
             let manifest: BriefingManifest
@@ -225,6 +239,13 @@ final class AppState {
                 // notification payload. Nothing to play; fall back to the
                 // ordinary tap-to-generate-or-fetch path so the user isn't
                 // left staring at a spinner.
+                //
+                // Release the guard first. This method has already set
+                // `loadState` to `.loading`, and `playBriefing` now refuses
+                // to start while a load is in flight — so without this the
+                // fallback would silently do nothing, producing exactly the
+                // spinner it exists to prevent.
+                loadState = .idle
                 await playBriefing()
                 return
             }
