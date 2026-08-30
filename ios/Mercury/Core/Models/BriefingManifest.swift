@@ -99,12 +99,62 @@ struct BriefingManifest: Codable, Equatable {
     let turns: [Turn]
     let sources: [SourceRef]
 
+    /// Turns that actually exist in the audio, computed ONCE.
+    ///
+    /// The backend excludes un-synthesised turns, so this is normally just
+    /// `turns`; the filter is the client-side half of that guarantee, so a
+    /// stale or hand-edited manifest cannot desync the transcript.
+    ///
+    /// It used to be a computed property — `turns.filter(\.isRendered)` —
+    /// and `turn(containing:)` called it on entry. The binary search inside
+    /// was O(log n), but it was searching an array that had just been
+    /// rebuilt in O(n), allocating a fresh copy of every turn in the
+    /// briefing twenty times a second for the whole six minutes. Storing it
+    /// makes the O(log n) claim in that method's doc comment true for the
+    /// first time.
+    ///
+    /// Not part of the wire format: excluded from `CodingKeys`, derived in
+    /// both initialisers.
+    let renderedTurns: [Turn]
+
     enum CodingKeys: String, CodingKey {
         case briefingId = "briefing_id"
         case generatedAt = "generated_at"
         case durationMs = "duration_ms"
         case audioUrl = "audio_url"
         case segments, turns, sources
+    }
+
+    init(
+        briefingId: String,
+        generatedAt: Date,
+        durationMs: Int,
+        audioUrl: String,
+        segments: [BriefingSegment],
+        turns: [Turn],
+        sources: [SourceRef]
+    ) {
+        self.briefingId = briefingId
+        self.generatedAt = generatedAt
+        self.durationMs = durationMs
+        self.audioUrl = audioUrl
+        self.segments = segments
+        self.turns = turns
+        self.sources = sources
+        self.renderedTurns = turns.filter(\.isRendered)
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            briefingId: try c.decode(String.self, forKey: .briefingId),
+            generatedAt: try c.decode(Date.self, forKey: .generatedAt),
+            durationMs: try c.decode(Int.self, forKey: .durationMs),
+            audioUrl: try c.decode(String.self, forKey: .audioUrl),
+            segments: try c.decode([BriefingSegment].self, forKey: .segments),
+            turns: try c.decode([Turn].self, forKey: .turns),
+            sources: try c.decode([SourceRef].self, forKey: .sources)
+        )
     }
 
     var audioURL: URL? { URL(string: audioUrl) }
@@ -120,12 +170,6 @@ extension BriefingManifest {
     /// Returns `nil` for a position that falls in a gap between turns (no
     /// turn covers it), and for a position before the first turn or after
     /// the last. O(log n), safe to call from the 20 Hz playback tick.
-    /// Turns that actually exist in the audio. The backend excludes
-    /// un-synthesised turns, so this is normally just `turns`; the filter is
-    /// the client-side half of that guarantee, so a stale or hand-edited
-    /// manifest cannot desync the transcript.
-    var renderedTurns: [Turn] { turns.filter(\.isRendered) }
-
     func turn(containing ms: Int) -> Turn? {
         let turns = renderedTurns
         guard !turns.isEmpty else { return nil }
@@ -148,12 +192,45 @@ extension BriefingManifest {
         return nil
     }
 
+    /// The first rendered turn that starts at or after `ms`.
+    ///
+    /// `turn(containing:)` returns nil in the silence between turns, which
+    /// is right during playback — the transcript should hold the line that
+    /// just finished. It is wrong immediately after a SEEK: landing in a
+    /// gap would otherwise leave the transcript showing a line from
+    /// somewhere else in the briefing entirely. This resolves such a
+    /// position forward to the line about to be spoken.
+    ///
+    /// Same O(log n) binary search, on the same pre-computed array: find
+    /// the first turn whose `endMs` is past `ms`.
+    func turn(startingAtOrAfter ms: Int) -> Turn? {
+        let turns = renderedTurns
+        var lo = 0
+        var hi = turns.count
+
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if turns[mid].endMs <= ms {
+                lo = mid + 1
+            } else {
+                hi = mid
+            }
+        }
+        return lo < turns.count ? turns[lo] : nil
+    }
+
+    /// The chapter covering an arbitrary playback position: the segment with
+    /// the greatest `startMs` not exceeding `ms`.
+    func segment(containing ms: Int) -> BriefingSegment? {
+        segments
+            .filter { $0.startMs <= ms }
+            .max(by: { $0.startMs < $1.startMs })
+    }
+
     /// The chapter that owns a given turn: the segment with the greatest
     /// `startMs` not exceeding the turn's `startMs`.
     func segment(for turn: Turn) -> BriefingSegment? {
-        segments
-            .filter { $0.startMs <= turn.startMs }
-            .max(by: { $0.startMs < $1.startMs })
+        segment(containing: turn.startMs)
     }
 
     /// The playback offset to seek to when a chapter tab is tapped.
