@@ -1,0 +1,136 @@
+"""
+Tests for `python -m app.cli check` — the ADR-010 watchdog probe.
+
+The point of this command is to notice the failures that leave no failed run
+behind. GitHub documents its scheduler as best-effort ("some queued jobs may
+be dropped"), and a dropped run produces no run record, so nothing fails and
+no email is sent. The only way to find out is to ask storage.
+
+So the cases that matter here are the ones that LOOK like success:
+a briefing that was never generated, a briefing with no audible turns in it,
+and a manifest whose audio is not actually there.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+
+import pytest
+
+from app.cli import main
+from app.core.schemas import BriefingManifest, Turn
+from app.synthesis.storage import LocalFilesystemStorage
+
+
+def _manifest(
+    briefing_id: str = "2026-08-21",
+    *,
+    turns: list[Turn] | None = None,
+    duration_ms: int = 1000,
+) -> BriefingManifest:
+    return BriefingManifest(
+        briefing_id=briefing_id,
+        generated_at=datetime.now(UTC),
+        duration_ms=duration_ms,
+        audio_url=f"/briefing/{briefing_id}/audio",
+        segments=[{"id": "cold_open", "label": "Good morning", "start_ms": 0}],
+        turns=[Turn(speaker="A", segment="cold_open", text="Morning.")]
+        if turns is None
+        else turns,
+        sources=[],
+    )
+
+
+@pytest.fixture
+def storage_at(monkeypatch, tmp_path):
+    """Point build_storage at a temp directory for the duration of a test."""
+    storage = LocalFilesystemStorage(base_dir=tmp_path)
+    monkeypatch.setattr(
+        "app.synthesis.storage.build_storage", lambda: storage, raising=True
+    )
+    return storage
+
+
+def test_check_passes_for_a_real_briefing(storage_at):
+    storage_at.save("2026-08-21", b"fake wav bytes", "wav", _manifest())
+
+    assert main(["check", "--briefing-id", "2026-08-21"]) == 0
+
+
+def test_check_fails_when_nothing_generated_the_briefing(storage_at, capsys):
+    assert main(["check", "--briefing-id", "2026-08-21"]) == 1
+    assert "::error::No briefing for 2026-08-21" in capsys.readouterr().out
+
+
+def test_check_fails_on_an_empty_briefing(storage_at, capsys):
+    """The worst shape in the system: every TTS call failed, a manifest with
+    zero turns was stored anyway, and because generation is idempotent that
+    empty briefing then blocked its own replacement. It exits 0 and looks
+    exactly like success."""
+    storage_at.save(
+        "2026-08-21", b"", "wav", _manifest(turns=[], duration_ms=0)
+    )
+
+    assert main(["check", "--briefing-id", "2026-08-21"]) == 1
+    out = capsys.readouterr().out
+    assert "::error::" in out
+    assert "block its own replacement" in out
+
+
+def test_check_fails_when_the_manifest_has_no_audio_behind_it(storage_at, capsys):
+    """`--force` used to delete the audio before regenerating, so a failed
+    retry stranded a manifest pointing at an object that no longer exists —
+    200 on the manifest, 404 on the audio."""
+    storage_at.save("2026-08-21", b"fake wav bytes", "wav", _manifest())
+    storage_at.delete_audio("2026-08-21")
+
+    assert main(["check", "--briefing-id", "2026-08-21"]) == 1
+    assert "NO AUDIO" in capsys.readouterr().out
+
+
+def test_check_reports_configuration_errors_separately(monkeypatch):
+    """Exit 2, not 1. A misconfigured watchdog must not be indistinguishable
+    from a missing briefing — the fixes are completely different."""
+    def _boom():
+        raise RuntimeError("R2 storage is not configured — missing R2_BUCKET")
+
+    monkeypatch.setattr(
+        "app.synthesis.storage.build_storage", _boom, raising=True
+    )
+
+    assert main(["check", "--briefing-id", "2026-08-21"]) == 2
+
+
+def test_check_does_not_report_a_read_failure_as_a_missing_briefing(
+    storage_at, monkeypatch, capsys
+):
+    """R2 raises on anything that is not a genuine 404 precisely so a rotated
+    or under-scoped token cannot be reported as "never generated". Crying
+    wolf here would send the user to regenerate a briefing that already
+    exists, spending real Gemini and TTS money."""
+    def _boom(_briefing_id):
+        raise RuntimeError("An error occurred (403) when calling GetObject")
+
+    monkeypatch.setattr(storage_at, "load_manifest", _boom, raising=True)
+
+    assert main(["check", "--briefing-id", "2026-08-21"]) == 1
+    out = capsys.readouterr().out
+    assert "Could not read briefing" in out
+    assert "No briefing for" not in out
+
+
+def test_check_rejects_a_malformed_briefing_id(storage_at):
+    assert main(["check", "--briefing-id", "not-a-date"]) == 2
+
+
+def test_check_defaults_to_today_in_the_users_timezone(storage_at, monkeypatch):
+    """Same id derivation as `generate`, deliberately. A watchdog that names
+    the briefing differently from the generator reports a healthy morning as
+    a failure every day the two disagree — this project has already had five
+    separate date bugs."""
+    monkeypatch.setattr(
+        "app.cli._today_briefing_id", lambda _tz: "2026-08-21", raising=True
+    )
+    storage_at.save("2026-08-21", b"fake wav bytes", "wav", _manifest())
+
+    assert main(["check"]) == 0

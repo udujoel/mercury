@@ -6,14 +6,21 @@ job does not need an HTTP server at all: the workflow calls this, it writes
 the finished briefing to R2, and the phone reads from R2 directly.
 
     python -m app.cli generate [--length standard] [--briefing-id 2026-08-22]
+    python -m app.cli check    [--briefing-id 2026-08-22]
 
 Exit codes matter here — Actions decides whether to mark the run failed and
 email you, and a briefing that silently did not generate is the failure mode
 the whole schedule exists to prevent:
 
     0  a briefing exists for this id (generated now, or already there)
-    1  generation failed
+    1  generation failed, or produced nothing playable
     2  configuration is wrong (missing credentials, bad storage config)
+
+`check` is the other half of ADR-010. GitHub's scheduler is documented as
+best-effort ("some queued jobs may be dropped"), and a dropped run leaves no
+run record, so there is nothing to fail and nothing to send the standard
+failed-run email. The only way to notice is to ask storage whether the
+briefing is actually there, from something that is not GitHub's scheduler.
 """
 
 from __future__ import annotations
@@ -42,6 +49,98 @@ def _today_briefing_id(tz_name: str) -> str:
         log.error("invalid USER_TIMEZONE %r; falling back to UTC", tz_name)
         tz = ZoneInfo("UTC")
     return datetime.now(tz).strftime("%Y-%m-%d")
+
+
+def _resolve_briefing_id(explicit: str | None, tz_name: str) -> str | None:
+    """The id both subcommands operate on, or None if it is malformed.
+
+    A malformed id silently becomes a storage key nothing ever reads — and
+    `check` would then report a perfectly healthy briefing as missing, which
+    is a worse outcome than the bad write it was originally guarding.
+    """
+    briefing_id = explicit or _today_briefing_id(tz_name)
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", briefing_id):
+        log.error(
+            "briefing id %r is not YYYY-MM-DD; refusing to act on an id "
+            "nothing will look for", briefing_id,
+        )
+        return None
+    return briefing_id
+
+
+def _check(briefing_id: str) -> int:
+    """Is there a briefing for this id the phone could actually play?
+
+    Deliberately does NOT stop at "the manifest exists". Two real failure
+    shapes in this project pass that test and fail the user:
+
+      - a run where every TTS call failed still stored a manifest, with zero
+        turns and zero milliseconds of audio, and then blocked its own
+        replacement forever because generation is idempotent;
+      - a forced regeneration that deleted the old audio and then failed left
+        a manifest pointing at an object that no longer exists, so the phone
+        got 200 on the manifest and 404 on the audio.
+
+    Both look exactly like success from the Actions log. So this asks for the
+    audio too, and calls a zero-turn briefing what it is.
+    """
+    from app.synthesis.storage import build_storage
+
+    try:
+        storage = build_storage()
+    except Exception as exc:
+        log.error("storage is not configured: %s", exc)
+        return 2
+
+    try:
+        manifest = storage.load_manifest(briefing_id)
+    except Exception:
+        # A read failure is NOT "no briefing" — R2 raises on anything that is
+        # not a genuine 404 precisely so a rotated token cannot be reported as
+        # a missing briefing. Surface it rather than crying wolf.
+        log.exception("could not read the manifest for %s", briefing_id)
+        print(f"::error::Could not read briefing {briefing_id} from storage.")
+        return 1
+
+    if manifest is None:
+        print(
+            f"::error::No briefing for {briefing_id}. Nothing generated it, or "
+            "the run that should have was delayed or dropped by the scheduler. "
+            "Re-run the 'daily briefing' workflow (Actions -> daily briefing -> "
+            "Run workflow)."
+        )
+        return 1
+
+    if not manifest.turns or manifest.duration_ms <= 0:
+        print(
+            f"::error::Briefing {briefing_id} exists but has "
+            f"{len(manifest.turns)} turns and {manifest.duration_ms}ms of "
+            "audio. That is an empty briefing, and because generation is "
+            "idempotent it will block its own replacement — re-run with "
+            "force=true."
+        )
+        return 1
+
+    try:
+        audio = storage.load_audio(briefing_id)
+    except Exception:
+        log.exception("could not read the audio for %s", briefing_id)
+        print(f"::error::Could not read audio for briefing {briefing_id}.")
+        return 1
+
+    if audio is None:
+        print(
+            f"::error::Briefing {briefing_id} has a manifest but NO AUDIO. The "
+            "phone will get 200 on the manifest and 404 on the audio. Re-run "
+            "with force=true."
+        )
+        return 1
+
+    log.info(
+        "briefing %s is present and playable: %d turns, %.0fs of audio",
+        briefing_id, len(manifest.turns), manifest.duration_ms / 1000,
+    )
+    return 0
 
 
 async def _generate(
@@ -143,18 +242,23 @@ def main(argv: list[str] | None = None) -> int:
         help="defaults to BRIEFING_LENGTH",
     )
 
+    chk = sub.add_parser(
+        "check",
+        help="verify a briefing exists and is playable; exit 1 if it is not",
+    )
+    chk.add_argument("--briefing-id", default=None, help="defaults to today, local")
+
     args = parser.parse_args(argv)
     settings = get_settings()
 
+    briefing_id = _resolve_briefing_id(args.briefing_id, settings.user_timezone)
+    if briefing_id is None:
+        return 2
+
+    if args.command == "check":
+        return _check(briefing_id)
+
     if args.command == "generate":
-        briefing_id = args.briefing_id or _today_briefing_id(settings.user_timezone)
-        # A malformed id silently becomes a storage key nothing ever reads.
-        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", briefing_id):
-            log.error(
-                "briefing id %r is not YYYY-MM-DD; refusing to write a "
-                "briefing nothing will look for", briefing_id,
-            )
-            return 2
         raw_length = args.length or settings.briefing_length
         try:
             length = BriefingLength(raw_length)

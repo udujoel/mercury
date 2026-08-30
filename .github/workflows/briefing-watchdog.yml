@@ -1,0 +1,112 @@
+name: briefing watchdog
+
+# ADR-010. The failure this exists to catch is the one that leaves no evidence.
+#
+# On 2026-08-27 a run failed and that day's briefing was lost. Nothing
+# surfaced it; it was found days later by reading `gh run list`. Worse is the
+# case GitHub cannot report at all: its scheduler is documented as best-effort
+# ("If the load is sufficiently high enough, some queued jobs may be dropped"),
+# and a DROPPED run creates no run record — so there is no failed run, no red
+# tick, and no failure email. The absence is invisible from inside Actions.
+#
+# The only way to notice is to ask storage whether the briefing is actually
+# there. That is `python -m app.cli check`, and this workflow is the thing
+# that runs it and goes red when the answer is no — which is what turns it
+# into the email the user already gets for a failed run.
+#
+# It is dispatched punctually by the Cloudflare Cron Trigger in
+# worker/src/index.js. The schedule entries below are the backstop for the
+# Worker itself being broken, and are late on purpose: every generation
+# trigger is scheduled to have finished by 05:00 UTC.
+
+on:
+  schedule:
+    # Off the hour, per GitHub's own advice ("To decrease the chance of delay,
+    # schedule your workflow to run at a different time of the hour"). Two
+    # entries because a single dropped run would take the alarm with it.
+    - cron: "27 5 * * *"
+    - cron: "56 6 * * *"
+  workflow_dispatch:
+    inputs:
+      briefing_id:
+        description: "Briefing id (YYYY-MM-DD). Blank = today, local."
+        required: false
+        type: string
+
+concurrency:
+  # Unlike generation, the newest answer is the only one worth having.
+  group: briefing-watchdog
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # No Google credentials and no ffmpeg here, deliberately. This job only
+      # reads R2. Giving a watchdog the ability to reach the user's inbox
+      # would widen the blast radius of the thing whose entire job is to run
+      # unattended every morning.
+      - name: Check today's briefing is present and playable
+        env:
+          USER_TIMEZONE: ${{ secrets.USER_TIMEZONE }}
+          STORAGE_BACKEND: r2
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          # Passed as env, not interpolated into the command. Expression
+          # substitution happens BEFORE the shell runs, so an id containing a
+          # space or a semicolon would be parsed as shell syntax rather than
+          # treated as an argument. GitHub's own hardening guidance.
+          BRIEFING_ID: ${{ inputs.briefing_id }}
+        run: |
+          args=()
+          if [ -n "$BRIEFING_ID" ]; then args+=(--briefing-id "$BRIEFING_ID"); fi
+          python -m app.cli check "${args[@]}"
+
+      - name: Explain what to do about it
+        if: failure()
+        env:
+          BRIEFING_ID: ${{ inputs.briefing_id }}
+        run: |
+          # The failure email links here, so the summary is where the user
+          # actually reads what happened. A red tick with no instructions is
+          # how the 2026-08-27 failure went unnoticed for days.
+          {
+            echo "## No usable briefing"
+            echo
+            echo "\`app.cli check\` could not find a playable briefing for" \
+                 "\`${BRIEFING_ID:-today}\`."
+            echo
+            echo "Fix it now:"
+            echo
+            echo "1. Actions -> **daily briefing** -> Run workflow."
+            echo "2. If a briefing already exists but is empty or silent," \
+                 "set \`force\` to \`true\` — generation is idempotent and" \
+                 "will otherwise decline to replace it."
+            echo
+            echo "Then work out which one it was:"
+            echo
+            echo "- **The run never happened.** GitHub's scheduler is" \
+                 "best-effort and drops queued jobs under load; a dropped" \
+                 "run leaves no record at all. Check whether the Cloudflare" \
+                 "Cron Trigger fired (Workers -> mercury-briefings -> Logs)."
+            echo "- **The run failed.** Check the daily briefing run log."
+            echo "- **The Google token expired.** The consent screen must be" \
+                 "published, not in Testing — Testing expires refresh tokens" \
+                 "after 7 days. See docs/DEPLOYMENT.md."
+          } >> "$GITHUB_STEP_SUMMARY"

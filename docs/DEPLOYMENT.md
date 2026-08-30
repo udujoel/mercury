@@ -3,15 +3,22 @@
 Mercury runs with **no hosted backend**. See ADR-008 for why.
 
 ```
-  05:00 local
-      │
-      ▼
-  GitHub Actions cron ──► generate (127s) ──► Cloudflare R2
-                                                   │
-  iPhone ◄─────────── manifest + audio ────────────┘
+  03:40 UTC  Cloudflare Cron Trigger ─┐
+  04:12 UTC  GitHub schedule (backstop)├─► generate (~2 min) ─► Cloudflare R2
+  04:41 UTC  GitHub schedule (backstop)┘                             │
+                                                                     │
+  05:08 UTC  watchdog ─► briefing missing? ─► red run + email        │
+                                                                     │
+  iPhone ◄──────────────── manifest + audio ───────────────────────┘
 ```
 
 Nothing runs on a laptop. Nothing sleeps. Nothing costs money.
+
+**Why two schedulers.** GitHub's `schedule` event is best-effort by
+documentation — "some queued jobs may be dropped" — and on seven consecutive
+days it created the 04:00 run between 32 minutes and 12 hours late. Cloudflare
+Cron Triggers are punctual and the Worker already exists, so the real trigger
+moved there and GitHub's schedule became the backstop. See ADR-010.
 
 ## What each piece does
 
@@ -116,15 +123,78 @@ The bucket stays private; only the Worker holds the binding.
 ```bash
 npx wrangler login          # interactive, once
 cd worker
-npx wrangler secret put MERCURY_API_TOKEN   # same value as backend/.env
+npx wrangler secret put MERCURY_API_TOKEN       # same value as backend/.env
+npx wrangler secret put USER_TIMEZONE           # same value as backend/.env
+npx wrangler secret put GITHUB_DISPATCH_TOKEN   # see "The schedule" below
 npx wrangler deploy
 ```
+
+`USER_TIMEZONE` is **not optional**, and this guide used to omit it. `/health`
+reports it and the iOS client caches that value (`BriefingClock`) to derive
+briefing ids locally — the background task has no other way to know which
+briefing to prefetch. Leave it unset and `/health` reports UTC, so the phone
+asks for the wrong day whenever the user's zone is not UTC.
 
 Deploying prints a `*.workers.dev` URL. That becomes `API_HOST` below.
 
 **Cost: zero.** Workers free tier is 100,000 requests a day; Mercury makes
 about two. R2 free tier is 10GB with no egress charge; a 7-day retention of
 ~3MB briefings uses about 20MB.
+
+## The schedule
+
+Three layers. Each one exists because the layer above it can fail. ADR-010 has
+the evidence and the trade-offs; this is what an operator has to do.
+
+| When (UTC) | What | Where |
+|---|---|---|
+| 03:40 | Generate, if today's briefing is missing | Cloudflare Cron Trigger |
+| 04:12, 04:41 | Generate, if still missing | GitHub `schedule` (backstop) |
+| 04:20, 04:50 | Retry, if still missing | Cloudflare Cron Trigger |
+| 05:08 | Generate **and raise the alarm** — deadline blown | Cloudflare Cron Trigger |
+| 05:27, 06:56 | Alarm backstop, if the Worker itself is dead | GitHub `schedule` |
+
+The deadline is **06:00 Europe/Lisbon**. Lisbon is UTC+1 in summer, so the
+tight case is 05:00 UTC and every time above is sized against it. Cron is
+UTC-only and has no DST on either platform, so these shift by an hour relative
+to local time across the year — deliberately, and winter simply gets more
+margin.
+
+Every checkpoint first asks R2 whether a playable briefing already exists, so
+on a healthy morning all of them after the first are a single read.
+
+### The dispatch token
+
+The Cloudflare Worker needs to be able to say "run the workflow now". That is
+the one new credential this design costs, and it is worth scoping tightly:
+
+1. GitHub → **Settings → Developer settings → Personal access tokens →
+   Fine-grained tokens → Generate new token**
+2. **Repository access:** Only select repositories → `udujoel/mercury`. Not
+   "All repositories".
+3. **Permissions:** Repository permissions → **Actions: Read and write**.
+   Nothing else. It does not need contents, secrets, or workflows.
+4. Set an expiry you will actually notice, and put the date somewhere. This is
+   the second credential in this project that expires silently; the first one
+   is the Google OAuth token below.
+5. `cd worker && npx wrangler secret put GITHUB_DISPATCH_TOKEN`
+
+`GITHUB_REPO` and `GITHUB_REF` are plain `[vars]` in `worker/wrangler.toml` —
+a repo slug and a branch name are not secrets.
+
+**If this token expires or is revoked**, the Worker logs
+`dispatch of briefing.yml failed: HTTP 401` (Workers → mercury-briefings →
+Logs) and the system degrades to the GitHub backstop: the briefing still
+generates, late and unpredictably, and the watchdog still alarms. You lose
+punctuality, not the briefing.
+
+### Checking on it yourself
+
+    curl -H "X-Mercury-Token: <token>" https://mercury-briefings.udujoel.workers.dev/status
+
+Returns `{"briefing_id": "...", "state": "ok" | "empty" | "missing", "ok": ...}`.
+Authenticated, unlike `/health`, because whether a briefing exists for today is
+information about the user's morning.
 
 ## Pointing the iPhone at R2
 

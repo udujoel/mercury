@@ -10,6 +10,13 @@
  * it exists rather than simply making the bucket public: the manifest and
  * audio are built from a real inbox and calendar, and a public bucket URL is
  * not secret just because it is unguessable.
+ *
+ * It also carries the morning schedule (ADR-010). GitHub's `schedule` event
+ * is documented best-effort — "some queued jobs may be dropped" — and seven
+ * consecutive days of `cron: "0 4 * * *"` were CREATED 32 minutes to 12 hours
+ * late. Cloudflare Cron Triggers run on UTC time with no equivalent caveat,
+ * so the punctual trigger lives here and calls workflow_dispatch, while
+ * GitHub's own schedule is demoted to a backstop.
  */
 
 const AUDIO_TYPES = {
@@ -19,6 +26,17 @@ const AUDIO_TYPES = {
 
 // Same header the FastAPI backend uses, so the client is unchanged.
 const TOKEN_HEADER = "X-Mercury-Token";
+
+// The deadline the whole schedule exists to hit: the briefing is in R2 before
+// 06:00 Europe/Lisbon. Lisbon is UTC+1 in summer, so the tight case is 05:00
+// UTC and every checkpoint is sized against it; winter gets an extra hour of
+// margin for free. Cron is UTC-only and has no DST, here or on GitHub.
+const DEADLINE_UTC_MINUTES = 5 * 60;
+
+// Workflow file names, not ids. The REST API accepts either, and the file
+// name survives the workflow being deleted and recreated.
+const GENERATE_WORKFLOW = "briefing.yml";
+const WATCHDOG_WORKFLOW = "briefing-watchdog.yml";
 
 // Same floor as MIN_TOKEN_LENGTH in app/core/auth.py. Without it the Worker
 // would happily serve private briefings behind a secret the backend rejects
@@ -109,6 +127,17 @@ export default {
       return json({ detail: `Missing or invalid ${TOKEN_HEADER}.` }, 401);
     }
 
+    // Authenticated, unlike /health: whether a briefing exists for today is
+    // information about the user's morning, and the bucket is private for
+    // exactly that kind of reason. The phone already sends the token, and so
+    // can a human wondering "did it actually run?" — an answer that does not
+    // depend on GitHub having noticed anything.
+    if (url.pathname === "/status") {
+      const id = briefingIdFor(new Date(), env.USER_TIMEZONE || "UTC");
+      const state = await briefingState(env, id);
+      return json({ briefing_id: id, state, ok: state === "ok" });
+    }
+
     const audio = url.pathname.match(/^\/briefing\/([^/]+)\/audio$/);
     if (audio) {
       const id = safeDecode(audio[1]);
@@ -125,7 +154,164 @@ export default {
 
     return json({ detail: "Not found." }, 404);
   },
+
+  /**
+   * The punctual morning trigger (ADR-010).
+   *
+   * Checkpoints are configured in wrangler.toml. Each one asks the same
+   * question — is there a playable briefing for today? — and the answer
+   * decides what happens, so a checkpoint that fires after a healthy run is
+   * a single R2 read and nothing else.
+   */
+  async scheduled(controller, env) {
+    const scheduledAt = new Date(controller.scheduledTime);
+    const id = briefingIdFor(scheduledAt, env.USER_TIMEZONE || "UTC");
+    const state = await briefingState(env, id);
+
+    if (state === "ok") {
+      console.log(`briefing ${id}: already in R2, nothing to do`);
+      return;
+    }
+
+    const pastDeadline =
+      scheduledAt.getUTCHours() * 60 + scheduledAt.getUTCMinutes() >=
+      DEADLINE_UTC_MINUTES;
+    console.log(
+      `briefing ${id}: ${state} at ${scheduledAt.toISOString()} ` +
+        `(past deadline: ${pastDeadline})`,
+    );
+
+    // An EMPTY briefing must be forced. Generation is idempotent, so a stored
+    // manifest — even one with zero turns and zero milliseconds of audio —
+    // makes every later run decline to replace it. That is how a single
+    // total TTS failure turned into a briefing that was broken permanently
+    // rather than for one morning.
+    const inputs = state === "empty" ? { force: "true" } : {};
+    await dispatchWorkflow(env, GENERATE_WORKFLOW, inputs);
+
+    if (pastDeadline) {
+      // Generating anyway is still worth it — the user wakes at 07:00. But
+      // the deadline is blown, and the whole point of ADR-010 is that they
+      // are told rather than opening the app to yesterday's audio.
+      await dispatchWorkflow(env, WATCHDOG_WORKFLOW, { briefing_id: id });
+    }
+  },
 };
+
+/**
+ * Today's briefing id, in the USER's timezone.
+ *
+ * Must agree with `_today_briefing_id` in backend/app/cli.py. A trigger that
+ * names the briefing differently from the generator asks for the wrong day
+ * every morning the two disagree, and this project has already had five
+ * separate date bugs. `formatToParts` rather than a locale that happens to
+ * print ISO order.
+ */
+function briefingIdFor(date, timeZone) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const at = (type) => parts.find((part) => part.type === type).value;
+  return `${at("year")}-${at("month")}-${at("day")}`;
+}
+
+/**
+ * "ok" | "empty" | "missing" — is there a briefing the phone could play?
+ *
+ * Needs no credential: the R2 binding is already here. That is deliberate and
+ * load-bearing. The alarm has to keep working when the GitHub token is the
+ * thing that broke, otherwise the watchdog fails in exactly the situation it
+ * exists for.
+ *
+ * "empty" is its own answer rather than folded into "missing" because the two
+ * need opposite treatment: a missing briefing is generated, an empty one has
+ * to be FORCED past the idempotency check that would otherwise preserve it
+ * forever.
+ */
+async function briefingState(env, id) {
+  const object = await env.BRIEFINGS.get(`${id}.manifest.json`);
+  if (!object) return "missing";
+
+  try {
+    const manifest = await object.json();
+    if (
+      !Array.isArray(manifest.turns) ||
+      manifest.turns.length === 0 ||
+      !(manifest.duration_ms > 0)
+    ) {
+      return "empty";
+    }
+  } catch {
+    // A manifest that will not parse is not one the phone can play either.
+    return "empty";
+  }
+
+  // A manifest with no audio behind it is the shape `--force` used to leave
+  // when a regeneration failed after deleting the old file: 200 on the
+  // manifest, 404 on the audio.
+  for (const ext of ["m4a", "wav"]) {
+    if (await env.BRIEFINGS.head(`${id}.${ext}`)) return "ok";
+  }
+  return "empty";
+}
+
+/**
+ * Ask GitHub to run a workflow now.
+ *
+ * This is the one thing here that needs a credential, and it is the honest
+ * cost of ADR-010: a Worker that previously held only a read token now also
+ * holds a token that can start a workflow. It is scoped to this repository
+ * and to Actions alone, and it is unreachable from the fetch handler — but it
+ * is new attack surface, and pretending otherwise would be dishonest.
+ */
+async function dispatchWorkflow(env, workflow, inputs) {
+  if (!env.GITHUB_DISPATCH_TOKEN || !env.GITHUB_REPO) {
+    // Loud, because the silent version of this is a Worker that appears
+    // healthy every morning while triggering nothing at all.
+    console.error(
+      `cannot dispatch ${workflow}: GITHUB_DISPATCH_TOKEN and GITHUB_REPO ` +
+        "must both be set (wrangler secret put / wrangler.toml [vars])",
+    );
+    return false;
+  }
+
+  const response = await fetch(
+    `https://api.github.com/repos/${env.GITHUB_REPO}` +
+      `/actions/workflows/${workflow}/dispatches`,
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${env.GITHUB_DISPATCH_TOKEN}`,
+        accept: "application/vnd.github+json",
+        "x-github-api-version": "2022-11-28",
+        // GitHub rejects API requests without one.
+        "user-agent": "mercury-briefings-worker",
+      },
+      body: JSON.stringify({
+        ref: env.GITHUB_REF || "main",
+        inputs,
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    // 404 here usually means the token cannot see the repo rather than that
+    // the workflow is missing — GitHub hides repos a token has no permission
+    // for. 403 usually means the fine-grained token is missing the Actions
+    // read-and-write permission.
+    console.error(
+      `dispatch of ${workflow} failed: HTTP ${response.status} ` +
+        `${await response.text()}`,
+    );
+    return false;
+  }
+
+  console.log(`dispatched ${workflow} (${JSON.stringify(inputs)})`);
+  return true;
+}
 
 async function serveManifest(env, id) {
   if (!validBriefingId(id)) return json({ detail: "Invalid briefing id." }, 400);
