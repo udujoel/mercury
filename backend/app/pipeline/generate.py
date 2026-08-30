@@ -37,7 +37,7 @@ from app.core.config import get_settings
 from app.core.providers import LLMProvider, TTSProvider
 from app.core.schemas import BriefingLength, BriefingManifest, Item
 from app.synthesis.stitch import synthesize_briefing
-from app.synthesis.storage import BriefingStorage, LocalFilesystemStorage
+from app.synthesis.storage import BriefingStorage, build_storage
 
 log = logging.getLogger(__name__)
 
@@ -102,7 +102,11 @@ async def generate_briefing(
     is logged and dropped; the briefing still ships without that segment.
     """
     settings = get_settings()
-    storage = storage or LocalFilesystemStorage()
+    # The default has to agree with STORAGE_BACKEND too. Every caller in the
+    # deployed path injects storage explicitly, so this only bites the one
+    # that forgets — which is exactly when writing to local disk instead of R2
+    # would go unnoticed.
+    storage = storage or build_storage()
     briefing_id = briefing_id or datetime.now(UTC).strftime("%Y-%m-%d")
     briefing_date = _parse_briefing_date(briefing_id)
 
@@ -165,7 +169,13 @@ async def generate_briefing(
         sources=sources,
     )
 
-    storage.save(briefing_id, audio_bytes, audio_format, manifest)
+    # to_thread, because BriefingStorage is synchronous and R2Storage is boto3.
+    # This is ~3MB up on a blocking socket, and it runs inside the API process
+    # while the client polls /status — so calling it directly froze the server
+    # for the whole upload.
+    await asyncio.to_thread(
+        storage.save, briefing_id, audio_bytes, audio_format, manifest
+    )
     return manifest
 
 
@@ -231,11 +241,11 @@ async def _ingest_concurrently(
     # A real Actions run dropped BOTH email and calendar, shipped a
     # weather-and-news briefing, and exited 0 — a green tick over a briefing
     # missing the entire personal half of what Mercury is for.
-    personal_failed = [
-        label
+    personal_failed = {
+        label: result
         for label, result in zip(labels[:2], results[:2], strict=True)
         if isinstance(result, BaseException)
-    ]
+    }
     _record_failed_sources(personal_failed)
     if len(personal_failed) == 2:
         log.error(
@@ -252,17 +262,29 @@ async def _ingest_concurrently(
 # without re-deriving it. Inferring from the manifest does not work: the script
 # chain REQUIRES all seven canonical segments, so "calendar" and "inbox" are
 # present even when there was no calendar and no inbox data behind them.
-_failed_personal_sources: list[str] = []
+_failed_personal_sources: dict[str, BaseException] = {}
 
 
-def _record_failed_sources(failed: list[str]) -> None:
+def _record_failed_sources(failed: dict[str, BaseException]) -> None:
     _failed_personal_sources.clear()
-    _failed_personal_sources.extend(failed)
+    _failed_personal_sources.update(failed)
 
 
 def failed_personal_sources() -> list[str]:
     """Which of email/calendar failed during the most recent run."""
     return list(_failed_personal_sources)
+
+
+def failed_personal_source_errors() -> dict[str, BaseException]:
+    """...and why, as the exception objects rather than their messages.
+
+    The objects, deliberately. `app.cli` has to tell an expired OAuth token —
+    a known cause with a permanent fix, and the failure this deployment is
+    most likely to hit — apart from a transient API error, and the honest way
+    to do that is the exception TYPE. Matching on message text would break the
+    first time somebody rewords a string.
+    """
+    return dict(_failed_personal_sources)
 
 
 def _score_emails(

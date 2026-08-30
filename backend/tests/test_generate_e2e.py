@@ -37,6 +37,7 @@ from app.core.schemas import (
 from app.pipeline.generate import generate_briefing
 from app.providers.fake import FakeLLMProvider
 from app.providers.fake_tts import FakeTTSProvider
+from app.synthesis.stitch import EmptyBriefingError
 from app.synthesis.storage import LocalFilesystemStorage
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -333,3 +334,134 @@ async def test_both_personal_sources_failing_is_logged_loudly(caplog, tmp_path):
     from app.pipeline.generate import failed_personal_sources
 
     assert sorted(failed_personal_sources()) == ["calendar", "email"]
+
+
+async def test_a_total_tts_failure_persists_nothing(tmp_path):
+    """The most damaging shape this pipeline had.
+
+    Every TTS call fails, so there are no audible turns. The old behaviour was
+    to store a manifest anyway and exit 0: Actions went green, no failure
+    email was sent, and because generation is idempotent that empty briefing
+    then blocked its own replacement for the rest of the day. The failure was
+    not "no briefing this morning", it was "no briefing today and no way to
+    fix it without --force".
+
+    So the assertion that matters is not just that it raises — it is that
+    storage is left completely untouched, so tomorrow's run and a plain re-run
+    both still work.
+    """
+
+    class _TotallyBrokenTTS(FakeTTSProvider):
+        async def synthesize(self, text: str, voice_id: str) -> bytes:
+            raise RuntimeError("synthetic total TTS failure")
+
+    storage = LocalFilesystemStorage(base_dir=tmp_path)
+
+    with pytest.raises(EmptyBriefingError):
+        await generate_briefing(
+            briefing_id="2026-08-27",
+            length=BriefingLength.STANDARD,
+            llm=FakeLLMProvider(),
+            tts=_TotallyBrokenTTS(),
+            fetch_events=_fake_fetch_events,
+            fetch_weather=_fake_fetch_weather,
+            score_emails=_fake_score_emails,
+            select_for_briefing=_fake_select_for_briefing,
+            generate_script=_fake_generate_script,
+            storage=storage,
+            gmail_fixture=FIXTURES_DIR / "gmail_messages.json",
+            calendar_fixture=None,
+            weather_fixture=None,
+        )
+
+    assert storage.load_manifest("2026-08-27") is None
+    assert storage.load_audio("2026-08-27") is None
+    # Nothing at all, not even a zero-byte audio file that a later run would
+    # find and serve.
+    assert list(tmp_path.iterdir()) == []
+
+
+async def test_an_expired_token_survives_the_real_calendar_ingestion(
+    tmp_path, monkeypatch
+):
+    """`app.cli` distinguishes an expired OAuth token from a transient API
+    error by exception TYPE, so the type has to survive ingestion.
+
+    It nearly did not: the Gmail and Calendar modules used to re-wrap every
+    credential error as a plain RuntimeError, which flattened the one subtype
+    that carries a known cause and a permanent fix. Matching on message text
+    instead would have broken the first time a string was reworded.
+
+    This drives the REAL `app.ingestion.calendar.fetch_events`, with no
+    fixture, down to the real `_google_auth.get_credentials`, and makes the
+    stored token fail to refresh with an invalid_grant. The whole chain is
+    exercised, so a future re-wrap in `_fetch_live` fails here.
+
+    An earlier version injected a fake that raised ExpiredCredentialsError
+    directly. It bypassed both ingestion modules entirely and could only ever
+    prove that `_ingest_concurrently` records whatever it was handed — the
+    re-wrap it claimed to guard was never executed, and a regression to a
+    plain RuntimeError would have passed it. CLAUDE.md names "tests that
+    encode the bug" as a recurring class in this project; this was one.
+    """
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    from google.auth.exceptions import RefreshError
+
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[2] / "scripts"))
+    import _google_auth
+    from _google_auth import ExpiredCredentialsError
+
+    from app.pipeline.generate import (
+        failed_personal_source_errors,
+        failed_personal_sources,
+    )
+
+    # A token.json that exists and cannot be refreshed — the Actions shape,
+    # seven days after the last manual re-mint.
+    token = tmp_path / "token.json"
+    token.write_text("{}")
+    monkeypatch.setenv("GOOGLE_TOKEN_FILE", str(token))
+    monkeypatch.setenv("GOOGLE_CREDENTIALS_FILE", str(tmp_path / "absent.json"))
+
+    class _Expired:
+        valid = False
+        expired = True
+        refresh_token = "refresh-me"
+
+        def refresh(self, _request):
+            raise RefreshError("invalid_grant: Token has been expired or revoked.")
+
+    monkeypatch.setattr(
+        _google_auth.Credentials,
+        "from_authorized_user_file",
+        classmethod(lambda cls, path, scopes: _Expired()),
+        raising=True,
+    )
+
+    await generate_briefing(
+        briefing_id="2026-08-27",
+        length=BriefingLength.STANDARD,
+        llm=FakeLLMProvider(),
+        tts=FakeTTSProvider(),
+        # fetch_events deliberately NOT injected: the real ingestion module is
+        # the code under test.
+        fetch_weather=_fake_fetch_weather,
+        score_emails=_fake_score_emails,
+        select_for_briefing=_fake_select_for_briefing,
+        generate_script=_fake_generate_script,
+        storage=LocalFilesystemStorage(base_dir=tmp_path),
+        gmail_fixture=FIXTURES_DIR / "gmail_messages.json",
+        calendar_fixture=None,
+        weather_fixture=None,
+    )
+
+    # Rule 7: the briefing still shipped, minus the calendar.
+    assert failed_personal_sources() == ["calendar"]
+
+    errors = failed_personal_source_errors()
+    assert isinstance(errors["calendar"], ExpiredCredentialsError), (
+        f"calendar ingestion flattened the type to {type(errors['calendar'])}; "
+        "app.cli can no longer tell an expired token from any other failure"
+    )

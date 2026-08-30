@@ -22,6 +22,7 @@ made" check uses today's date *in that timezone* too.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -39,7 +40,11 @@ from app.notifications.apns import (
     TokenUnregisteredError,
 )
 from app.pipeline.generate import generate_briefing
-from app.synthesis.storage import BriefingStorage, LocalFilesystemStorage
+from app.synthesis.storage import (
+    BriefingStorage,
+    build_storage,
+    existing_manifest,
+)
 
 log = logging.getLogger(__name__)
 
@@ -188,7 +193,12 @@ async def run_daily_briefing_job(
       bare traceback from three layers of async machinery).
     """
     settings = get_settings()
-    storage = storage or LocalFilesystemStorage()
+    # build_storage, not LocalFilesystemStorage. STORAGE_BACKEND used to be
+    # honoured by app.cli alone, so a briefing generated through this path
+    # landed on the host's local disk while the phone read R2 — a run that
+    # looks completely successful and produces a briefing nobody can reach.
+    # That is the same failure build_storage's own docstring was written for.
+    storage = storage or build_storage()
     _, _, crosses_midnight = _compute_fire_time(
         settings.wake_time, settings.generation_lead_minutes
     )
@@ -196,7 +206,9 @@ async def run_daily_briefing_job(
         settings.user_timezone, crosses_midnight=crosses_midnight
     )
 
-    if storage.load_manifest(briefing_id) is not None:
+    # to_thread: this runs on the API process's event loop when the scheduler
+    # is mounted on the FastAPI app, and R2Storage is synchronous boto3.
+    if await asyncio.to_thread(existing_manifest, storage, briefing_id) is not None:
         log.info(
             "briefing %s already exists; scheduled run is a no-op", briefing_id
         )

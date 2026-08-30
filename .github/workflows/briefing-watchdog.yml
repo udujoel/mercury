@@ -1,0 +1,232 @@
+name: briefing watchdog
+
+# ADR-010. The failure this exists to catch is the one that leaves no evidence.
+#
+# On 2026-08-27 a run failed and that day's briefing was lost. Nothing
+# surfaced it; it was found days later by reading `gh run list`. Worse is the
+# case GitHub cannot report at all: its scheduler is documented as best-effort
+# ("If the load is sufficiently high enough, some queued jobs may be dropped"),
+# and a DROPPED run creates no run record — so there is no failed run, no red
+# tick, and no failure email. The absence is invisible from inside Actions.
+#
+# The only way to notice is to ask storage whether the briefing is actually
+# there. That is `python -m app.cli check`, and this workflow is the thing
+# that runs it and goes red when the answer is no — which is what turns it
+# into the email the user already gets for a failed run.
+#
+# It is dispatched punctually by the Cloudflare Cron Trigger in
+# worker/src/index.js. The schedule entries below are the backstop for the
+# Worker itself being broken, and are late on purpose: every generation
+# trigger is scheduled to have finished by 05:00 UTC.
+
+on:
+  schedule:
+    # Off the hour, per GitHub's own advice ("To decrease the chance of delay,
+    # schedule your workflow to run at a different time of the hour"). Two
+    # entries because a single dropped run would take the alarm with it.
+    #
+    # The first was 05:27, which is 19 minutes after the Worker's 05:08
+    # generation dispatch — and the load condition that delays an Actions run
+    # past 19 minutes is exactly the condition this watchdog exists to
+    # tolerate, so it would have cried wolf precisely when it mattered. Moved
+    # to 05:52: after the Worker's own 05:40 alarm checkpoint, 44 minutes after
+    # the last generation dispatch, and still an hour before the 07:00 wake.
+    - cron: "52 5 * * *"
+    - cron: "56 6 * * *"
+  workflow_dispatch:
+    inputs:
+      briefing_id:
+        description: "Briefing id (YYYY-MM-DD). Blank = today, local."
+        required: false
+        type: string
+
+concurrency:
+  # Unlike generation, the newest answer is the only one worth having.
+  group: briefing-watchdog
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # No Google credentials and no ffmpeg here, deliberately. This job only
+      # reads R2. Giving a watchdog the ability to reach the user's inbox
+      # would widen the blast radius of the thing whose entire job is to run
+      # unattended every morning.
+      #
+      # For the same reason it prefers a READ-ONLY R2 token. R2_READONLY_* is
+      # an Object Read Only token; the fallback to the generation credential
+      # exists only so the watchdog keeps working until the owner mints one,
+      # and it should be removed once they have (docs/DEPLOYMENT.md).
+      - name: Check today's briefing is present and playable
+        id: check
+        env:
+          USER_TIMEZONE: ${{ secrets.USER_TIMEZONE }}
+          STORAGE_BACKEND: r2
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          # Both halves of ONE pair, never one of each. Independent `||`
+          # fallbacks meant that configuring only R2_READONLY_ACCESS_KEY_ID
+          # — the obvious way to get half way through the setup — produced a
+          # read-only key id married to the generation secret. R2 rejects
+          # that, `check` exits 4, and the watchdog reports a missing
+          # briefing that is actually present: a false alarm caused by the
+          # alarm's own credentials.
+          R2_ACCESS_KEY_ID: ${{ (secrets.R2_READONLY_ACCESS_KEY_ID && secrets.R2_READONLY_SECRET_ACCESS_KEY) && secrets.R2_READONLY_ACCESS_KEY_ID || secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ (secrets.R2_READONLY_ACCESS_KEY_ID && secrets.R2_READONLY_SECRET_ACCESS_KEY) && secrets.R2_READONLY_SECRET_ACCESS_KEY || secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          # Passed as env, not interpolated into the command. Expression
+          # substitution happens BEFORE the shell runs, so an id containing a
+          # space or a semicolon would be parsed as shell syntax rather than
+          # treated as an argument. GitHub's own hardening guidance.
+          BRIEFING_ID: ${{ inputs.briefing_id }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          args=()
+          if [ -n "$BRIEFING_ID" ]; then args+=(--briefing-id "$BRIEFING_ID"); fi
+
+          # A backstop that fires after the user's midnight is watching the
+          # WRONG DAY. With no explicit id, `app.cli check` resolves the
+          # current local date — so a scheduled run delayed past 00:00 local
+          # (GitHub's scheduler has been observed 12 hours late on this repo)
+          # asks about tomorrow's briefing, finds nothing, and raises a false
+          # alarm about a morning that in fact generated fine.
+          #
+          # Guessing the intended date from a delayed run's clock is how this
+          # project has produced five separate date bugs, so this does not
+          # guess. The Cloudflare trigger always passes an explicit
+          # briefing_id and is unaffected; only the scheduled backstop can
+          # arrive with none, and outside the morning window it is watching a
+          # morning that has not happened yet. There is nothing to alarm
+          # about, so it stands down rather than inventing a date.
+          if [ "$EVENT_NAME" = "schedule" ] && [ -z "$BRIEFING_ID" ]; then
+            local_hour=$(TZ="${USER_TIMEZONE:-UTC}" date +%-H)
+            if [ "$local_hour" -lt 3 ] || [ "$local_hour" -ge 12 ]; then
+              echo "::notice::Backstop fired at ${local_hour}:00 local, outside" \
+                   "the 03:00-12:00 window it guards. GitHub's scheduler ran it" \
+                   "late; the briefing it was meant to check is no longer the" \
+                   "one today's date resolves to. Standing down rather than" \
+                   "alarming about the wrong day."
+              exit 0
+            fi
+          fi
+
+          # Ask again before crying wolf.
+          #
+          # The Worker's own alarm checkpoint is half an hour after the last
+          # generation dispatch, so it is never racing a run. The SCHEDULED
+          # backstops above are further out now (05:52), but "further out" is
+          # a margin, not a guarantee: an Actions queue only has to be slow
+          # once for this to look before the run has written anything, and a
+          # slow queue is the exact condition this exists to survive. A watchdog
+          # that cries wolf is worse than no watchdog — the email it sends is
+          # the only signal this design has, and it stops being read the
+          # moment it is usually wrong.
+          #
+          # Costs nothing on a healthy morning: the first attempt returns 0
+          # and the loop exits. Only a morning that is genuinely broken pays
+          # the four minutes.
+          for attempt in 1 2 3; do
+            set +e
+            python -m app.cli check "${args[@]}"
+            status=$?
+            set -e
+            if [ "$status" -eq 0 ]; then exit 0; fi
+            # 2 (misconfigured) and 4 (storage could not answer — a 403, or a
+            # manifest object that will not parse) are not states that waiting
+            # improves. Only 1, "there is no playable briefing yet", is.
+            if [ "$status" -eq 2 ] || [ "$status" -eq 4 ]; then break; fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "no briefing yet; re-checking in 120s (attempt $attempt of 3)"
+              sleep 120
+            fi
+          done
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit "$status"
+
+      - name: Explain what to do about it
+        # Only when `check` itself answered "no briefing". A failed checkout,
+        # a failed pip install or a missing R2 secret used to produce this same
+        # "No usable briefing" summary, which reports an infrastructure problem
+        # as a missing briefing and sends the user to re-run a workflow that
+        # was never the thing that broke.
+        if: failure() && steps.check.outputs.status == '1'
+        env:
+          BRIEFING_ID: ${{ inputs.briefing_id }}
+        run: |
+          # The failure email links here, so the summary is where the user
+          # actually reads what happened. A red tick with no instructions is
+          # how the 2026-08-27 failure went unnoticed for days.
+          {
+            echo "## No usable briefing"
+            echo
+            echo "\`app.cli check\` could not find a playable briefing for" \
+                 "\`${BRIEFING_ID:-today}\`."
+            echo
+            echo "Fix it now:"
+            echo
+            echo "1. Actions -> **daily briefing** -> Run workflow."
+            echo "2. If a briefing already exists but is empty or silent," \
+                 "set \`force\` to \`true\` — generation is idempotent and" \
+                 "will otherwise decline to replace it."
+            echo
+            echo "Then work out which one it was:"
+            echo
+            echo "- **The run never happened.** GitHub's scheduler is" \
+                 "best-effort and drops queued jobs under load; a dropped" \
+                 "run leaves no record at all. Check whether the Cloudflare" \
+                 "Cron Trigger fired (Workers -> mercury-briefings -> Logs)."
+            echo "- **The run failed.** Check the daily briefing run log."
+            echo "- **The Google token expired.** The consent screen must be" \
+                 "published, not in Testing — Testing expires refresh tokens" \
+                 "after 7 days. See docs/DEPLOYMENT.md."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: The watchdog could not answer the question
+        # Everything else that can fail: checkout, setup-python, pip install,
+        # a missing or wrong R2 secret (`check` exit 2). None of these are
+        # evidence about the briefing, and reporting them as "no briefing"
+        # sends the user to regenerate something that may be perfectly fine.
+        if: failure() && steps.check.outputs.status != '1'
+        env:
+          CHECK_STATUS: ${{ steps.check.outputs.status }}
+        run: |
+          {
+            echo "## The watchdog failed — this says NOTHING about the briefing"
+            echo
+            if [ "$CHECK_STATUS" = "2" ]; then
+              echo "\`app.cli check\` exited 2: storage is misconfigured. The R2" \
+                   "secrets this job reads are \`R2_READONLY_ACCESS_KEY_ID\` and" \
+                   "\`R2_READONLY_SECRET_ACCESS_KEY\`, falling back to the" \
+                   "generation credentials. Check they exist and that the token" \
+                   "can still read the bucket."
+            elif [ "$CHECK_STATUS" = "4" ]; then
+              echo "\`app.cli check\` exited 4: storage refused or could not" \
+                   "parse what it read. Either the R2 token was rotated or" \
+                   "under-scoped, or the stored manifest object is corrupt." \
+                   "**Do not regenerate yet** — for a permissions problem that" \
+                   "spends real Gemini and TTS money on a briefing that already" \
+                   "exists. Read the step log; it names which read failed."
+            else
+              echo "The check step never ran to completion — checkout, Python" \
+                   "setup or \`pip install\` failed. Read the step log above."
+            fi
+            echo
+            echo "Whether today's briefing exists is still unknown. Ask directly:"
+            echo
+            echo '    curl -H "X-Mercury-Token: <token>" \'
+            echo '      https://mercury-briefings.udujoel.workers.dev/status'
+          } >> "$GITHUB_STEP_SUMMARY"

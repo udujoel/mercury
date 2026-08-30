@@ -8,3 +8,50 @@ compatibility_date = "2026-08-01"
 [[r2_buckets]]
 binding = "BRIEFINGS"
 bucket_name = "mercury-briefings"
+
+# ADR-010 — the punctual morning trigger.
+#
+# GitHub's `schedule` event is best-effort by documentation: "The schedule
+# event can be delayed during periods of high loads of GitHub Actions workflow
+# runs", and "If the load is sufficiently high enough, some queued jobs may be
+# dropped." Seven consecutive days of `cron: "0 4 * * *"` were CREATED between
+# 32 minutes and 12 hours late. Cloudflare Cron Triggers execute on UTC time
+# with no equivalent caveat, so the trigger moved here.
+#
+# Deadline: the briefing is in R2 before 06:00 Europe/Lisbon. Lisbon is UTC+1
+# in summer, so the tight case is 05:00 UTC; every checkpoint below is sized
+# against it and winter gets an extra hour of margin for free.
+#
+#   03:40  generate. The freshest run that still leaves room for two retries.
+#   04:20  retry, if 03:40 produced nothing.
+#   04:50  last chance before the deadline.
+#   05:08  deadline blown — generate anyway.
+#   05:40  still nothing — raise the alarm, and nothing else.
+#
+# The alarm has its own checkpoint on purpose. It used to be dispatched in the
+# same tick as the 05:08 generation, and `workflow_dispatch` only QUEUES a run
+# — so the watchdog read R2 before the run it had just triggered had written
+# anything, and reported a missing briefing about a briefing being generated
+# as it looked. A watchdog that cries wolf every morning is worse than no
+# watchdog. 32 minutes is more than ten times the observed 71-second
+# generation, plus Actions queueing and checkout.
+#
+# Each checkpoint first asks R2 whether a playable briefing already exists, so
+# on a healthy morning the last four are one read each and nothing more.
+# Changing these takes up to 15 minutes to propagate to Cloudflare's network.
+#
+# FIVE ENTRIES IS THE CEILING. Cloudflare's free plan allows 5 Cron Triggers
+# PER ACCOUNT, not per Worker (workers/platform/limits). A sixth checkpoint
+# here, or a cron on any other Worker in this account, needs the paid plan.
+# That limit is why the deadline stays a fixed UTC time rather than being
+# computed in Europe/Lisbon: a DST-correct comparison needs a checkpoint after
+# 06:00 UTC for winter AND one before 06:00 UTC for summer, and there is no
+# room for both.
+[triggers]
+crons = ["40 3 * * *", "20 4 * * *", "50 4 * * *", "8 5 * * *", "40 5 * * *"]
+
+[vars]
+# Not secrets — a repo slug and a branch name. The token that makes them
+# useful is a secret: `wrangler secret put GITHUB_DISPATCH_TOKEN`.
+GITHUB_REPO = "udujoel/mercury"
+GITHUB_REF = "main"

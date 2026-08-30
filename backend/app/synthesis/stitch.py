@@ -35,6 +35,25 @@ from app.core.schemas import (
 
 log = logging.getLogger(__name__)
 
+
+class EmptyBriefingError(RuntimeError):
+    """Every turn failed to synthesize, so there is no briefing to store.
+
+    This is a hard failure rather than the graceful degradation CLAUDE.md rule
+    7 asks for, and the distinction is the whole point. Rule 7 is about a
+    briefing that ships missing a segment; this is a briefing with nothing
+    audible in it at all, and shipping it is worse than shipping nothing:
+
+      - it exits 0, so Actions goes green and no failure email is sent;
+      - it stores a manifest, and generation is idempotent, so every later run
+        that day declines to replace it;
+      - the phone gets a valid manifest and 0ms of audio.
+
+    Silent, self-perpetuating, and indistinguishable from success. A run that
+    produced no audible turns must fail loudly and must not persist.
+    """
+
+
 # Pacing. Tuned by ear — these numbers matter more than they look.
 GAP_DIFFERENT_SPEAKER_MS = 220
 GAP_SAME_SPEAKER_MS = 80
@@ -116,6 +135,19 @@ async def synthesize_briefing(
         rendered.append(turn)
         combined += clip
         cursor_ms = turn.end_ms
+
+    if not rendered:
+        # Before _export, deliberately: there is nothing worth encoding, and
+        # raising here means `generate_briefing` never reaches storage.save(),
+        # so no empty manifest is written to block tomorrow's replacement.
+        raise EmptyBriefingError(
+            f"every one of the {len(turns)} turns in briefing {briefing_id} "
+            "failed to synthesize, so there is no audio to store. The TTS "
+            "provider is the thing to check — credentials, quota, or the "
+            "service itself. Refusing to store an empty briefing: it would "
+            "exit 0, look like success, and then block its own replacement "
+            "for the rest of the day."
+        )
 
     audio_bytes, audio_format = _export(combined)
 

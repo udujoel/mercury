@@ -5,6 +5,9 @@ Tests for app.synthesis.storage.LocalFilesystemStorage.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
 
 from app.core.schemas import BriefingManifest
 from app.synthesis.storage import AUDIO_MEDIA_TYPES, LocalFilesystemStorage
@@ -78,6 +81,39 @@ def test_save_removes_stale_audio_from_a_previous_format(tmp_path):
     assert media_type == AUDIO_MEDIA_TYPES["m4a"]
 
 
+def test_the_superseded_format_is_deleted_only_after_the_new_audio_lands(
+    tmp_path, monkeypatch
+):
+    """Same defect the R2 backend was already fixed for, still here in local
+    storage: the stale format was unlinked BEFORE the new bytes were written,
+    so a write that failed left the old manifest pointing at audio that no
+    longer existed — 200 on the manifest, 404 on the audio, and that is the
+    state of the day."""
+    storage = LocalFilesystemStorage(base_dir=tmp_path)
+    manifest = _manifest()
+    storage.save("2026-08-21", b"m4a bytes", "m4a", manifest)
+
+    def _fails(_self, _data):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(Path, "write_bytes", _fails, raising=True)
+    with pytest.raises(OSError):
+        storage.save("2026-08-21", b"wav bytes", "wav", manifest)
+
+    assert (tmp_path / "2026-08-21.m4a").read_bytes() == b"m4a bytes"
+    assert storage.load_audio("2026-08-21") is not None
+
+
+def test_delete_briefing_removes_objects_in_unknown_formats(tmp_path):
+    storage = LocalFilesystemStorage(base_dir=tmp_path)
+    storage.save("2026-08-21", b"wav bytes", "wav", _manifest())
+    (tmp_path / "2026-08-21.mp3").write_bytes(b"some other format")
+
+    storage.delete_briefing("2026-08-21")
+
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_audio_path_for_is_a_stable_api_route(tmp_path):
     storage = LocalFilesystemStorage(base_dir=tmp_path)
     assert storage.audio_path_for("2026-08-21") == "/briefing/2026-08-21/audio"
@@ -88,3 +124,34 @@ def test_base_dir_created_if_missing(tmp_path):
     assert not target.exists()
     LocalFilesystemStorage(base_dir=target)
     assert target.exists()
+
+
+def test_a_storage_outage_is_not_a_corrupt_manifest(tmp_path, monkeypatch):
+    """A disk that will not answer must not read as a missing briefing.
+
+    `existing_manifest` treats UnreadableManifestError as "no usable
+    briefing", so folding PermissionError and transient OSError into it made
+    a thirty-second storage blip trigger a full regeneration — real Gemini
+    and TTS spend to replace a file that was sitting there intact. Corrupt
+    JSON is a statement about the briefing; an unreadable disk is a
+    statement about the disk.
+    """
+    from app.synthesis.storage import LocalFilesystemStorage, UnreadableManifestError
+
+    storage = LocalFilesystemStorage(base_dir=tmp_path)
+    path = tmp_path / "2026-08-30.manifest.json"
+    path.write_text("{}")
+
+    def _explode(*args, **kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(Path, "read_text", _explode)
+
+    with pytest.raises(PermissionError):
+        storage.load_manifest("2026-08-30")
+
+    # ...while genuinely invalid JSON still reports as unreadable.
+    monkeypatch.undo()
+    path.write_text("not json at all")
+    with pytest.raises(UnreadableManifestError):
+        storage.load_manifest("2026-08-30")

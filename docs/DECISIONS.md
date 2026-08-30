@@ -213,3 +213,240 @@ tested, and audio ducking is generally useful.
 **Recovering it** is `git show c701e4f` — the full implementation, its tests
 and its two reports are in history. This is a decision about what ships, not a
 judgement that the work was wrong.
+
+## ADR-010 — Cloudflare triggers the morning run; GitHub's schedule is a backstop
+
+**Status:** accepted
+
+The product promise is that the briefing is finished before the user wakes up.
+It was not. Seven consecutive days on `cron: "0 4 * * *"` (04:00 UTC):
+
+    2026-08-23  04:32   success   ~32 min late
+    2026-08-24  04:40   success   ~40 min late
+    2026-08-25  04:34   success
+    2026-08-26  04:35   success
+    2026-08-27  14:57   FAILURE   ~11 hours late
+    2026-08-28  15:52   success   ~12 hours late
+    2026-08-29  10:42   success   ~7 hours late
+
+Three consecutive days the briefing was generated in the afternoon, for a
+product whose only job is to be ready at 07:00. `createdAt == startedAt` in
+every one of them, so this is not a queue draining — GitHub's scheduler
+*created* the run that late.
+
+### What GitHub actually guarantees
+
+Nothing, and the documentation says so plainly:
+
+- "The `schedule` event can be delayed during periods of high loads of GitHub
+  Actions workflow runs. High load times include the start of every hour."
+- "If the load is sufficiently high enough, some queued jobs may be dropped."
+- "To decrease the chance of delay, schedule your workflow to run at a
+  different time of the hour."
+
+`cron: "0 4 * * *"` was therefore the single worst minute available. The top of
+the hour is the congested window GitHub names, and we had picked it.
+
+(Also documented, and not our cause but worth knowing before this repo is ever
+made public: "In a public repository, scheduled workflows are automatically
+disabled when no repository activity has occurred in 60 days." Mercury's repo
+is private, so the schedule does not expire from inactivity today.)
+
+### Do more cron entries fix it?
+
+Partly, and not enough. This option deserved to be taken seriously: it is free,
+adds no dependency, and generation is already idempotent, so a later duplicate
+run costs one R2 read and exits 0.
+
+The question is whether several entries are independent draws. **They are
+not.** The delay GitHub documents is a function of global Actions load at a
+point in time, not a property of the individual cron expression — which is
+precisely why the mitigation offered is "run at a different time of the hour"
+rather than "add more entries". Two entries five minutes apart therefore sample
+almost the same load and fail together. Two entries hours apart are independent
+only to the degree the load at those hours is. That is enough to fix the 32-40
+minute top-of-hour cases, and it is not enough for the three multi-hour days,
+which would plausibly have swallowed every entry inside one morning window.
+
+Dropping is the harder half. A dropped run leaves **no run record at all** — no
+failed run, no red tick, no failure email, nothing to find except an absence.
+More entries lower the probability that every one is dropped. They cannot bound
+it, and they cannot bound the delay either, because no bound exists to rely on.
+
+So multiple entries are a real improvement that costs nothing, and they cannot
+meet a hard deadline alone. They are kept, demoted to a backstop, and moved off
+the hour.
+
+### The decision
+
+The deadline is: **the briefing is in R2 before 06:00 Europe/Lisbon.** Lisbon is
+UTC+1 in summer, so the tight case is 05:00 UTC and everything is sized against
+it. Cron is UTC-only with no DST on both platforms, and the briefing is still
+NAMED in the user's timezone by `app.cli` — this project has had five separate
+date bugs and that is the one that matters.
+
+**The deadline comparison is UTC, not local, and in winter it is an hour
+early.** In winter 06:00 Europe/Lisbon *is* 06:00 UTC, so a fixed 05:00 UTC
+deadline means the alarm can fire up to 52 minutes before the deadline it names.
+That is a deliberate choice in the safe direction, and the alternative does not
+fit: a DST-correct comparison needs an alarm checkpoint after 06:00 UTC for
+winter AND one before it for summer, and Cloudflare's free plan allows **five
+Cron Triggers per account**, which the four generation checkpoints plus one
+alarm already exhaust. Given the choice between alarming early in winter and
+alarming after the user has woken in summer, early wins: by the alarm
+checkpoint four generation attempts have failed and the last has had half an
+hour, so it is an early alarm about a real absence, not a false one.
+
+Three layers, each covering the layer above it failing:
+
+1. **A Cloudflare Cron Trigger is the punctual trigger.** The Worker already
+   exists (ADR-008) and already holds the R2 binding. Cloudflare documents
+   that "Cron Triggers execute on UTC time" and documents no delay-or-drop
+   caveat comparable to GitHub's. Four checkpoints — 03:40, 04:20, 04:50,
+   05:08 UTC — each of which asks R2 whether a playable briefing exists and
+   calls `workflow_dispatch` only when the answer is no.
+
+2. **GitHub's own `schedule` is the backstop**, at 04:12 and 04:41 UTC. Off the
+   hour, and deliberately *after* the Worker's 03:40 primary: the earliest
+   successful run decides how fresh the briefing is, so an earlier backstop
+   would win the race on a healthy day and hand the user a staler inbox for
+   nothing. These exist for the Worker being broken.
+
+3. **A watchdog that goes red.** `python -m app.cli check` asks storage whether
+   today's briefing is there and playable, and `briefing-watchdog.yml` fails
+   when it is not — which converts the absence into the failure email the user
+   already gets. The watchdog also has its own (late, best-effort) schedule for
+   the case where the Worker is the thing that died.
+
+   **The alarm gets its own checkpoint, at 05:40 UTC, and dispatches nothing
+   else.** It was originally dispatched in the same tick as the 05:08
+   generation. `workflow_dispatch` only QUEUES a run, so the watchdog read R2
+   before the run it had just triggered had written anything, and reported a
+   missing briefing about a briefing being generated as it looked. A watchdog
+   that cries wolf every morning is worse than no watchdog: the email it sends
+   is the only signal this design has, and it stops being read the moment it is
+   usually wrong. 32 minutes is more than ten times the observed 71-second
+   generation, plus Actions queueing and checkout. The watchdog additionally
+   re-checks twice, 120 seconds apart, before failing, and GitHub's own first
+   backstop moved from 05:27 to 05:52 — 19 minutes after the 05:08 dispatch
+   was not margin, and the Actions load that eats 19 minutes is the condition
+   this watchdog exists to tolerate.
+
+Two details that carry more weight than their size:
+
+- **The Worker's check needs no credential.** The R2 binding is already there.
+  The alarm therefore keeps working when the GitHub token is the thing that
+  broke — otherwise the watchdog would fail in exactly the situation it exists
+  for.
+- **An empty briefing is dispatched with `force: true`.** Idempotency means a
+  stored manifest, even one with zero turns, makes every later run decline to
+  replace it. Without this the self-healing path cannot heal the one failure
+  that most needs it.
+
+### What this costs, honestly
+
+A **GitHub fine-grained personal access token, stored as a Worker secret** —
+scoped to this repository alone, with the Actions permission and nothing else.
+That is new attack surface on a Worker that previously held only a read token,
+and it is the real price of this ADR.
+
+Weighing it:
+
+- The token is used only from `scheduled()`, which is **not reachable over
+  HTTP** — no request to the Worker can invoke it. The exposure is a bug in the
+  `fetch` handler that leaks `env`, which is the same exposure the existing
+  `MERCURY_API_TOKEN` already has.
+- It cannot read code, read secrets, or push. It can start workflows.
+- Blast radius if it leaks: an attacker can dispatch `daily briefing`
+  repeatedly with `force: true`, which serialises on the existing concurrency
+  group and burns Actions minutes plus real Gemini and TTS spend. That is a
+  cost attack, not a data breach, and it is bounded by the 2000-minute monthly
+  allowance. It is still the thing to revoke first if anything looks wrong.
+- It introduces a **second credential that expires silently**, alongside the
+  Google OAuth token ADR-008 already flagged. This is the part that genuinely
+  argues against the design. The mitigation is layer 2: if the token dies, the
+  GitHub backstop still generates and the watchdog still alarms, so the failure
+  degrades to "punctuality lost" rather than "briefing lost".
+
+**Rejected:**
+
+- **Multiple `cron:` entries alone.** Analysed above. Kept as a backstop,
+  rejected as the answer, because no documented bound on delay or dropping
+  means no way to meet a deadline.
+- **Moving generation to Cloudflare.** Workers cannot run the Python pipeline,
+  ffmpeg, or a 127-second job. This is ADR-008's reasoning and it has not
+  changed.
+- **Generating far earlier (e.g. 01:00 UTC) to buy slack.** Free and
+  dependency-free, but it pays in the currency the product is actually made of:
+  every hour earlier is an hour of inbox and calendar the briefing does not
+  know about.
+- **A launchd timer on the Mac.** Punctual and free, and precisely the laptop
+  dependency ADR-008 removed.
+- **A third-party cron service** (cron-job.org and similar). Same PAT exposure
+  as the Worker, on infrastructure we do not control, for a job the Worker can
+  already do.
+
+## ADR-011 — 30-day retention, and an admission about the 7-day one
+
+**Status:** accepted
+
+Nothing deleted old briefings. Each morning writes roughly 3MB of audio plus a
+manifest and nothing ever removed either, against a 10GB free tier. At that
+rate the tier lasts about nine years, so this was never urgent — it was
+unbounded, which is a different and quieter problem.
+
+**The part worth recording is that we already believed this was solved.**
+`r2_storage.py` opened with "a 7-day retention of ~4MB briefings uses about
+30MB of it", and `docs/DEPLOYMENT.md` said the same thing in its cost table.
+There was no 7-day retention. Not in the code, not in the workflow, not in a
+bucket lifecycle rule, not anywhere. Two documents described a policy nobody
+had implemented, and both read as reassurance every time anyone checked
+whether storage was handled.
+
+That is this project's own recurring failure mode — the same shape as the
+degraded-briefing warning that keyed off a signal which structurally always
+existed, and the same shape as inferring that R2 reads worked because R2
+writes did. So it is written down here rather than quietly corrected in a
+docstring: **the documentation was wrong, for months, in the reassuring
+direction.**
+
+**The decision:** `prune_briefings` in `backend/app/synthesis/storage.py`, 30 days by
+default via `RETENTION_DAYS`, run as a step of the daily workflow.
+
+30 rather than 7 because the constraint was never really storage — 30 days is
+about 90MB — and being able to go back and listen to something from three
+weeks ago is worth more than 99.1% of the free tier versus 99.7%.
+
+The design is dominated by one risk: this is code whose job is deletion,
+running unattended every morning, next to the object the user is about to
+listen to. So:
+
+- **Two overlapping guards on today's briefing.** The arithmetic already keeps
+  it (a window of at least one day cannot reach today), and there is an
+  explicit `>= today_id` check as well. The second guard costs one string
+  comparison, and "the retention job deleted this morning's briefing" is not a
+  bug worth discovering in production.
+- **`RETENTION_DAYS=0` is refused, not obeyed.** A zero-day window is a
+  misconfiguration; reading it as "delete everything including today" would be
+  technically consistent and catastrophic.
+- **Anything not positively identifiable as a briefing is left alone.**
+  Retention matches `YYYY-MM-DD.` at the start of a key and ignores the rest.
+- **Future-dated briefings are kept.** `--briefing-id` accepts any date, so
+  they can exist, and they are not old whatever the subtraction says.
+- **It never fails the morning.** One undeletable object is logged and skipped,
+  and the workflow step is `continue-on-error`. Housekeeping must not be the
+  reason a briefing run reports failure.
+
+Listing is keyed off object names rather than manifests, so audio orphaned by a
+run that died between writing the audio and writing the manifest is still found
+and still reclaimed — that audio is ~3MB of the ~3MB.
+
+**Rejected: an R2 bucket lifecycle rule.** It is the obvious answer, it is free,
+and Cloudflare supports it. Two reasons against. It cannot express "never
+delete today" — lifecycle rules work on object age, and a briefing regenerated
+with `--force` gets a fresh timestamp while an old one that was never replaced
+keeps its original, so age and briefing date are not the same thing. And it is
+configuration that lives only in a dashboard, which is precisely how the
+imaginary 7-day retention survived for months: nobody could tell by reading the
+repository whether it existed. This way it is in the code, it is in the
+workflow, and it is tested.
