@@ -12,6 +12,7 @@ there's no job queue in the Phase 1 MVP.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from pathlib import Path
@@ -169,7 +170,7 @@ async def generate(
     storage = build_storage()
 
     # Already generated: hand it back without spending money regenerating it.
-    existing = storage.load_manifest(briefing_id)
+    existing = await asyncio.to_thread(storage.load_manifest, briefing_id)
     if existing is not None:
         return GenerateResponse(status="ready", briefing_id=briefing_id)
 
@@ -192,7 +193,12 @@ async def generate(
 @router.get("/{briefing_id}/status", response_model=StatusResponse)
 async def status(briefing_id: str) -> StatusResponse:
     """Where a generation has got to. Cheap enough to poll every second."""
-    if build_storage().load_manifest(briefing_id) is not None:
+    # to_thread, not a direct call. BriefingStorage is a synchronous Protocol
+    # and the R2 implementation is boto3 — blocking sockets, no async client —
+    # so a slow or stalled bucket held the only event loop thread for the whole
+    # round trip and made every other request on the process unresponsive. This
+    # route is the one the client polls every second.
+    if await asyncio.to_thread(build_storage().load_manifest, briefing_id) is not None:
         return StatusResponse(briefing_id=briefing_id, status="ready")
 
     job = jobs.get(briefing_id)
@@ -209,7 +215,7 @@ async def status(briefing_id: str) -> StatusResponse:
 @router.get("/{briefing_id}", response_model=BriefingManifest)
 async def get_manifest(briefing_id: str) -> BriefingManifest:
     storage = build_storage()
-    manifest = storage.load_manifest(briefing_id)
+    manifest = await asyncio.to_thread(storage.load_manifest, briefing_id)
     if manifest is None:
         raise HTTPException(
             status_code=404, detail=f"briefing {briefing_id!r} not found"
@@ -220,7 +226,8 @@ async def get_manifest(briefing_id: str) -> BriefingManifest:
 @router.get("/{briefing_id}/audio")
 async def get_audio(briefing_id: str) -> Response:
     storage = build_storage()
-    result = storage.load_audio(briefing_id)
+    # ~3MB down from R2 on a blocking socket. The longest read in the system.
+    result = await asyncio.to_thread(storage.load_audio, briefing_id)
     if result is None:
         raise HTTPException(
             status_code=404, detail=f"audio for {briefing_id!r} not found"

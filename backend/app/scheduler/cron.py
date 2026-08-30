@@ -22,6 +22,7 @@ made" check uses today's date *in that timezone* too.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -201,7 +202,9 @@ async def run_daily_briefing_job(
         settings.user_timezone, crosses_midnight=crosses_midnight
     )
 
-    if storage.load_manifest(briefing_id) is not None:
+    # to_thread: this runs on the API process's event loop when the scheduler
+    # is mounted on the FastAPI app, and R2Storage is synchronous boto3.
+    if await asyncio.to_thread(storage.load_manifest, briefing_id) is not None:
         log.info(
             "briefing %s already exists; scheduled run is a no-op", briefing_id
         )

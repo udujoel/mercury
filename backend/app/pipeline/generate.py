@@ -169,7 +169,13 @@ async def generate_briefing(
         sources=sources,
     )
 
-    storage.save(briefing_id, audio_bytes, audio_format, manifest)
+    # to_thread, because BriefingStorage is synchronous and R2Storage is boto3.
+    # This is ~3MB up on a blocking socket, and it runs inside the API process
+    # while the client polls /status — so calling it directly froze the server
+    # for the whole upload.
+    await asyncio.to_thread(
+        storage.save, briefing_id, audio_bytes, audio_format, manifest
+    )
     return manifest
 
 
