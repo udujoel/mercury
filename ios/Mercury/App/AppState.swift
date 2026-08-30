@@ -57,6 +57,34 @@ final class AppState {
     var loadState: LoadState = .idle
     let playback = PlaybackCoordinator()
 
+    /// SwiftData persistence (PRD 3.7), handed over by `MercuryApp` from the
+    /// shared `ModelContainer`.
+    ///
+    /// This whole layer — `BriefingStore`, `PersistenceModels`, and the
+    /// `ResumePositionTests` that cover them — was written, tested and then
+    /// never called by anything. The container was built and injected into
+    /// the SwiftUI environment; nothing ever constructed a store from it. So
+    /// `ResumePositionTests` passed, in full, against code no running app
+    /// could reach: a green suite proving a feature the user did not have.
+    ///
+    /// Wired rather than deleted, for four reasons. PRD 3.7 requires
+    /// persistence, so deleting it means deleting a spec requirement and
+    /// rewriting it later. The user harm is concrete and daily: a
+    /// six-minute briefing abandoned at minute four restarts at "Good
+    /// morning" every time. The code is already complete and correct —
+    /// upsert, retention, resume position — so the gap was one wire, not a
+    /// subsystem. And offline transcript and show-notes access has nowhere
+    /// else to come from.
+    ///
+    /// Optional because `AppState` is also built in tests and previews with
+    /// no container; everything below degrades to "no persistence" rather
+    /// than failing.
+    @ObservationIgnored var store: BriefingStore?
+
+    /// Below this, resuming is not worth it — and within this much of the
+    /// end, a "resume" would drop the user into the sign-off.
+    static let minimumResumeMs = 3_000
+
     /// (not as a default property initializer — those run before `self` is
     /// available, and `playback` is an instance member); `init` also wires
     /// the real `briefingId`/`positionMs` closures via `configure(...)`
@@ -142,9 +170,13 @@ final class AppState {
         do {
             let manifest = try await fetchTodayOrGenerate()
             self.manifest = manifest
+            // Persist the transcript before touching the audio: it is worth
+            // keeping even if the download fails.
+            await persist(manifest, audioPath: nil)
             let audioURL = try await api.downloadAudio(briefingId: manifest.briefingId)
+            await persist(manifest, audioPath: audioURL.path)
             try playback.load(manifest: manifest, audioURL: audioURL)
-            playback.play()
+            await startPlayback(of: manifest)
             loadState = .ready
         } catch {
             loadState = .failed(error.localizedDescription)
@@ -206,7 +238,8 @@ final class AppState {
     func prefetchBriefing(id: String) async -> Bool {
         do {
             let manifest = try await api.fetchManifest(briefingId: id)
-            _ = try await api.downloadAudio(briefingId: id)
+            let audioURL = try await api.downloadAudio(briefingId: id)
+            await persist(manifest, audioPath: audioURL.path)
             self.manifest = manifest
             return true
         } catch {
@@ -250,12 +283,78 @@ final class AppState {
                 return
             }
             self.manifest = manifest
+            await persist(manifest, audioPath: nil)
             let audioURL = try await api.downloadAudio(briefingId: manifest.briefingId)
+            await persist(manifest, audioPath: audioURL.path)
             try playback.load(manifest: manifest, audioURL: audioURL)
-            playback.play()
+            await startPlayback(of: manifest)
             loadState = .ready
         } catch {
             loadState = .failed(error.localizedDescription)
+        }
+    }
+
+    // MARK: - Persistence (PRD 3.7)
+
+    /// Where to start a briefing, given whatever position was saved.
+    ///
+    /// Pure so the policy can be checked exactly, with no container: a
+    /// briefing already heard to the end starts over rather than dropping
+    /// the user into the sign-off, and a few seconds in is not worth
+    /// resuming to.
+    static func resumeTarget(
+        savedMs: Int?,
+        durationMs: Int,
+        minimumMs: Int = AppState.minimumResumeMs
+    ) -> Int? {
+        guard let savedMs, savedMs > minimumMs else { return nil }
+        guard durationMs > 0 else { return savedMs }
+        guard savedMs < durationMs - minimumMs else { return nil }
+        return savedMs
+    }
+
+    private func persist(_ manifest: BriefingManifest, audioPath: String?) async {
+        guard let store else { return }
+        do {
+            try await store.save(manifest, localAudioPath: audioPath)
+        } catch {
+            print("[Mercury] Could not persist briefing \(manifest.briefingId): \(error)")
+        }
+    }
+
+    /// Restores the resume point, wires position persistence, and starts.
+    @MainActor
+    private func startPlayback(of manifest: BriefingManifest) async {
+        wirePersistence(for: manifest.briefingId)
+
+        if let store {
+            let saved = try? await store.resumePositionMs(for: manifest.briefingId)
+            if let target = Self.resumeTarget(
+                savedMs: saved ?? nil, durationMs: manifest.durationMs
+            ) {
+                // Seeking while stopped schedules without starting, so the
+                // `play()` below is what actually begins playback.
+                playback.seek(toMs: target)
+            }
+        }
+        playback.play()
+    }
+
+    private func wirePersistence(for briefingId: String) {
+        playback.onPositionPersist = { [weak self] positionMs in
+            guard let store = self?.store else { return }
+            Task { try? await store.updateResumePosition(
+                briefingId: briefingId, positionMs: positionMs
+            ) }
+        }
+        playback.onFinished = { [weak self] in
+            guard let store = self?.store else { return }
+            // Completed AND rewound: next open starts from the top rather
+            // than from the sign-off.
+            Task {
+                try? await store.markCompleted(briefingId: briefingId)
+                try? await store.updateResumePosition(briefingId: briefingId, positionMs: 0)
+            }
         }
     }
 }

@@ -29,6 +29,74 @@ final class ResumePositionTests: XCTestCase {
         XCTAssertEqual(resumed, 13500)
     }
 
+    // MARK: - Regression: the store must actually be REACHED
+
+    /// Everything else in this file passed against code no running app
+    /// could execute.
+    ///
+    /// `MercuryApp` built the `ModelContainer` and injected it into the
+    /// SwiftUI environment, but nothing ever constructed a `BriefingStore`
+    /// from it — so `AppState` never saved a briefing, never read a resume
+    /// position, and a six-minute briefing restarted at "Good morning"
+    /// every single time. The tests above were green throughout. That is
+    /// the most misleading state a test suite can be in: not wrong about
+    /// the code, just silent about whether anyone calls it.
+    ///
+    /// These drive persistence through `AppState`, the way the app does.
+    func testPlayBriefingPersistsTheTranscriptThroughAppState() async throws {
+        let container = try makeInMemoryContainer()
+        let store = BriefingStore(modelContainer: container)
+        let api = RecordingAPI(manifestResult: .success(ManifestFixtures.minimal))
+        let state = AppState(api: api)
+        await MainActor.run { state.store = store }
+
+        // `downloadAudio` throws in RecordingAPI, so playback never starts —
+        // but the transcript must already be saved by then, because it is
+        // worth keeping whether or not the audio arrives.
+        await state.playBriefing()
+
+        let all = try await store.allBriefings()
+        XCTAssertEqual(all.count, 1, "the manifest must be persisted, got \(all.count)")
+        XCTAssertEqual(all.first?.id, "2026-08-23")
+    }
+
+    func testAppStateWithNoStoreStillPlaysRatherThanFailing() async {
+        let api = RecordingAPI(manifestResult: .success(ManifestFixtures.minimal))
+        let state = AppState(api: api)   // no store attached
+
+        await state.playBriefing()
+
+        // The failure here is the download, not persistence: an AppState
+        // with no container must degrade to "no persistence", never crash.
+        let calls = api.calls
+        XCTAssertTrue(calls.contains("fetchManifest"))
+        XCTAssertTrue(calls.contains("downloadAudio"))
+    }
+
+    // MARK: - Resume policy
+
+    func testResumeTargetSkipsAPositionNotWorthResumingTo() {
+        XCTAssertNil(AppState.resumeTarget(savedMs: nil, durationMs: 360_000))
+        XCTAssertNil(AppState.resumeTarget(savedMs: 0, durationMs: 360_000))
+        XCTAssertNil(AppState.resumeTarget(savedMs: 1_500, durationMs: 360_000),
+                     "a second and a half in is not a resume point")
+    }
+
+    func testResumeTargetReturnsAMidBriefingPosition() {
+        XCTAssertEqual(AppState.resumeTarget(savedMs: 240_000, durationMs: 360_000), 240_000)
+    }
+
+    /// A briefing already heard to the end must start over, not drop the
+    /// user two seconds from the sign-off.
+    func testResumeTargetIgnoresAPositionAtTheVeryEnd() {
+        XCTAssertNil(AppState.resumeTarget(savedMs: 359_000, durationMs: 360_000))
+        XCTAssertNil(AppState.resumeTarget(savedMs: 360_000, durationMs: 360_000))
+    }
+
+    func testResumeTargetWithUnknownDurationStillResumes() {
+        XCTAssertEqual(AppState.resumeTarget(savedMs: 240_000, durationMs: 0), 240_000)
+    }
+
     func testResumePositionForUnknownBriefingIsNil() async throws {
         let container = try makeInMemoryContainer()
         let store = BriefingStore(modelContainer: container)

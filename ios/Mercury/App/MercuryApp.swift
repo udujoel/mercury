@@ -30,6 +30,14 @@ struct MercuryApp: App {
                 .preferredColorScheme(.dark)
                 .task {
                     appDelegate.appState = appState
+                    // The one wire that was missing. The container was built
+                    // and injected into the environment, but nothing ever
+                    // constructed a `BriefingStore` from it, so the entire
+                    // SwiftData layer — and the tests covering it — applied
+                    // to code no running app could reach.
+                    if appState.store == nil {
+                        appState.store = BriefingStore(modelContainer: sharedModelContainer)
+                    }
                     // FALLBACK layer safety net regardless of onboarding
                     // state: if neither the push nor the background task
                     // ran overnight, request notification authorization

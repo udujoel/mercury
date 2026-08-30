@@ -26,6 +26,23 @@ final class PlaybackCoordinator {
     /// Playback speeds exposed by the transport control (PRD 3.4, Zone 3).
     static let availableRates: [Float] = [1.0, 1.25, 1.5, 2.0]
 
+    /// Reports the position worth remembering, so `AppState` can persist it
+    /// as the resume point (PRD 3.7). Fired at most once every
+    /// `positionPersistIntervalMs` of playback, and on every pause and
+    /// finish — the moments that actually matter, since a briefing is
+    /// usually abandoned by pausing it or by the app going away.
+    @ObservationIgnored var onPositionPersist: ((Int) -> Void)?
+
+    /// Fired once when the briefing plays to the end.
+    @ObservationIgnored var onFinished: (() -> Void)?
+
+    /// Five seconds between persisted positions. Frequent enough that a
+    /// crash loses only a sentence, rare enough not to touch the disk 20
+    /// times a second.
+    static let positionPersistIntervalMs = 5_000
+
+    private var lastPersistedMs = 0
+
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private let timePitch = AVAudioUnitTimePitch()
@@ -97,6 +114,7 @@ final class PlaybackCoordinator {
         isPlaying = false
         scheduleBaseMs = 0
         positionMs = 0
+        lastPersistedMs = 0
         currentTurn = nil
         currentSegment = nil
 
@@ -161,6 +179,16 @@ final class PlaybackCoordinator {
         isPlaying = false
         stopTicking()
         nowPlaying.setPlaybackState(isPlaying: false, positionMs: positionMs, rate: rate)
+        persistPosition()
+    }
+
+    /// Reports the current position, at most once per interval unless
+    /// `force`d (pause and finish always report).
+    private func persistPosition(force: Bool = true) {
+        guard force || abs(positionMs - lastPersistedMs) >= Self.positionPersistIntervalMs
+        else { return }
+        lastPersistedMs = positionMs
+        onPositionPersist?(positionMs)
     }
 
     /// Cycles 1x -> 1.25x -> 1.5x -> 2x -> 1x.
@@ -420,6 +448,7 @@ final class PlaybackCoordinator {
         positionMs = max(0, end)
         scheduleBaseMs = positionMs
         nowPlaying.setPlaybackState(isPlaying: false, positionMs: positionMs, rate: rate)
+        onFinished?()
     }
 
     // MARK: - Interruptions and route changes
@@ -561,6 +590,7 @@ final class PlaybackCoordinator {
                      / playerTime.sampleRate * 1000)
         positionMs = ms
         resolveTurn(atMs: ms, animated: true)
+        persistPosition(force: false)
     }
 
     /// Moves the transcript and chapter to whatever covers `ms`.
