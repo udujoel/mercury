@@ -127,7 +127,21 @@ def event_to_calendar_event(
         raise ValueError(f"event {raw.get('id')} missing start/end")
 
     start, start_all_day = parse_event_time(start_raw, tz)
-    end, _ = parse_event_time(end_raw, tz)
+    end, end_all_day = parse_event_time(end_raw, tz)
+    if end_all_day:
+        # Google reports an all-day event's `end.date` as the day AFTER the
+        # last day it covers — the range is half-open. Stored verbatim, the
+        # one-day offsite in tests/fixtures/calendar_events.json came out as
+        # "2026-08-22T00:00 to 2026-08-23T00:00", and
+        # script_chain._format_calendar hands both isoformat strings
+        # straight to the model, so the hosts said a one-day offsite ran
+        # into Sunday.
+        #
+        # A second before the exclusive end, not the previous midnight: that
+        # keeps `end > start` for a single-day event (a zero-length event
+        # reads as a data error to everything downstream) and keeps the
+        # duration honest — the whole of the 22nd, not none of it.
+        end -= timedelta(seconds=1)
 
     description = raw.get("description", "") or ""
     conference_data = raw.get("conferenceData")
