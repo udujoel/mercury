@@ -29,9 +29,26 @@ const TOKEN_HEADER = "X-Mercury-Token";
 
 // The deadline the whole schedule exists to hit: the briefing is in R2 before
 // 06:00 Europe/Lisbon. Lisbon is UTC+1 in summer, so the tight case is 05:00
-// UTC and every checkpoint is sized against it; winter gets an extra hour of
-// margin for free. Cron is UTC-only and has no DST, here or on GitHub.
+// UTC and every checkpoint is sized against it. Cron is UTC-only and has no
+// DST, here or on GitHub, so in WINTER this fixed UTC deadline sits an hour
+// before the local one — the alarm can fire up to 52 minutes early. That is
+// deliberate and it is the safe direction: an alarm about a briefing that is
+// still missing 50 minutes after the last generation attempt is an early
+// alarm about a real absence, not a false one, and the opposite error costs
+// the user their morning. ADR-010 says the same thing.
 const DEADLINE_UTC_MINUTES = 5 * 60;
+
+// The alarm is raised at its own checkpoint, LATER than any checkpoint that
+// dispatches generation, and it never shares a tick with one.
+//
+// It used to be dispatched immediately after the generation dispatch at 05:08.
+// `workflow_dispatch` only queues a run, so the watchdog reached R2 first and
+// reported "no briefing" about a briefing that was being written as it looked.
+// A watchdog that cries wolf every morning is worse than no watchdog: the
+// email it sends is the one signal this design has, and it stops being read
+// the moment it is usually wrong. 32 minutes is more than ten times the
+// observed 71-second generation, plus Actions queueing and checkout.
+const ALARM_UTC_MINUTES = 5 * 60 + 40;
 
 // Workflow file names, not ids. The REST API accepts either, and the file
 // name survives the workflow being deleted and recreated.
@@ -56,6 +73,13 @@ const WATCHDOG_WORKFLOW = "briefing-watchdog.yml";
  * 304, not a re-download of ~3MB of audio.
  */
 const CACHE_CONTROL = "private, no-cache";
+
+// Same floor as MIN_PLAYABLE_AUDIO_BYTES in app/synthesis/storage.py. A real
+// briefing is roughly 3MB and a bare WAV header is 44 bytes, so a kilobyte is
+// three orders of magnitude below anything genuine and cannot reject a real
+// file — while still catching the zero-byte and truncated objects that a
+// half-finished upload leaves behind.
+const MIN_PLAYABLE_AUDIO_BYTES = 1024;
 
 // Same floor as MIN_TOKEN_LENGTH in app/core/auth.py. Without it the Worker
 // would happily serve private briefings behind a secret the backend rejects
@@ -94,12 +118,23 @@ function safeDecode(value) {
 }
 
 /**
- * Reject anything that is not a plain YYYY-MM-DD. The id becomes an R2 key,
- * so this also stops path traversal ("../other-bucket-object") reaching the
- * bucket at all.
+ * Reject anything that is not a real YYYY-MM-DD date. The id becomes an R2
+ * key, so this also stops path traversal ("../other-bucket-object") reaching
+ * the bucket at all.
+ *
+ * Shape is not enough: `2026-01-99` and `2026-02-30` pass the regex and are
+ * not days. Same hole, and the same fix, as `briefing_id_from_key` in
+ * app/synthesis/storage.py — where a date-shaped impossible id reached the
+ * retention path and got deleted.
  */
 function validBriefingId(id) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(id);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(id)) return false;
+  // Date rolls impossible components over silently (Feb 30 becomes Mar 2), so
+  // round-trip it and insist the answer is the string we started with.
+  const parsed = new Date(`${id}T00:00:00Z`);
+  return (
+    !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === id
+  );
 }
 
 export default {
@@ -192,28 +227,37 @@ export default {
       return;
     }
 
-    const pastDeadline =
-      scheduledAt.getUTCHours() * 60 + scheduledAt.getUTCMinutes() >=
-      DEADLINE_UTC_MINUTES;
+    const utcMinutes =
+      scheduledAt.getUTCHours() * 60 + scheduledAt.getUTCMinutes();
     console.log(
       `briefing ${id}: ${state} at ${scheduledAt.toISOString()} ` +
-        `(past deadline: ${pastDeadline})`,
+        `(past deadline: ${utcMinutes >= DEADLINE_UTC_MINUTES})`,
     );
+
+    // The alarm checkpoint raises the alarm and does NOTHING else. Every
+    // generation attempt has already been made and has had half an hour to
+    // land, so a briefing that is still missing here is missing for a reason
+    // no further dispatch is going to fix — and dispatching one anyway is
+    // exactly what made the alarm race the run it had just started.
+    if (utcMinutes >= ALARM_UTC_MINUTES) {
+      await dispatchWorkflow(env, WATCHDOG_WORKFLOW, { briefing_id: id });
+      return;
+    }
+
+    // Name the briefing this checkpoint actually checked. Without it the
+    // runner derives its own "today", so a run that starts after the user's
+    // local midnight generates the RUNNER's day rather than the day found
+    // missing here — the sixth date bug in a project that has had five.
+    const inputs = { briefing_id: id };
 
     // An EMPTY briefing must be forced. Generation is idempotent, so a stored
     // manifest — even one with zero turns and zero milliseconds of audio —
     // makes every later run decline to replace it. That is how a single
     // total TTS failure turned into a briefing that was broken permanently
     // rather than for one morning.
-    const inputs = state === "empty" ? { force: "true" } : {};
-    await dispatchWorkflow(env, GENERATE_WORKFLOW, inputs);
+    if (state === "empty") inputs.force = "true";
 
-    if (pastDeadline) {
-      // Generating anyway is still worth it — the user wakes at 07:00. But
-      // the deadline is blown, and the whole point of ADR-010 is that they
-      // are told rather than opening the app to yesterday's audio.
-      await dispatchWorkflow(env, WATCHDOG_WORKFLOW, { briefing_id: id });
-    }
+    await dispatchWorkflow(env, GENERATE_WORKFLOW, inputs);
   },
 };
 
@@ -271,8 +315,15 @@ async function briefingState(env, id) {
   // A manifest with no audio behind it is the shape `--force` used to leave
   // when a regeneration failed after deleting the old file: 200 on the
   // manifest, 404 on the audio.
+  //
+  // Existence is not enough. `head` returns an object for a zero-byte key, so
+  // an upload that died mid-flight read as playable, suppressed both the retry
+  // and the alarm, and — because generation is idempotent — kept doing so for
+  // the rest of the day. Size is the cheap signal that separates "there is a
+  // file" from "there is audio".
   for (const ext of ["m4a", "wav"]) {
-    if (await env.BRIEFINGS.head(`${id}.${ext}`)) return "ok";
+    const object = await env.BRIEFINGS.head(`${id}.${ext}`);
+    if (object && object.size >= MIN_PLAYABLE_AUDIO_BYTES) return "ok";
   }
   return "empty";
 }
@@ -297,24 +348,35 @@ async function dispatchWorkflow(env, workflow, inputs) {
     return false;
   }
 
-  const response = await fetch(
-    `https://api.github.com/repos/${env.GITHUB_REPO}` +
-      `/actions/workflows/${workflow}/dispatches`,
-    {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${env.GITHUB_DISPATCH_TOKEN}`,
-        accept: "application/vnd.github+json",
-        "x-github-api-version": "2022-11-28",
-        // GitHub rejects API requests without one.
-        "user-agent": "mercury-briefings-worker",
+  // `fetch` REJECTS on a transport failure — DNS, TLS, connection reset — and
+  // only a fulfilled response ever reaches the response.ok check below. An
+  // unhandled rejection here aborted scheduled() outright, so a morning where
+  // GitHub was briefly unreachable left no decision in the log at all. A
+  // failed dispatch is a return value, not an exception.
+  let response;
+  try {
+    response = await fetch(
+      `https://api.github.com/repos/${env.GITHUB_REPO}` +
+        `/actions/workflows/${workflow}/dispatches`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${env.GITHUB_DISPATCH_TOKEN}`,
+          accept: "application/vnd.github+json",
+          "x-github-api-version": "2022-11-28",
+          // GitHub rejects API requests without one.
+          "user-agent": "mercury-briefings-worker",
+        },
+        body: JSON.stringify({
+          ref: env.GITHUB_REF || "main",
+          inputs,
+        }),
       },
-      body: JSON.stringify({
-        ref: env.GITHUB_REF || "main",
-        inputs,
-      }),
-    },
-  );
+    );
+  } catch (err) {
+    console.error(`dispatch of ${workflow} failed: ${err}`);
+    return false;
+  }
 
   if (!response.ok) {
     // 404 here usually means the token cannot see the repo rather than that
