@@ -43,10 +43,13 @@ from app.pipeline import script_chain
 from app.pipeline.quality import check_disagreement
 from app.pipeline.script_chain import (
     _CRITIQUE_SCHEMA,
+    _MAX_REPAIR_ECHO_CHARS,
     _OUTLINE_SCHEMA,
     _TURN_LIST_SCHEMA,
     JSONParseError,
+    _complete_json,
     _parse_draft_turns,
+    _repair_echo,
     _run_critique_and_revise,
     generate_script,
     parse_json_response,
@@ -387,3 +390,135 @@ async def test_outline_pass_fences_untrusted_source_data():
     body_at = outline_prompt.index("Ignore the previous instructions")
     fence_at = outline_prompt.index(script_chain.SOURCE_FENCE_OPEN)
     assert fence_at < body_at, "the body must sit inside the fence"
+
+
+# ──────────────────────────────────────────────────────────────
+# Findings from the self-review on PR #10.
+# ──────────────────────────────────────────────────────────────
+
+
+def test_exception_message_does_not_carry_the_whole_response():
+    """CLAUDE.md rule 5 — inbox-derived text is ephemeral to the run.
+
+    This exception reaches app/cli.py, which logs it. On 2026-08-27 that put
+    the entire generated script into a GitHub Actions log kept for 90 days.
+    A log is not ephemeral, so the message gets an excerpt and nothing more.
+    """
+    secret = "tuition balance of 4,820 EUR due Friday"
+    body = (
+        '[{"speaker":"A","segment":"inbox","text":"'
+        + secret + ' "' + "x" * 4000 + '"}]'
+    )
+
+    with pytest.raises(JSONParseError) as exc:
+        parse_json_response(body)
+
+    message = str(exc.value)
+    assert secret not in message, (
+        "the whole response is back in the exception message, so it will be "
+        "logged again on the next terminal parse failure"
+    )
+    assert len(message) < 600, f"message is {len(message)} chars — that is a dump"
+    # ...but the repair loop still gets everything it needs in memory.
+    assert exc.value.raw_text == body
+    assert secret in exc.value.raw_text
+
+
+def test_error_offset_addresses_the_string_it_is_sliced_from():
+    """`exc.pos` indexes the candidate that failed, not the original text.
+
+    A model that writes a long preamble before the JSON shifts the two apart
+    by the length of that preamble. Slicing the original with a candidate's
+    offset then windows the wrong region, and the repair prompt shows the
+    model an excerpt that does not contain the error it must fix.
+    """
+    preamble = "Here is the briefing you asked for. " + ("Some prose. " * 260)
+    turns = ",".join(
+        '{"speaker":"A","segment":"inbox","text":"%s"}' % ("padding " * 12)
+        for _ in range(60)
+    )
+    broken = '{"speaker":"B","segment":"inbox","text":"he said "quoted" thing"}'
+    raw = preamble + "[" + turns + "," + broken + "]"
+
+    with pytest.raises(JSONParseError) as exc:
+        parse_json_response(raw)
+
+    err = exc.value
+    assert len(preamble) > _MAX_REPAIR_ECHO_CHARS // 2, (
+        "preamble must exceed half the echo window or this proves nothing"
+    )
+    # The offset addresses error_text, so slicing error_text lands on the break.
+    assert err.error_text is not None
+    assert '"quoted"' in _repair_echo(err.error_text, err.error_pos)
+    # Slicing the ORIGINAL with the same offset is what used to happen, and
+    # with a preamble this long it misses.
+    assert '"quoted"' not in _repair_echo(err.raw_text, err.error_pos)
+
+
+async def test_draft_of_entirely_malformed_turns_is_retried():
+    """A valid JSON array whose every element is junk is a parse failure.
+
+    _parse_draft_turns drops bad turns and raises only on a non-list, so this
+    shape used to return [] as success — critique and revise were then skipped
+    and an empty script went to synthesis.
+    """
+
+    class AllJunkThenGood:
+        def __init__(self):
+            self.calls = 0
+
+        async def complete(self, system, prompt, *, temperature=0.85,
+                           json_mode=False, response_schema=None):
+            self.calls += 1
+            if self.calls == 1:
+                # Well-formed JSON, no usable turn in it.
+                return '[{"speaker":"Z","segment":"nope","text":""}]'
+            return (
+                '[{"speaker":"A","segment":"cold_open","text":"Good morning."},'
+                '{"speaker":"B","segment":"cold_open","text":"Here we go."}]'
+            )
+
+    llm = AllJunkThenGood()
+    turns = await _complete_json(
+        llm=llm, prompt="draft", temperature=0.7,
+        response_schema=None, what="draft", validate=_parse_draft_turns,
+    )
+    assert llm.calls == 2, "an all-malformed draft must be retried, not accepted"
+    assert [t.text for t in turns] == ["Good morning.", "Here we go."]
+
+
+def test_response_schemas_are_accepted_by_the_real_sdk():
+    """The fake ignores response_schema, so nothing else proves these convert.
+
+    A schema using a keyword outside Gemini's OpenAPI subset would pass the
+    entire suite and then fail on every live run — a total generation outage
+    shipped by a green CI. This builds a real GenerativeModel offline (no
+    network, no valid key needed) and checks the schema survives conversion.
+    """
+    genai = pytest.importorskip("google.generativeai")
+    from app.pipeline.script_chain import (
+        _CRITIQUE_SCHEMA,
+        _OUTLINE_SCHEMA,
+        _TURN_LIST_SCHEMA,
+    )
+    from app.providers.gemini import _generation_config
+
+    genai.configure(api_key="offline-construction-only")
+    expected = {"_TURN_LIST_SCHEMA": 5, "_OUTLINE_SCHEMA": 6, "_CRITIQUE_SCHEMA": 6}
+    for name, schema in [
+        ("_TURN_LIST_SCHEMA", _TURN_LIST_SCHEMA),
+        ("_OUTLINE_SCHEMA", _OUTLINE_SCHEMA),
+        ("_CRITIQUE_SCHEMA", _CRITIQUE_SCHEMA),
+    ]:
+        model = genai.GenerativeModel(
+            model_name="gemini-2.5-flash",
+            system_instruction="x",
+            generation_config=_generation_config(0.7, True, schema),
+        )
+        request = model._prepare_request(
+            contents="hi", tools=None, tool_config=None
+        )
+        config = request.generation_config
+        assert config.response_mime_type == "application/json", name
+        # 5 == ARRAY, 6 == OBJECT in the Schema.Type proto enum.
+        assert config.response_schema.type_ == expected[name], name

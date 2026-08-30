@@ -66,19 +66,51 @@ _VALID_SPEAKERS = {"A", "B"}
 # ──────────────────────────────────────────────────────────────
 
 
+def _shape_of(text: str, pos: int | None) -> str:
+    """Describe a failed response without quoting any of it.
+
+    Deliberately carries no response bytes. A first draft of this excerpted
+    200 characters around the break, which reads as a reasonable compromise
+    and is not one: the break is inside a string value, so the window is
+    inbox-derived text by construction, and the no-JSON-found path excerpted
+    from character zero. Length and offset are enough to tell a truncated
+    response from a malformed one; the bytes themselves stay in memory on
+    the exception, where the repair loop can reach them and a log cannot.
+    """
+    where = f", break at offset {pos}" if pos is not None else ""
+    return f" [response {len(text)} chars{where}]"
+
+
 class JSONParseError(ValueError):
     def __init__(
-        self, message: str, raw_text: str, error_pos: int | None = None
+        self,
+        message: str,
+        raw_text: str,
+        error_pos: int | None = None,
+        error_text: str | None = None,
     ) -> None:
-        super().__init__(f"{message}\n\n--- raw response ---\n{raw_text}\n---")
+        # Deliberately NOT the whole response. This exception propagates to
+        # app/cli.py, which logs it — and on 2026-08-27 that wrote the entire
+        # generated script (a password-reset deadline, tuition details, an
+        # amount of money) into a GitHub Actions log, which GitHub keeps for
+        # 90 days. CLAUDE.md rule 5 makes inbox-derived text ephemeral to the
+        # run; a CI log is the opposite of ephemeral. Diagnosis needs the
+        # decoder's complaint and the characters either side of the break,
+        # which is what the excerpt carries.
+        super().__init__(
+            f"{message}{_shape_of(error_text or raw_text, error_pos)}"
+        )
+        # Held in memory for the repair loop, which genuinely does need the
+        # whole response. It just must never be formatted into the message.
         self.raw_text = raw_text
-        # str(self) embeds the entire raw response — right for a crash log,
-        # far too big to paste back into a repair prompt. Keep the one-line
-        # decoder complaint separately for that.
         self.reason = message
         # Where the decoder gave up, so a repair prompt can show the model
         # the part that broke rather than the first N characters.
         self.error_pos = error_pos
+        # The candidate string `error_pos` indexes into. parse_json_response
+        # tries several transformed copies of the response, and an offset
+        # from one of those does not address the original — see _repair_echo.
+        self.error_text = error_text
 
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL | re.IGNORECASE)
@@ -135,18 +167,29 @@ def parse_json_response(text: str) -> Any:
             attempts.append(repaired_extracted)
 
     last_error: json.JSONDecodeError | None = None
+    last_candidate: str = cleaned
     for candidate in attempts:
         try:
             return json.loads(candidate)
         except json.JSONDecodeError as exc:
             last_error = exc
+            # Kept together: `exc.pos` is an offset into THIS candidate, not
+            # into `text`. The two differ by however much was stripped ahead
+            # of the JSON — a fence, or prose the model wrote first — and
+            # slicing `text` with a candidate's offset silently windows the
+            # wrong region of a long response.
+            last_candidate = candidate
 
     if extracted is None:
         raise JSONParseError("no JSON object or array found in response", text)
     raise JSONParseError(
-        f"extracted candidate still failed to parse: {last_error}",
+        # last_error.msg, not str(last_error): the decoder's __str__ appends
+        # "line N column M (char P)", which is fine, but keeping to .msg makes
+        # it explicit that nothing here interpolates response content.
+        f"extracted candidate still failed to parse: {last_error.msg}",
         text,
         error_pos=last_error.pos,
+        error_text=last_candidate,
     ) from last_error
 
 
@@ -694,7 +737,25 @@ async def _complete_json(
         )
         try:
             parsed = parse_json_response(raw)
-            return validate(parsed) if validate is not None else parsed
+            if validate is None:
+                return parsed
+            validated = validate(parsed)
+            # The one bad-draft shape the loop cannot otherwise see.
+            # _parse_draft_turns raises only when the top level is not a
+            # list; individual malformed turns are dropped by _validate_turn.
+            # So an array whose every element is malformed returns [] with no
+            # exception, generate_script's `if passes == 4 and draft_turns`
+            # goes falsy, critique and revise are skipped, and an empty
+            # script reaches synthesis. Retrying is right here: the model
+            # returned well-formed JSON saying nothing usable, which is the
+            # kind of mistake it can fix once it is shown.
+            if isinstance(validated, list) and not validated:
+                raise JSONParseError(
+                    "parsed as JSON but every element failed validation, "
+                    "so the pass produced nothing usable",
+                    raw,
+                )
+            return validated
         except JSONParseError as exc:
             last_error = exc
             if attempt == _JSON_ATTEMPTS:
@@ -706,7 +767,9 @@ async def _complete_json(
             )
             attempt_prompt = prompt + _REPAIR_SUFFIX.format(
                 error=exc.reason,
-                previous=_repair_echo(exc.raw_text or raw, exc.error_pos),
+                previous=_repair_echo(
+                    exc.error_text or exc.raw_text or raw, exc.error_pos
+                ),
             )
             attempt_temperature = _REPAIR_TEMPERATURE
 
