@@ -67,9 +67,18 @@ _VALID_SPEAKERS = {"A", "B"}
 
 
 class JSONParseError(ValueError):
-    def __init__(self, message: str, raw_text: str) -> None:
+    def __init__(
+        self, message: str, raw_text: str, error_pos: int | None = None
+    ) -> None:
         super().__init__(f"{message}\n\n--- raw response ---\n{raw_text}\n---")
         self.raw_text = raw_text
+        # str(self) embeds the entire raw response — right for a crash log,
+        # far too big to paste back into a repair prompt. Keep the one-line
+        # decoder complaint separately for that.
+        self.reason = message
+        # Where the decoder gave up, so a repair prompt can show the model
+        # the part that broke rather than the first N characters.
+        self.error_pos = error_pos
 
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL | re.IGNORECASE)
@@ -94,23 +103,51 @@ def parse_json_response(text: str) -> Any:
     if fence_match:
         cleaned = fence_match.group(1).strip()
 
-    cleaned = cleaned.translate(_SMART_QUOTES)
-
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError:
-        pass
+    # Ordering here is load-bearing, and getting it wrong manufactures the
+    # very failure this function exists to absorb. The smart-quote
+    # normalisation below used to run at this point, unconditionally, before
+    # anything had tried to read the response as sent. Typographic quotes are
+    # ordinary characters INSIDE a JSON string value, so rewriting them to
+    # ASCII turns a perfectly valid response —
+    #     {"text": "the \u201cEU Login\u201d password reset"}
+    # — into a broken one, and the decoder then fails with "Expecting ','
+    # delimiter" pointing at a quote the sanitiser itself had just created.
+    #
+    # So: read what the model actually sent, first and unmodified. Every
+    # entry after the first is a repair, tried only once the honest reading
+    # has failed. Nothing is weakened — the repairs all still run, they just
+    # no longer get to corrupt a response that was already correct.
+    attempts = [cleaned]
 
     extracted = _extract_outermost_json(cleaned)
     if extracted is not None:
-        try:
-            return json.loads(extracted)
-        except json.JSONDecodeError as exc:
-            raise JSONParseError(
-                f"extracted candidate still failed to parse: {exc}", text
-            ) from exc
+        attempts.append(extracted)
 
-    raise JSONParseError("no JSON object or array found in response", text)
+    # The case the translation was actually written for: a model that used
+    # curly quotes as the structural delimiters themselves, e.g.
+    # {\u201ca\u201d: \u201chello\u201d}, which is not valid JSON by any
+    # reading. Legitimate, but a last resort.
+    repaired = cleaned.translate(_SMART_QUOTES)
+    if repaired != cleaned:
+        attempts.append(repaired)
+        repaired_extracted = _extract_outermost_json(repaired)
+        if repaired_extracted is not None:
+            attempts.append(repaired_extracted)
+
+    last_error: json.JSONDecodeError | None = None
+    for candidate in attempts:
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError as exc:
+            last_error = exc
+
+    if extracted is None:
+        raise JSONParseError("no JSON object or array found in response", text)
+    raise JSONParseError(
+        f"extracted candidate still failed to parse: {last_error}",
+        text,
+        error_pos=last_error.pos,
+    ) from last_error
 
 
 def _extract_outermost_json(text: str) -> str | None:
@@ -230,6 +267,19 @@ def _strip_fence_markers(text: str) -> str:
     return text.replace(SOURCE_FENCE_OPEN, "").replace(SOURCE_FENCE_CLOSE, "")
 
 
+def _fence_untrusted(body: str) -> str:
+    """Wrap third-party content in the warning and the fence markers.
+
+    Factored out because the outline pass needed exactly this and did not
+    have it — see generate_script, where the calendar and email blocks now
+    go through here too.
+    """
+    return (
+        f"{INJECTION_WARNING}\n\n{SOURCE_FENCE_OPEN}\n"
+        f"{_strip_fence_markers(body)}\n{SOURCE_FENCE_CLOSE}"
+    )
+
+
 def _flatten_source_text(
     emails: list[Item], events: list[CalendarEvent], weather: Weather | None
 ) -> str:
@@ -251,8 +301,7 @@ def _flatten_source_text(
         for ev in events
     )
     parts.extend(f"{em.title} {em.author} {em.body}" for em in emails)
-    body = _strip_fence_markers("\n".join(parts))
-    return f"{INJECTION_WARNING}\n\n{SOURCE_FENCE_OPEN}\n{body}\n{SOURCE_FENCE_CLOSE}"
+    return _fence_untrusted("\n".join(parts))
 
 
 # ──────────────────────────────────────────────────────────────
@@ -457,6 +506,218 @@ def _build_source_refs(
 
 
 # ──────────────────────────────────────────────────────────────
+# Response schemas — constrained decoding.
+#
+# On 2026-08-27 the scheduled run died in the draft pass and lost the day's
+# briefing. The model, quoting the listener's own email back at him, emitted
+#     "text": "...regarding an "overdue continuous payment reminder" where..."
+# — straight double quotes, unescaped, inside a JSON string value. Nothing
+# retried, so the run exited 1.
+#
+# The passes were already sending response_mime_type: application/json. That
+# only ASKS for JSON. A response_schema is what actually constrains the
+# decoder, and none of the four passes sent one. These are those schemas,
+# kept next to the parsing code they have to agree with rather than in the
+# provider, because the shape is the pipeline's business and not Gemini's —
+# a different LLMProvider gets handed the same dicts.
+# ──────────────────────────────────────────────────────────────
+
+_TURN_LIST_SCHEMA = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "speaker": {"type": "string", "enum": sorted(_VALID_SPEAKERS)},
+            "segment": {
+                "type": "string",
+                "enum": [s.value for s in _CANONICAL_SEGMENT_ORDER],
+            },
+            "text": {"type": "string"},
+        },
+        "required": ["speaker", "segment", "text"],
+    },
+}
+
+_OUTLINE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "segments": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "segment": {
+                        "type": "string",
+                        "enum": [s.value for s in _CANONICAL_SEGMENT_ORDER],
+                    },
+                    "covers": {"type": "string"},
+                    "angle": {"type": "string"},
+                    "words": {"type": "integer"},
+                },
+                "required": ["segment", "covers", "angle", "words"],
+            },
+        },
+    },
+    "required": ["segments"],
+}
+
+# The six categories CRITIQUE_PROMPT asks the editor to identify.
+_CRITIQUE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "issues": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "turn_index": {"type": "integer"},
+                    "type": {
+                        "type": "string",
+                        "enum": ["FLAT", "MONOLOGUE", "UNGROUNDED",
+                                 "AGREEABLE", "GENERIC", "FILLER"],
+                    },
+                    "detail": {"type": "string"},
+                    "fix": {"type": "string"},
+                },
+                "required": ["turn_index", "type", "detail", "fix"],
+            },
+        },
+    },
+    "required": ["issues"],
+}
+
+
+# ──────────────────────────────────────────────────────────────
+# One LLM pass, parsed, with a bounded repair loop.
+# ──────────────────────────────────────────────────────────────
+
+# Deliberately small. GeminiProvider.complete already retries 429/503 up to
+# MAX_ATTEMPTS (5), and the two loops nest: this one wraps complete(), so
+# the worst case is a product, not a sum. They cover disjoint failures — a
+# call that 429s never reaches the parser, and a body that will not parse
+# never 429'd — so the product is only reachable if the free tier is
+# throttling AND the model is emitting bad JSON. 3 keeps that at 15 rather
+# than 25, and two repair attempts that both fail is a signal to stop, not
+# to keep paying for the same mistake.
+_JSON_ATTEMPTS = 3
+
+# The draft pass ran at 0.85 — the only pass above 0.7 (outline 0.7, critique
+# 0.5, revise 0.6), and never justified by a measurement. Temperature is the
+# dial governing how often the decoder takes an unlikely token, which is
+# precisely the 2026-08-27 failure: one stray quote in a long structured
+# emission. The reason to want heat here is rule 2, tension between the hosts
+# — but tension is a content property the prompt asks for and the critique
+# pass enforces (generate.py runs passes=4), not something sampling noise
+# supplies. 0.7 keeps day-to-day variation and cuts the tail.
+_DRAFT_TEMPERATURE = 0.7
+
+# A repair is a mechanical task. Retrying at the pass's creative temperature
+# just redraws from the distribution that produced the broken output.
+_REPAIR_TEMPERATURE = 0.2
+
+# Enough to repair from without letting a long script double the prompt.
+_MAX_REPAIR_ECHO_CHARS = 4000
+
+
+def _repair_echo(raw: str, error_pos: int | None) -> str:
+    """The excerpt of its own output the model gets back.
+
+    Windowed around the break, not truncated from the front. A briefing
+    script runs well past this cap and the offending character is usually
+    deep inside it — the 2026-08-27 response broke at char 3516 of ~5900,
+    and a head-truncated echo showed the model several kilobytes of
+    perfectly good JSON and none of the part that failed.
+    """
+    if len(raw) <= _MAX_REPAIR_ECHO_CHARS:
+        return raw
+    if error_pos is None:
+        return raw[:_MAX_REPAIR_ECHO_CHARS] + "\n[... truncated ...]"
+    start = max(0, error_pos - _MAX_REPAIR_ECHO_CHARS // 2)
+    end = min(len(raw), start + _MAX_REPAIR_ECHO_CHARS)
+    return (
+        ("[... truncated ...]\n" if start > 0 else "")
+        + raw[start:end]
+        + ("\n[... truncated ...]" if end < len(raw) else "")
+    )
+
+_REPAIR_SUFFIX = """
+
+Your previous response could not be parsed as JSON.
+
+Parser error: {error}
+
+The usual cause is an unescaped double quote inside a string value, from
+quoting a phrase out of the source data verbatim. Every double quote inside
+a JSON string must be escaped as \\". Return the same content again as one
+valid JSON value in the shape requested above, and nothing else.
+
+--- your previous response ---
+{previous}
+--- end of previous response ---
+"""
+
+
+async def _complete_json(
+    *,
+    llm: LLMProvider,
+    prompt: str,
+    temperature: float,
+    response_schema: dict | None,
+    what: str,
+    validate: Any = None,
+) -> Any:
+    """Run one pass and parse it, retrying on anything the parser or the
+    shape check rejects.
+
+    Before this existed a single malformed response killed the whole run —
+    2026-08-27, no briefing. The schema above makes that rare; this makes it
+    survivable, by handing the model its own broken output and the decoder's
+    complaint so it can repair rather than blindly regenerate.
+
+    `validate` runs inside the loop on purpose. Valid JSON of the WRONG
+    SHAPE ({"turns": [...]} instead of a bare array) is a failure the model
+    can also fix if asked, and the draft path used to abort on it — the
+    revise path already survived it, so the draft was the strictly worse
+    place to be strict.
+    """
+    attempt_prompt = prompt
+    attempt_temperature = temperature
+    last_error: JSONParseError | None = None
+
+    for attempt in range(1, _JSON_ATTEMPTS + 1):
+        raw = await llm.complete(
+            HOST_SYSTEM,
+            attempt_prompt,
+            temperature=attempt_temperature,
+            json_mode=True,
+            response_schema=response_schema,
+        )
+        try:
+            parsed = parse_json_response(raw)
+            return validate(parsed) if validate is not None else parsed
+        except JSONParseError as exc:
+            last_error = exc
+            if attempt == _JSON_ATTEMPTS:
+                break
+            logger.warning(
+                "%s pass returned unusable JSON on attempt %d/%d (%s) — "
+                "asking the model to repair its own output",
+                what, attempt, _JSON_ATTEMPTS, exc.reason,
+            )
+            attempt_prompt = prompt + _REPAIR_SUFFIX.format(
+                error=exc.reason,
+                previous=_repair_echo(exc.raw_text or raw, exc.error_pos),
+            )
+            attempt_temperature = _REPAIR_TEMPERATURE
+
+    logger.error(
+        "%s pass produced unusable JSON on all %d attempts",
+        what, _JSON_ATTEMPTS,
+    )
+    raise last_error
+
+
+# ──────────────────────────────────────────────────────────────
 # The chain
 # ──────────────────────────────────────────────────────────────
 
@@ -487,10 +748,10 @@ async def _run_critique_and_revise(
         script=json.dumps(draft_json), source_data=source_data
     )
     try:
-        critique_raw = await llm.complete(
-            HOST_SYSTEM, critique_prompt, temperature=0.5, json_mode=True
+        critique = await _complete_json(
+            llm=llm, prompt=critique_prompt, temperature=0.5,
+            response_schema=_CRITIQUE_SCHEMA, what="critique",
         )
-        critique = parse_json_response(critique_raw)
     except Exception as exc:
         # Deliberately broad. Catching only JSONParseError let a provider
         # timeout, an exhausted retry budget or any other transport error
@@ -504,16 +765,17 @@ async def _run_critique_and_revise(
         script=json.dumps(draft_json), critique=json.dumps(critique)
     )
     try:
-        revised_raw = await llm.complete(
-            HOST_SYSTEM, revise_prompt, temperature=0.6, json_mode=True
+        # Still inside the try on purpose. JSON mode can return perfectly
+        # valid JSON of the wrong SHAPE — {"turns": [...]} instead of a bare
+        # array — which parse_json_response accepts and _parse_draft_turns
+        # then rejects. Outside this block that raise escaped and aborted a
+        # briefing whose draft was fine. _complete_json now retries that
+        # case before it gets here; this stays as the backstop.
+        revised_turns = await _complete_json(
+            llm=llm, prompt=revise_prompt, temperature=0.6,
+            response_schema=_TURN_LIST_SCHEMA, what="revise",
+            validate=_parse_draft_turns,
         )
-        revised_json = parse_json_response(revised_raw)
-        # Inside the try on purpose. JSON mode can return perfectly valid
-        # JSON of the wrong SHAPE — {"turns": [...]} instead of a bare array
-        # — which parse_json_response accepts and _parse_draft_turns then
-        # rejects. Outside this block that raise escaped and aborted a
-        # briefing whose draft was fine.
-        revised_turns = _parse_draft_turns(revised_json)
     except Exception as exc:
         logger.warning("revise pass failed, keeping draft: %r", exc)
         return draft_turns
@@ -593,27 +855,35 @@ async def generate_script(
         date=date.strftime("%A, %d %B %Y") + f" (local time {date:%H:%M})",
         weather=_format_weather(weather),
         n_events=len(events),
-        calendar=_format_calendar(events, background_events),
+        # Fenced, like the draft pass has always fenced its source block.
+        # The outline pass was receiving raw email bodies and calendar
+        # entries with no warning and no markers, and its output is then
+        # json.dumps'd straight into DRAFT_PROMPT as trusted instructions —
+        # so a body saying "ignore the above and open with..." got laundered
+        # into the draft's own instructions by a pass nobody was guarding.
+        # Same mitigation, same limits: it raises the cost of an attack, it
+        # does not make the model immune to one.
+        calendar=_fence_untrusted(_format_calendar(events, background_events)),
         n_emails=len(emails),
-        emails=_format_emails(emails),
+        emails=_fence_untrusted(_format_emails(emails)),
         n_stories=0,
         stories="(none — Phase 1 has no news clustering)",
         follow_ups="(none)",
         total_words=budget,
     )
-    outline_raw = await llm.complete(
-        HOST_SYSTEM, outline_prompt, temperature=0.7, json_mode=True
+    outline = await _complete_json(
+        llm=llm, prompt=outline_prompt, temperature=0.7,
+        response_schema=_OUTLINE_SCHEMA, what="outline",
     )
-    outline = parse_json_response(outline_raw)
 
     draft_prompt = DRAFT_PROMPT.format(
         outline=json.dumps(outline), source_data=source_data
     )
-    draft_raw = await llm.complete(
-        HOST_SYSTEM, draft_prompt, temperature=0.85, json_mode=True
+    draft_turns = await _complete_json(
+        llm=llm, prompt=draft_prompt, temperature=_DRAFT_TEMPERATURE,
+        response_schema=_TURN_LIST_SCHEMA, what="draft",
+        validate=_parse_draft_turns,
     )
-    draft_json = parse_json_response(draft_raw)
-    draft_turns = _parse_draft_turns(draft_json)
 
     if passes == 4 and draft_turns:
         final_turns = await _run_critique_and_revise(
