@@ -67,29 +67,31 @@ def _no_ambient_credentials(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _no_live_feed_fetches(monkeypatch):
-    """Make RSS's outbound HTTP impossible for every test.
+def _no_live_keyless_fetches(monkeypatch):
+    """Make the keyless sources' outbound HTTP impossible for every test.
 
-    The other sources fail closed without credentials, which is what keeps
-    the suite honest. RSS does not: the feeds are keyless, so `fixture=None`
-    means "go and fetch the real internet" and nothing above it says no. The
-    moment `fetch_articles` was wired into `generate_briefing`, every
-    end-to-end test started making real requests to real publishers — the
-    run went from 24 seconds to two minutes, and its results depended on
-    what the BBC had published that morning.
+    Gmail and Calendar fail closed without credentials, which is what has
+    kept the suite honest so far. RSS and weather do not: both are keyless,
+    so `fixture=None` means "go and fetch the real internet" and nothing
+    above them says no. The moment `fetch_articles` was wired into
+    `generate_briefing`, every end-to-end test started making real requests
+    to real publishers — the run went from 24 seconds to two minutes, and
+    its results depended on what the BBC had published that morning. Weather
+    was the same hole, one source over.
 
-    Patched on the `app.ingestion.rss` binding rather than in
+    Patched on the `app.ingestion.*` bindings rather than in
     `app.core.net_guard`, so `test_net_guard.py` still exercises the guard
-    itself, and so tests that monkeypatch `_fetch_feed_live` or
-    `_extract_full_text` directly are unaffected.
+    itself and tests that monkeypatch `_fetch_feed_live`,
+    `_extract_full_text` or `_fetch_live` directly are unaffected.
     """
-    from app.ingestion import rss
+    from app.ingestion import rss, weather
 
     async def _refuse(*args, **kwargs):
         raise AssertionError(
-            "a test tried to fetch a live URL through app.ingestion.rss. "
-            "Pass fixture=<path> (or rss_fixture=<path> to generate_briefing), "
-            "or monkeypatch _fetch_feed_live / _extract_full_text."
+            "a test tried to fetch a live URL from a keyless ingestion "
+            "source. Pass fixture=<path> (rss_fixture=/weather_fixture= to "
+            "generate_briefing), or monkeypatch the live fetch helper."
         )
 
     monkeypatch.setattr(rss, "safe_get", _refuse)
+    monkeypatch.setattr(weather, "_fetch_live", _refuse)

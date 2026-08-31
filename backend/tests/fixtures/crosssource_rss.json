@@ -1,0 +1,71 @@
+{
+ "https://www.reuters.com/technology/rss": {
+  "feed": {
+   "title": "Reuters Technology News"
+  },
+  "entries": [
+   {
+    "title": "TechCorp to acquire DataFlow for $2.3 billion in largest AI deal this year",
+    "link": "https://www.reuters.com/technology/techcorp-dataflow",
+    "published_parsed": [
+     2026,
+     8,
+     20,
+     8,
+     0,
+     0,
+     3,
+     232,
+     0
+    ],
+    "summary": "TechCorp announced Tuesday it will acquire data infrastructure startup DataFlow for $2.3 billion in cash and stock, the largest acquisition in the AI sector this year. The deal is expected to close in the fourth quarter pending regulatory approval. DataFlow's pipeline tooling will be folded into TechCorp's cloud platform. TechCorp said it expects the DataFlow team to remain in place through the transition, and that no changes to DataFlow's existing enterprise contracts are planned before the deal closes. Analysts had valued DataFlow at closer to $1.8 billion in its last private round, making the $2.3 billion figure a meaningful premium on the most recent mark."
+   }
+  ]
+ },
+ "https://www.platformer.news/rss": {
+  "feed": {
+   "title": "Platformer"
+  },
+  "entries": [
+   {
+    "title": "TechCorp just bought DataFlow. Here's why it matters",
+    "link": "https://www.platformer.news/techcorp-dataflow-why-it-matters",
+    "published_parsed": [
+     2026,
+     8,
+     20,
+     12,
+     0,
+     0,
+     3,
+     232,
+     0
+    ],
+    "summary": "TechCorp's $2.3 billion acquisition of DataFlow closed faster than expected regulatory scrutiny would have suggested, and that's a signal in itself: antitrust enforcers are not treating pipeline infrastructure the way they treat consumer platforms. Employees at DataFlow tell Platformer the integration timeline is aggressive, targeting Q4. The AI infrastructure market has consolidated sharply this year and DataFlow was one of the last independent vendors of any scale, which is the part of this deal that will matter in eighteen months."
+   }
+  ]
+ },
+ "https://arstechnica.com/space/feed/": {
+  "feed": {
+   "title": "Ars Technica"
+  },
+  "entries": [
+   {
+    "title": "Rocket Lab launches Neutron on debut test flight, reaches orbit successfully",
+    "link": "https://arstechnica.com/space/neutron-debut",
+    "published_parsed": [
+     2026,
+     8,
+     20,
+     10,
+     30,
+     0,
+     3,
+     232,
+     0
+    ],
+    "summary": "Rocket Lab launched its Neutron vehicle on a debut test flight from Wallops Island early Wednesday, reaching orbit successfully on the first attempt. The company said the booster performed within margins through stage separation. Neutron is intended to compete for medium lift payloads currently flying on Falcon 9, and Rocket Lab has said it expects a second Neutron flight before the end of the year. The Wallops pad required substantial modification to support the larger vehicle, including a new flame trench and a taller integration building, and Rocket Lab has said the site can support a higher cadence than the debut campaign suggests."
+   }
+  ]
+ }
+}
