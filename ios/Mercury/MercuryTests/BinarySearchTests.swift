@@ -74,7 +74,7 @@ final class BinarySearchTests: XCTestCase {
     /// display-link tick meant a seek while paused never updated it at all,
     /// because a paused coordinator has no display link to tick.
     ///
-    /// `turn(startingAtOrAfter:)` is what makes that possible for a position
+    /// `turn(coveringOrAfter:)` is what makes that possible for a position
     /// landing in the silence between turns, where `turn(containing:)`
     /// correctly returns nil.
     func testSeekIntoAGapResolvesForwardToTheNextTurn() throws {
@@ -84,25 +84,25 @@ final class BinarySearchTests: XCTestCase {
         // turns[6] starts at 20000.
         XCTAssertNil(manifest.turn(containing: 19_900), "precondition: a real gap")
 
-        let next = try XCTUnwrap(manifest.turn(startingAtOrAfter: 19_900))
+        let next = try XCTUnwrap(manifest.turn(coveringOrAfter: 19_900))
         XCTAssertEqual(next.startMs, 20_000)
     }
 
     func testStartingAtOrAfterInsideATurnReturnsThatTurn() throws {
         let manifest = try ManifestDecodingTests.loadFixture()
-        let inside = try XCTUnwrap(manifest.turn(startingAtOrAfter: 13_500))
+        let inside = try XCTUnwrap(manifest.turn(coveringOrAfter: 13_500))
         XCTAssertEqual(inside.startMs, 12_000)
         XCTAssertEqual(inside.endMs, 16_000)
     }
 
     func testStartingAtOrAfterPastTheLastTurnIsNil() throws {
         let manifest = try ManifestDecodingTests.loadFixture()
-        XCTAssertNil(manifest.turn(startingAtOrAfter: 999_999))
+        XCTAssertNil(manifest.turn(coveringOrAfter: 999_999))
     }
 
     func testStartingAtOrAfterBeforeTheFirstTurnReturnsTheFirst() throws {
         let manifest = try ManifestDecodingTests.loadFixture()
-        let first = try XCTUnwrap(manifest.turn(startingAtOrAfter: 0))
+        let first = try XCTUnwrap(manifest.turn(coveringOrAfter: 0))
         XCTAssertEqual(first.startMs, 0)
     }
 

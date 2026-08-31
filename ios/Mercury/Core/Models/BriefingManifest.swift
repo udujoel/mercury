@@ -192,18 +192,27 @@ extension BriefingManifest {
         return nil
     }
 
-    /// The first rendered turn that starts at or after `ms`.
+    /// The first rendered turn that has not finished by `ms` — the one
+    /// covering it, or failing that the next one along.
     ///
-    /// `turn(containing:)` returns nil in the silence between turns, which
-    /// is right during playback — the transcript should hold the line that
-    /// just finished. It is wrong immediately after a SEEK: landing in a
-    /// gap would otherwise leave the transcript showing a line from
-    /// somewhere else in the briefing entirely. This resolves such a
-    /// position forward to the line about to be spoken.
+    /// Named for what it does rather than for the search it runs. It was
+    /// `turn(startingAtOrAfter:)`, which promised a turn whose `startMs` is
+    /// at least `ms` and does not deliver one: the search is a lower bound
+    /// on `endMs`, so a position INSIDE a turn returns that turn, whose
+    /// `startMs` is behind `ms`. Every caller wanted the covering-or-next
+    /// behaviour; only the name disagreed.
+    ///
+    /// Used on the SEEK path only. `turn(containing:)` returns nil in the
+    /// silence between turns, which is right during playback — the
+    /// transcript holds the line that just finished. It is wrong
+    /// immediately after a seek: landing in a gap would otherwise leave the
+    /// transcript showing a line from somewhere else in the briefing
+    /// entirely. This resolves such a position forward to the line about to
+    /// be spoken.
     ///
     /// Same O(log n) binary search, on the same pre-computed array: find
     /// the first turn whose `endMs` is past `ms`.
-    func turn(startingAtOrAfter ms: Int) -> Turn? {
+    func turn(coveringOrAfter ms: Int) -> Turn? {
         let turns = renderedTurns
         var lo = 0
         var hi = turns.count

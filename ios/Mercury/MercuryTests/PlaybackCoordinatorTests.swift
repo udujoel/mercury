@@ -87,36 +87,13 @@ final class PlaybackCoordinatorTests: XCTestCase {
     }
 
     // MARK: - end of playback vs. being stopped
-
-    func testDrainingToTheEndCountsAsFinished() {
-        XCTAssertTrue(PlaybackCoordinator.isEndOfPlayback(
-            positionMs: 322_036, audioDurationMs: 322_036
-        ))
-    }
-
-    /// One 20 Hz tick short of the end still counts: the last position
-    /// reported before the node stops is up to a tick behind the truth.
-    func testATickShortOfTheEndStillCountsAsFinished() {
-        XCTAssertTrue(PlaybackCoordinator.isEndOfPlayback(
-            positionMs: 321_950, audioDurationMs: 322_036
-        ))
-    }
-
-    /// An interruption tears down the engine, and THAT fires the same
-    /// completion callback as the audio draining. Treating a phone call
-    /// three minutes in as "the briefing ended" would clear the transport
-    /// mid-sentence and make the interruption unresumable.
-    func testBeingStoppedMidBriefingDoesNotCountAsFinished() {
-        XCTAssertFalse(PlaybackCoordinator.isEndOfPlayback(
-            positionMs: 180_000, audioDurationMs: 322_036
-        ))
-    }
-
-    func testUnknownDurationFallsBackToTreatingTheCallbackAsTheEnd() {
-        XCTAssertTrue(PlaybackCoordinator.isEndOfPlayback(
-            positionMs: 0, audioDurationMs: 0
-        ), "with no duration to compare against, the callback is all we have")
-    }
+    //
+    // `isEndOfPlayback(positionMs:audioDurationMs:)` and the four tests that
+    // covered it are gone. It inferred "the audio drained" from the reported
+    // position, and the reported position comes from `CADisplayLink`, which
+    // stops firing when the app is backgrounded — so the inference was wrong
+    // in exactly the case the app is designed for. `PlaybackCompletionTests`
+    // below replaces them, asserting on the completion path itself.
 
     // MARK: - volume ramp maths
     //
@@ -160,32 +137,33 @@ final class PlaybackCoordinatorTests: XCTestCase {
 // is how the dead state below survived a green suite in the very PR that set
 // out to remove it.
 
+/// Shared by both interruption suites below.
+fileprivate func interruption(
+    _ type: AVAudioSession.InterruptionType,
+    options: AVAudioSession.InterruptionOptions? = nil
+) -> Notification {
+    var info: [AnyHashable: Any] = [
+        AVAudioSessionInterruptionTypeKey: type.rawValue
+    ]
+    if let options {
+        info[AVAudioSessionInterruptionOptionKey] = options.rawValue
+    }
+    return Notification(
+        name: AVAudioSession.interruptionNotification,
+        object: AVAudioSession.sharedInstance(),
+        userInfo: info
+    )
+}
+
+fileprivate func routeChange(_ reason: AVAudioSession.RouteChangeReason) -> Notification {
+    Notification(
+        name: AVAudioSession.routeChangeNotification,
+        object: AVAudioSession.sharedInstance(),
+        userInfo: [AVAudioSessionRouteChangeReasonKey: reason.rawValue]
+    )
+}
+
 final class InterruptionHandlingTests: XCTestCase {
-
-    private func interruption(
-        _ type: AVAudioSession.InterruptionType,
-        options: AVAudioSession.InterruptionOptions? = nil
-    ) -> Notification {
-        var info: [AnyHashable: Any] = [
-            AVAudioSessionInterruptionTypeKey: type.rawValue
-        ]
-        if let options {
-            info[AVAudioSessionInterruptionOptionKey] = options.rawValue
-        }
-        return Notification(
-            name: AVAudioSession.interruptionNotification,
-            object: AVAudioSession.sharedInstance(),
-            userInfo: info
-        )
-    }
-
-    private func routeChange(_ reason: AVAudioSession.RouteChangeReason) -> Notification {
-        Notification(
-            name: AVAudioSession.routeChangeNotification,
-            object: AVAudioSession.sharedInstance(),
-            userInfo: [AVAudioSessionRouteChangeReasonKey: reason.rawValue]
-        )
-    }
 
     /// The bug this PR claimed to fix, surviving on the path the auto-resume
     /// does not cover: the user declines the system's resume and taps play
@@ -264,5 +242,233 @@ final class InterruptionHandlingTests: XCTestCase {
             coordinator.isPlaying,
             "plugging headphones IN must not stop playback"
         )
+    }
+}
+
+// MARK: - Bot review findings, PR #12
+//
+// Every test below was seen to fail against the code as reviewed before the
+// corresponding fix was written. Where a fix removes a guard, there is a
+// paired negative control asserting the guard's real job is still done.
+
+/// A briefing with a deliberate silence between the two turns: 0–1000ms is
+/// spoken, 1000–2000ms is a gap, 2000–3000ms is spoken. The gap is the whole
+/// point — it is where `turn(containing:)` returns nil.
+private func gappedManifest() -> BriefingManifest {
+    BriefingManifest(
+        briefingId: "2026-08-23",
+        generatedAt: Date(timeIntervalSince1970: 0),
+        durationMs: 3_000,
+        audioUrl: "/briefing/2026-08-23/audio",
+        segments: [
+            BriefingSegment(id: "inbox", label: "Inbox", startMs: 0),
+            BriefingSegment(id: "news", label: "News", startMs: 2_000),
+        ],
+        turns: [
+            Turn(speaker: "A", segment: "inbox", text: "first", startMs: 0, endMs: 1_000),
+            Turn(speaker: "B", segment: "news", text: "second", startMs: 2_000, endMs: 3_000),
+        ],
+        sources: []
+    )
+}
+
+final class PlaybackCompletionTests: XCTestCase {
+
+    /// macroscope/cubic: the completion callback was gated on `positionMs`,
+    /// which only moves when the display link fires — and `CADisplayLink`
+    /// stops firing the moment the app is backgrounded. Listening with the
+    /// phone in a pocket, the position freezes wherever it was at
+    /// backgrounding, so the audio drains at 5:22 while the coordinator
+    /// still believes it is at 2:00. The sole completion callback was then
+    /// discarded: `isPlaying` stayed true, the briefing was never marked
+    /// complete, and its resume position was never rewound.
+    @MainActor
+    func testCompletionIsAcceptedEvenWhenThePositionIsStale() {
+        let coordinator = PlaybackCoordinator()
+        coordinator.loadForTesting(manifest: gappedManifest(), audioDurationMs: 322_036)
+        coordinator.setPositionForTesting(120_000)
+
+        coordinator.simulatePlaybackCompletion(engineRunning: true)
+
+        XCTAssertTrue(
+            coordinator.hasFinished,
+            "the node drained; a display link that stopped ticking when the "
+                + "app backgrounded is not evidence that it did not"
+        )
+        XCTAssertFalse(coordinator.isPlaying)
+    }
+
+    /// The negative control for the test above. Dropping the position gate
+    /// must not turn every engine teardown into "the briefing ended" — that
+    /// is the bug the gate was there to prevent, and it is now the engine's
+    /// own state that rules it out rather than an inference from position.
+    @MainActor
+    func testEngineTeardownIsStillNotTheEndOfTheBriefing() {
+        let coordinator = PlaybackCoordinator()
+        coordinator.loadForTesting(manifest: gappedManifest(), audioDurationMs: 322_036)
+        coordinator.setPositionForTesting(321_000)
+
+        coordinator.simulatePlaybackCompletion(engineRunning: false)
+
+        XCTAssertFalse(
+            coordinator.hasFinished,
+            "the engine was stopped under us — that fires the same callback "
+                + "as draining, and marking the briefing complete would rewind "
+                + "the listener's place"
+        )
+    }
+
+    /// The other half of the same protection, for the ordering the
+    /// `isInterrupted` flag exists to cover.
+    @MainActor
+    func testAnInterruptionIsNeverAcceptedAsCompletion() {
+        let coordinator = PlaybackCoordinator()
+        coordinator.loadForTesting(manifest: gappedManifest(), audioDurationMs: 322_036)
+        coordinator.setPositionForTesting(321_000)
+        coordinator.handleInterruption(interruption(.began))
+
+        coordinator.simulatePlaybackCompletion(engineRunning: true)
+
+        XCTAssertFalse(coordinator.hasFinished)
+    }
+
+    /// macroscope: `.ended` arrives without the options key, the guard
+    /// returned early, and `isInterrupted` stayed set for the rest of the
+    /// session — after which `playbackDidComplete` rejected every callback
+    /// and the briefing could never register its own ending again.
+    @MainActor
+    func testInterruptionEndedWithNoOptionsKeyStillClearsTheInterruption() {
+        let coordinator = PlaybackCoordinator()
+        coordinator.loadForTesting(manifest: gappedManifest(), audioDurationMs: 322_036)
+
+        coordinator.handleInterruption(interruption(.began))
+        coordinator.handleInterruption(interruption(.ended))
+
+        XCTAssertFalse(
+            coordinator.isInterruptedForTesting,
+            "a missing options key means no options, not a permanent interruption"
+        )
+
+        // The consequence, which is what actually reaches the user.
+        coordinator.setPositionForTesting(321_000)
+        coordinator.simulatePlaybackCompletion(engineRunning: true)
+        XCTAssertTrue(coordinator.hasFinished)
+    }
+
+    /// macroscope: a resume that lands at or past the end of the file
+    /// cannot schedule anything, and the discarded return value left the
+    /// transport pointing at a position it can never play from. `play()`
+    /// then retried the same invalid position forever: the button did
+    /// nothing, for the rest of the session.
+    @MainActor
+    func testAScheduleThatCannotBePlacedFinishesRatherThanStalling() {
+        let coordinator = PlaybackCoordinator()
+        coordinator.loadForTesting(manifest: gappedManifest(), audioDurationMs: 3_000)
+
+        // No file, so no window can be produced — the same failure a seek
+        // past the end of real audio produces.
+        coordinator.scheduleOrFinishForTesting(fromMs: 3_000)
+
+        XCTAssertTrue(
+            coordinator.hasFinished,
+            "nothing left to schedule has to resolve to finished, or play() "
+                + "retries the same unplayable position forever"
+        )
+    }
+}
+
+final class RouteChangePrivacyTests: XCTestCase {
+
+    /// macroscope/cubic, and a privacy defect rather than a convenience one.
+    ///
+    /// A phone call pauses playback and records that it should resume. If
+    /// the headphones come out DURING that call, the route-change handler
+    /// saw `isPlaying == false` and did nothing — so when the call ended
+    /// with `.shouldResume`, the coordinator restarted the user's inbox on
+    /// the built-in speaker. That is exactly the broadcast the route-change
+    /// handler exists to prevent, reached by a different door.
+    @MainActor
+    func testHeadphonesLeavingDuringAnInterruptionCancelsTheResume() {
+        let coordinator = PlaybackCoordinator()
+        coordinator.setIsPlayingForTesting(true)
+
+        coordinator.handleInterruption(interruption(.began))
+        coordinator.handleRouteChange(routeChange(.oldDeviceUnavailable))
+
+        XCTAssertFalse(
+            coordinator.wasPlayingBeforeInterruptionForTesting,
+            "the audio route the user consented to is gone; the system's "
+                + "permission to resume must not survive it"
+        )
+
+        coordinator.handleInterruption(interruption(.ended, options: .shouldResume))
+        XCTAssertFalse(coordinator.isPlaying)
+    }
+
+    /// The negative control: an ordinary interruption with the headphones
+    /// still in must keep resuming, or this "fix" would simply break
+    /// auto-resume.
+    @MainActor
+    func testAnOrdinaryInterruptionStillKeepsItsResumeIntent() {
+        let coordinator = PlaybackCoordinator()
+        coordinator.setIsPlayingForTesting(true)
+
+        coordinator.handleInterruption(interruption(.began))
+
+        XCTAssertTrue(coordinator.wasPlayingBeforeInterruptionForTesting)
+    }
+}
+
+final class TurnResolutionTests: XCTestCase {
+
+    /// macroscope/cubic: `resolveTurn` fell forward to the next turn on
+    /// EVERY call, including the 20 Hz tick. In the silence between two
+    /// turns the transcript therefore jumped to the next line — and the
+    /// chapter tab with it — before a word of that line had been spoken.
+    @MainActor
+    func testTheTranscriptHoldsTheFinishedLineThroughSilence() {
+        let coordinator = PlaybackCoordinator()
+        coordinator.loadForTesting(manifest: gappedManifest(), audioDurationMs: 3_000)
+
+        coordinator.resolveTurnForTesting(atMs: 500, fromSeek: false)
+        XCTAssertEqual(coordinator.currentTurn?.text, "first")
+
+        coordinator.resolveTurnForTesting(atMs: 1_500, fromSeek: false)
+
+        XCTAssertEqual(
+            coordinator.currentTurn?.text, "first",
+            "1500ms is silence between two turns; the line that just "
+                + "finished holds until the next one is actually speaking"
+        )
+        XCTAssertEqual(
+            coordinator.currentSegment?.id, "inbox",
+            "and the chapter tab must not jump ahead either"
+        )
+    }
+
+    /// The negative control. Forward resolution is right after a SEEK:
+    /// landing in a gap must show the line about to be spoken, not one from
+    /// wherever the listener jumped from.
+    @MainActor
+    func testASeekIntoSilenceResolvesForwardToTheNextLine() {
+        let coordinator = PlaybackCoordinator()
+        coordinator.loadForTesting(manifest: gappedManifest(), audioDurationMs: 3_000)
+
+        coordinator.resolveTurnForTesting(atMs: 1_500, fromSeek: true)
+
+        XCTAssertEqual(coordinator.currentTurn?.text, "second")
+        XCTAssertEqual(coordinator.currentSegment?.id, "news")
+    }
+
+    /// Playback inside a turn is unaffected by any of this.
+    @MainActor
+    func testPlaybackInsideATurnStillAdvances() {
+        let coordinator = PlaybackCoordinator()
+        coordinator.loadForTesting(manifest: gappedManifest(), audioDurationMs: 3_000)
+
+        coordinator.resolveTurnForTesting(atMs: 500, fromSeek: false)
+        coordinator.resolveTurnForTesting(atMs: 2_500, fromSeek: false)
+
+        XCTAssertEqual(coordinator.currentTurn?.text, "second")
     }
 }

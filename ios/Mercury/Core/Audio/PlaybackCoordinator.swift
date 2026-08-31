@@ -93,6 +93,18 @@ final class PlaybackCoordinator {
     /// position — see `tick()`.
     private var scheduleBaseMs = 0
 
+    #if DEBUG
+    /// Debug-only stand-in for the loaded file's length.
+    ///
+    /// In production the audio length has exactly one source — the
+    /// `AVAudioFile` — and that is deliberate (see `audioDurationMs`). But
+    /// the completion-callback rules can only be exercised against a
+    /// briefing with a real length, and loading a real file in a unit test
+    /// drags in `AVAudioSession`, a running engine and audio hardware. This
+    /// lets `loadForTesting` supply one instead. Debug only.
+    private var stubbedAudioDurationMs: Int?
+    #endif
+
     init() {
         observeAudioSessionEvents()
     }
@@ -181,7 +193,7 @@ final class PlaybackCoordinator {
         // briefing replays from the top; anything else picks up where the
         // reported position left off.
         if !hasScheduled || hasFinished {
-            schedule(fromMs: hasFinished ? 0 : positionMs, startPlaying: true)
+            scheduleOrFinish(fromMs: hasFinished ? 0 : positionMs, startPlaying: true)
             return
         }
 
@@ -399,14 +411,19 @@ final class PlaybackCoordinator {
             completionCallbackType: .dataPlayedBack
         ) { [weak self] _ in
             // Delivered on an AVAudioEngine-internal queue.
-            DispatchQueue.main.async { self?.playbackDidComplete(generation: generation) }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.playbackDidComplete(
+                    generation: generation, engineWasRunning: self.engine.isRunning
+                )
+            }
         }
 
         hasScheduled = true
         hasFinished = false
         scheduleBaseMs = window.positionMs
         positionMs = window.positionMs
-        resolveTurn(atMs: window.positionMs)
+        resolveTurn(atMs: window.positionMs, fromSeek: true)
 
         if startPlaying {
             player.play()
@@ -422,25 +439,20 @@ final class PlaybackCoordinator {
         return true
     }
 
-    /// How far from the end a completion callback still counts as "the
-    /// audio drained". One 20 Hz tick is 50 ms of wall clock, up to 100 ms
-    /// of audio at 2x, so a second is comfortable margin.
-    static let endOfPlaybackToleranceMs = 1_000
-
-    /// Distinguishes "the audio drained" from "something stopped the node".
+    /// Schedules from `ms`, or accepts that there is nothing left to play.
     ///
-    /// A completion handler also fires when the engine is torn down, which
-    /// is exactly what an audio-session interruption does. Treating that as
-    /// the end of the briefing would clear the transport mid-sentence and
-    /// make the interruption unresumable. Pure, so the boundary is testable
-    /// without an engine.
-    static func isEndOfPlayback(
-        positionMs: Int,
-        audioDurationMs: Int,
-        toleranceMs: Int = endOfPlaybackToleranceMs
-    ) -> Bool {
-        guard audioDurationMs > 0 else { return true }
-        return positionMs >= audioDurationMs - toleranceMs
+    /// `schedule(fromMs:startPlaying:)` returns false at or past the end of
+    /// the audio, and both callers used to discard that. The transport was
+    /// then pointing at a position it could never play from and did not
+    /// know it: `hasFinished` stayed false, so `play()` retried the same
+    /// invalid position, failed the same way, and the button did nothing
+    /// for the rest of the session. `seek(toMs:)` already handled this
+    /// correctly; this is the same treatment for the other two entry
+    /// points.
+    private func scheduleOrFinish(fromMs ms: Int, startPlaying: Bool) {
+        if !schedule(fromMs: ms, startPlaying: startPlaying) {
+            finish()
+        }
     }
 
     /// Starts the engine if something stopped it, most often an
@@ -469,17 +481,37 @@ final class PlaybackCoordinator {
         hasScheduled = false
     }
 
-    private func playbackDidComplete(generation: Int) {
-        // An interruption is not an ending, however close to the end it
-        // lands. Without this, a call arriving at 5:59 of a 6:00 briefing
-        // was indistinguishable from having listened to the whole thing:
-        // finish() fired, the briefing was marked complete, and the resume
-        // position was reset to zero.
-        guard !isInterrupted else { return }
+    /// The three reasons this callback can arrive, and how each is told
+    /// apart.
+    ///
+    /// `AVAudioPlayerNode` fires the same completion callback whether the
+    /// audio drained or something stopped the node, so all three have to be
+    /// separated by state rather than by inference:
+    ///
+    /// 1. A seek, a reload or a `finish()` — every one of those bumps
+    ///    `scheduleGeneration` BEFORE calling `player.stop()`, so the
+    ///    outgoing schedule's callback names a generation that no longer
+    ///    holds.
+    /// 2. An interruption whose notification has already been delivered —
+    ///    `isInterrupted`.
+    /// 3. An interruption whose teardown BEAT its notification onto the
+    ///    main queue. The system stops the engine to interrupt us, so
+    ///    `engine.isRunning` is false by the time this runs; audio that
+    ///    merely drained leaves the engine up.
+    ///
+    /// This used to be gated on `positionMs` being within a second of the
+    /// audio length instead of on (3). `positionMs` only moves when the
+    /// display link fires, and `CADisplayLink` stops firing the moment the
+    /// app is backgrounded — which is how this briefing is normally
+    /// listened to. The position froze wherever it was at backgrounding,
+    /// the audio drained minutes later, and the sole completion callback
+    /// was discarded: `isPlaying` stayed true, `onFinished` never fired, so
+    /// the briefing was never marked complete and its resume point was
+    /// never rewound. Every morning after, it resumed into the sign-off.
+    private func playbackDidComplete(generation: Int, engineWasRunning: Bool) {
         guard generation == scheduleGeneration else { return }
-        guard Self.isEndOfPlayback(
-            positionMs: positionMs, audioDurationMs: audioDurationMs
-        ) else { return }
+        guard !isInterrupted else { return }
+        guard engineWasRunning else { return }
         finish()
     }
 
@@ -487,6 +519,9 @@ final class PlaybackCoordinator {
     /// The manifest's `duration_ms` is the stitcher's arithmetic; the file
     /// is the thing that actually stops.
     private var audioDurationMs: Int {
+        #if DEBUG
+        if let stubbedAudioDurationMs { return stubbedAudioDurationMs }
+        #endif
         guard let file, file.processingFormat.sampleRate > 0 else { return 0 }
         return Int(Double(file.length) / file.processingFormat.sampleRate * 1000)
     }
@@ -553,9 +588,15 @@ final class PlaybackCoordinator {
             // will call player.play() on nothing.
             invalidateSchedule()
         case .ended:
-            guard let optionsRaw =
-                    note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt
-            else { return }
+            // A missing options key means NO options, not "ignore this
+            // notification". Returning early here left `isInterrupted` set
+            // for the rest of the session, and `playbackDidComplete`
+            // refuses every callback while it is — so the briefing could
+            // never register its own ending again, and `isPlaying` stuck at
+            // true. `.ended` with nothing attached is what arrives when the
+            // user starts another app's audio, which is not rare.
+            let optionsRaw =
+                note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
             let options = AVAudioSession.InterruptionOptions(rawValue: optionsRaw)
             // `.shouldResume` is the system's permission to start again. It
             // is absent when the user chose something else — resuming anyway
@@ -585,6 +626,17 @@ final class PlaybackCoordinator {
               let reason = AVAudioSession.RouteChangeReason(rawValue: raw),
               reason == .oldDeviceUnavailable
         else { return }
+
+        // Clearing the resume intent comes FIRST, and unconditionally.
+        //
+        // This used to sit inside the `isPlaying` branch, which reads as
+        // harmless and is not: a phone call pauses playback and records
+        // that it should resume, so if the headphones come out DURING the
+        // call, `isPlaying` is already false and nothing here ran. The
+        // call then ended with `.shouldResume` and the coordinator started
+        // the user's inbox on the built-in speaker — the exact broadcast
+        // this handler exists to prevent, reached through a different door.
+        wasPlayingBeforeInterruption = false
         if isPlaying { pause() }
     }
 
@@ -593,7 +645,7 @@ final class PlaybackCoordinator {
         // An interruption tears the engine down, which flushes the player
         // node — so this is a fresh schedule from where we stopped, not a
         // `player.play()` on something still queued.
-        schedule(fromMs: positionMs, startPlaying: true)
+        scheduleOrFinish(fromMs: positionMs, startPlaying: true)
     }
 
     // MARK: - Sync
@@ -654,14 +706,23 @@ final class PlaybackCoordinator {
     /// Called from the tick AND immediately after a seek — waiting for the
     /// next tick meant a seek while paused never updated the transcript at
     /// all, because a paused coordinator has no display link.
-    private func resolveTurn(atMs ms: Int, animated: Bool = false) {
+    ///
+    /// `fromSeek` is what separates the two, and it used to be missing.
+    /// Forward resolution ran on every call, so during ordinary playback
+    /// the silence between two turns — where `turn(containing:)` is nil by
+    /// design — jumped the transcript and the chapter tab to the next line
+    /// before a word of it had been spoken. Landing in that same silence
+    /// after a SEEK is the opposite case: there is no line to hold, so the
+    /// one about to be spoken is the right answer.
+    private func resolveTurn(atMs ms: Int, animated: Bool = false, fromSeek: Bool = false) {
         guard let manifest else { return }
 
         // O(log n) binary search over the pre-computed rendered list; safe
         // to run at 20 Hz on the main actor.
-        guard let turn = manifest.turn(containing: ms) ?? manifest.turn(startingAtOrAfter: ms),
-              turn.id != currentTurn?.id
-        else { return }
+        let resolved = fromSeek
+            ? manifest.turn(containing: ms) ?? manifest.turn(coveringOrAfter: ms)
+            : manifest.turn(containing: ms)
+        guard let turn = resolved, turn.id != currentTurn?.id else { return }
 
         let apply = {
             self.currentTurn = turn
@@ -690,9 +751,51 @@ extension PlaybackCoordinator {
 
     var isInterruptedForTesting: Bool { isInterrupted }
 
+    /// The intent that `.shouldResume` acts on. Private in production, and
+    /// that is why the route-change privacy hole below could not be asserted
+    /// on until now.
+    var wasPlayingBeforeInterruptionForTesting: Bool { wasPlayingBeforeInterruption }
+
+    /// The shared "schedule, or accept that there is nothing left to play"
+    /// path that `play()` and `resumeAfterInterruption()` both take.
+    func scheduleOrFinishForTesting(fromMs ms: Int) {
+        scheduleOrFinish(fromMs: ms, startPlaying: true)
+    }
+
     /// Lets a test set up the one precondition the route-change privacy
     /// check needs — that something was playing — without an audio file,
     /// an engine, or real hardware.
     func setIsPlayingForTesting(_ value: Bool) { isPlaying = value }
+
+    /// A manifest and an audio length with no file, no engine and no audio
+    /// session — enough to exercise turn resolution and the end-of-playback
+    /// rules, which are pure decisions about state.
+    func loadForTesting(manifest: BriefingManifest, audioDurationMs: Int) {
+        self.manifest = manifest
+        self.stubbedAudioDurationMs = audioDurationMs
+    }
+
+    /// Stands in for the display link, which is the only thing that moves
+    /// `positionMs` during playback — and which stops firing entirely while
+    /// the app is backgrounded.
+    func setPositionForTesting(_ ms: Int) {
+        positionMs = ms
+        scheduleBaseMs = ms
+    }
+
+    /// Fires the completion callback `AVAudioPlayerNode` delivers, for the
+    /// schedule currently in force. `engineRunning` is the discriminator
+    /// between audio draining (the engine is still up) and the system
+    /// tearing the engine down under us.
+    func simulatePlaybackCompletion(engineRunning: Bool) {
+        playbackDidComplete(generation: scheduleGeneration, engineWasRunning: engineRunning)
+    }
+
+    /// Drives the same resolution the tick and the seek paths drive.
+    /// `fromSeek` selects forward resolution, which is correct after a jump
+    /// and wrong during playback.
+    func resolveTurnForTesting(atMs ms: Int, fromSeek: Bool) {
+        resolveTurn(atMs: ms, fromSeek: fromSeek)
+    }
 }
 #endif
