@@ -410,6 +410,10 @@ async def test_no_embedding_provider_still_ships_a_briefing(tmp_path):
 
 
 def _newsletter(sender: str, title: str, body: str) -> Item:
+    # is_newsletter, because `app/ingestion/gmail.py::detect_newsletter` sets
+    # it on every subscribed email and the inbox subtraction reads it. A
+    # helper called _newsletter that produced items indistinguishable from
+    # personal mail could only test half of what it named.
     return Item(
         source_type=SourceType.EMAIL,
         source_name=sender,
@@ -417,7 +421,15 @@ def _newsletter(sender: str, title: str, body: str) -> Item:
         body=body,
         author=f"news@{sender.lower().replace(' ', '')}.com",
         timestamp=datetime(2026, 8, 31, 6, 0, tzinfo=UTC),
+        raw={"is_newsletter": True},
     )
+
+
+def _personal(sender: str, title: str, body: str) -> Item:
+    """An ordinary email. Same shape minus the subscription flag."""
+    item = _newsletter(sender, title, body)
+    item.raw = {"is_newsletter": False}
+    return item
 
 
 ACQUISITION_BODY = (
@@ -494,7 +506,7 @@ async def test_unrelated_emails_are_not_collapsed_into_each_other():
     emails = [
         _newsletter("Stratechery", "The Halcyon acquisition", ACQUISITION_BODY),
         _newsletter("Benedict Evans", "Northwind buys Halcyon", ACQUISITION_BODY),
-        _newsletter(
+        _personal(
             "Maria Chen", "Lunch Thursday?",
             "Are you free Thursday? There is a new place near the office.",
         ),
@@ -521,7 +533,7 @@ async def test_a_newsletter_absorbed_by_the_world_segment_leaves_the_inbox():
     alone — the contract the gate actually depends on."""
     emails = [
         _newsletter("Stratechery", "The Halcyon acquisition", ACQUISITION_BODY),
-        _newsletter(
+        _personal(
             "Maria Chen", "Lunch Thursday?",
             "Are you free Thursday? There is a new place near the office.",
         ),
@@ -544,3 +556,87 @@ async def test_a_newsletter_absorbed_by_the_world_segment_leaves_the_inbox():
     assert "Reuters" in world[0].source_names
     # Absorbed out of the inbox, so it is not read twice.
     assert {e.source_name for e in inbox} == {"Maria Chen"}
+
+
+# ──────────────────────────────────────────────────────────────
+# What the inbox subtraction is allowed to take
+# ──────────────────────────────────────────────────────────────
+
+
+async def test_a_personal_email_is_not_absorbed_into_a_world_story():
+    """Absorption removes an email from the inbox because the world segment
+    is about to tell that story. That trade is right for a newsletter, whose
+    content IS the story. It is wrong for a colleague's note: the world story
+    renders the canonical article's title and body, so all that survives of
+    the email is its sender name in a source list. A message the user was
+    written to personally would be read out by nobody.
+    """
+    emails = [
+        _personal(
+            "Maria Chen", "Northwind/Halcyon — are we exposed?",
+            ACQUISITION_BODY + " Do we have anything riding on this?",
+        )
+    ]
+    articles = [
+        Item(
+            source_type=SourceType.RSS, source_name="Reuters",
+            title="Northwind to acquire Halcyon Robotics",
+            body=ACQUISITION_BODY,
+            url="https://example.com/northwind-halcyon",
+            timestamp=datetime(2026, 8, 31, 5, 30, tzinfo=UTC),
+        )
+    ]
+
+    world, inbox = await _world(emails, articles)
+
+    assert world, "the article should still reach the world segment"
+    assert [e.source_name for e in inbox] == ["Maria Chen"]
+
+
+async def test_two_personal_emails_on_one_topic_are_both_still_read():
+    """The collapse exists for "three newsletters covered one acquisition".
+    Two colleagues writing about the same project is not that — both wrote to
+    the user, and both are owed a hearing.
+    """
+    emails = [
+        _personal("Maria Chen", "Halcyon deal", ACQUISITION_BODY),
+        _personal("Tom Reilly", "Northwind buying Halcyon", ACQUISITION_BODY),
+    ]
+
+    _, inbox = await _world(emails, articles=[])
+
+    assert sorted(e.source_name for e in inbox) == ["Maria Chen", "Tom Reilly"]
+
+
+async def test_an_id_collision_does_not_drop_an_unrelated_email():
+    """`Item.id` is a content hash of source_name + url-or-title + timestamp,
+    and the inbox subtraction used it as an identity key.
+
+    Body is not in the seed, so two messages from one sender with one subject
+    at one timestamp collide however different their contents. Absorbing the
+    first then removed the second, which nothing in the run had looked at.
+    `raw["message_id"]` — Gmail's own unique id — was on both Items and
+    unused.
+    """
+    absorbed_one = _newsletter("Stratechery", "Weekly", ACQUISITION_BODY)
+    bystander = _newsletter(
+        "Stratechery", "Weekly",
+        "Are you free Thursday? There is a new place near the office.",
+    )
+    assert absorbed_one.id == bystander.id, "the collision is the premise"
+
+    articles = [
+        Item(
+            source_type=SourceType.RSS, source_name="Reuters",
+            title="Northwind to acquire Halcyon Robotics",
+            body=ACQUISITION_BODY,
+            url="https://example.com/northwind-halcyon",
+            timestamp=datetime(2026, 8, 31, 5, 30, tzinfo=UTC),
+        )
+    ]
+
+    _, inbox = await _world([absorbed_one, bystander], articles)
+
+    assert any(e is bystander for e in inbox), (
+        "the unrelated message was dropped because it shared a content hash"
+    )

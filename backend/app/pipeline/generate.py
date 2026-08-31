@@ -319,6 +319,23 @@ async def _ingest_concurrently(
     return tuple(out)  # type: ignore[return-value]
 
 
+def _is_newsletter(item: Item) -> bool:
+    """An email the user subscribed to, per `gmail.detect_newsletter`.
+
+    The gate the subtraction below serves is about NEWSLETTERS: three of them
+    covering one acquisition is one story, and dropping the duplicates costs
+    the listener nothing because the content is the story. An ordinary email
+    is not interchangeable with the news it happens to mention — a world
+    story renders the canonical ARTICLE's title and body, so an absorbed
+    personal message survives only as a name in a source list, read out by
+    nobody. Two colleagues writing about one project is not duplication
+    either; they both wrote to the user.
+    """
+    return item.source_type is SourceType.EMAIL and bool(
+        item.raw.get("is_newsletter")
+    )
+
+
 async def _build_world_stories(
     *,
     emails: list[Item],
@@ -343,6 +360,11 @@ async def _build_world_stories(
     carried — and every ordinary email — stays in the inbox where it belongs.
     Without it, a personal email that happened to cluster with an article
     would be promoted into "your world".
+
+    Keyed on object identity, not `Item.id`: that is a content hash of
+    source_name + url-or-title + timestamp, so two messages from one sender
+    with one subject at one timestamp collide however different their bodies,
+    and absorbing the first silently removed the second.
 
     Emails absorbed into a SELECTED story are then removed from the inbox
     list, which is the Phase 2 gate stated exactly: the same story does not
@@ -374,10 +396,10 @@ async def _build_world_stories(
     world = world[: LENGTH_BUDGETS[length]["stories"]]
 
     absorbed = {
-        member.id
+        id(member)
         for story in world
         for member in story.members
-        if member.source_type is SourceType.EMAIL
+        if _is_newsletter(member)
     }
 
     # A cluster the world segment did not take is still a cluster.
@@ -399,24 +421,25 @@ async def _build_world_stories(
     for story in stories:
         if story.cluster_id in promoted:
             continue
-        members = [m for m in story.members if m.source_type is SourceType.EMAIL]
+        members = [m for m in story.members if _is_newsletter(m)]
         if len(members) < 2:
             continue
-        # `canonical` is an email here by construction: this story has no RSS
-        # member, or it would have been promoted above.
-        keeper = story.canonical if story.canonical in members else members[0]
-        superseded.update(m.id for m in members if m.id != keeper.id)
+        keeper = next(
+            (m for m in members if m is story.canonical), members[0]
+        )
+        superseded.update(id(m) for m in members if m is not keeper)
         # Not silent. Dropping the duplicates without saying so would trade
         # one wrong behaviour for another — the hosts would read a story that
         # three publications thought worth writing about as though one did.
         # Naming the others is the multi-source signal the digest is built on,
         # and it is the honest version of "the same story never appears twice".
         keeper.raw["also_covered_by"] = sorted(
-            m.source_name for m in members if m.id != keeper.id
+            m.source_name for m in members if m is not keeper
         )
 
     inbox_emails = [
-        em for em in emails if em.id not in absorbed and em.id not in superseded
+        em for em in emails
+        if id(em) not in absorbed and id(em) not in superseded
     ]
 
     log.info(

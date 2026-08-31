@@ -24,7 +24,7 @@ from pydantic import BaseModel
 from app.api import jobs
 from app.core.auth import require_api_token
 from app.core.config import get_settings
-from app.core.providers import build_embedding_provider
+from app.core.providers import EmbeddingProvider, build_embedding_provider
 from app.core.schemas import BriefingLength, BriefingManifest
 from app.pipeline.generate import generate_briefing
 from app.providers.fake import FakeLLMProvider
@@ -121,6 +121,21 @@ class StatusResponse(BaseModel):
     error: str | None = None
 
 
+def _embeddings_for(offline: bool) -> EmbeddingProvider | None:
+    """The embedding provider this run should use.
+
+    None when offline. Offline exists to be free and deterministic — a
+    fixture for every source — and constructing the live provider there sent
+    fixture content to Gemini on a run the caller had explicitly asked to be
+    fake: real quota, and a retry loop that can stall the job the phone is
+    polling. The cost is that an offline briefing does not dedupe, which is
+    the same degradation a keyless machine already gets.
+    """
+    if offline:
+        return None
+    return build_embedding_provider()
+
+
 def _build_providers(offline: bool):
     if offline:
         return FakeLLMProvider(), FakeTTSProvider()
@@ -199,7 +214,7 @@ async def generate(
             # Without this the API path never clustered anything: `embeddings`
             # defaults to None and only the CLI and the cron were building a
             # provider. See app/core/providers.build_embedding_provider.
-            embeddings=build_embedding_provider(),
+            embeddings=_embeddings_for(offline),
             storage=storage,
         ),
     )

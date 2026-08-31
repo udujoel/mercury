@@ -364,7 +364,7 @@ def _capture_generate_kwargs(monkeypatch, briefing_id: str, client) -> dict:
     return captured
 
 
-def test_the_api_path_gets_an_embedding_provider(client, monkeypatch, tmp_path):
+def test_a_live_api_run_gets_an_embedding_provider(monkeypatch):
     """Tapping the greeting card must dedupe like the cron does.
 
     `embeddings` defaults to None in `generate_briefing`, and the CLI and the
@@ -376,8 +376,7 @@ def test_the_api_path_gets_an_embedding_provider(client, monkeypatch, tmp_path):
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     get_settings.cache_clear()
 
-    captured = _capture_generate_kwargs(monkeypatch, "embed-day", client)
-    assert captured.get("embeddings") is not None
+    assert briefing_api._embeddings_for(offline=False) is not None
 
 
 def test_a_keyless_machine_still_generates_from_the_api(client, monkeypatch):
@@ -386,6 +385,24 @@ def test_a_keyless_machine_still_generates_from_the_api(client, monkeypatch):
     captured = _capture_generate_kwargs(monkeypatch, "keyless-day", client)
     assert captured.get("embeddings") is None
     assert captured.get("briefing_id") == "keyless-day"
+
+
+def test_an_offline_run_does_not_build_a_live_embedding_provider(
+    client, monkeypatch
+):
+    """Offline exists to be free and deterministic — a fixture for every
+    source. Building the real provider there sent fixture content to Gemini
+    on a run the user asked to be fake: real quota, and a retry loop that can
+    stall the job the phone is polling.
+    """
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    get_settings.cache_clear()
+
+    assert briefing_api._embeddings_for(offline=True) is None
+
+    # And through the route, which is what actually ships.
+    captured = _capture_generate_kwargs(monkeypatch, "offline-embed-day", client)
+    assert captured.get("embeddings") is None
 
 
 def test_offline_api_generation_does_not_go_to_real_publishers(
