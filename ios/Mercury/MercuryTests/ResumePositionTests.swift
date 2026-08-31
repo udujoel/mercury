@@ -97,6 +97,35 @@ final class ResumePositionTests: XCTestCase {
         XCTAssertEqual(AppState.resumeTarget(savedMs: 240_000, durationMs: 0), 240_000)
     }
 
+    // MARK: - Refuting the reported Int underflow
+
+    /// kilo-code-bot reported that `durationMs - minimumMs` "underflows to a
+    /// large negative number and Swift's Int arithmetic traps", with a
+    /// 4-second saved position against a 2-second briefing as the example.
+    ///
+    /// It does not. `Int` is signed: `2000 - 3000` is `-1000`, an ordinary
+    /// representable value, and Swift traps on overflow past the bounds of
+    /// the type, not on a subtraction crossing zero. `4000 < -1000` is
+    /// simply false, so the guard returns nil — which is also the correct
+    /// answer, since a 2-second briefing has nothing worth resuming into.
+    ///
+    /// This test is the negative control for that claim: if the reported
+    /// trap were real, it would not fail, it would crash the suite.
+    func testAShortBriefingWithALongerSavedPositionDoesNotTrap() {
+        XCTAssertNil(AppState.resumeTarget(savedMs: 4_000, durationMs: 2_000))
+        XCTAssertNil(AppState.resumeTarget(savedMs: 4_000, durationMs: 1))
+        XCTAssertNil(AppState.resumeTarget(savedMs: 1, durationMs: 1))
+    }
+
+    /// The suggested replacement — `savedMs + minimumMs < durationMs` — is
+    /// algebraically the same for ordinary values and strictly worse at the
+    /// edge: it moves the arithmetic to the side that can actually overflow.
+    /// This case passes as written and would trap on the suggestion, so it
+    /// pins the reason for keeping the current form.
+    func testAnAbsurdSavedPositionIsRejectedRatherThanOverflowing() {
+        XCTAssertNil(AppState.resumeTarget(savedMs: .max, durationMs: 360_000))
+    }
+
     func testResumePositionForUnknownBriefingIsNil() async throws {
         let container = try makeInMemoryContainer()
         let store = BriefingStore(modelContainer: container)

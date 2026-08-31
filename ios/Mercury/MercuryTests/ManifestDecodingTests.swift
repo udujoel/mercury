@@ -193,8 +193,7 @@ final class RecordingAPI: APIClientProtocol {
     var manifestResult: Result<BriefingManifest, Error>
 
     /// Holds `fetchManifest` open so a second tap can arrive while the
-    /// first is still in flight. `nil` means "return immediately".
-    var gate: CheckedContinuation<Void, Never>?
+    /// first is still in flight.
     var shouldGateFetch = false
     private var gateWaiters: [CheckedContinuation<Void, Never>] = []
 
