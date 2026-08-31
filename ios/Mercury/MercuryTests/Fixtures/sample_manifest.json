@@ -1,8 +1,8 @@
 {
   "briefing_id": "2026-08-21",
-  "generated_at": "2026-08-21T07:00:00Z",
+  "generated_at": "2026-08-21T07:00:00.073032Z",
   "duration_ms": 26000,
-  "audio_url": "https://cdn.example.com/briefings/2026-08-21/audio.wav",
+  "audio_url": "/briefing/2026-08-21/audio",
   "segments": [
     { "id": "cold_open", "label": "Good morning", "start_ms": 0 },
     { "id": "weather", "label": "Weather", "start_ms": 4000 },

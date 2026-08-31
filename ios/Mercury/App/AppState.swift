@@ -26,9 +26,23 @@ enum LoadState: Equatable {
 @Observable
 final class AppState {
 
+    /// STORED, not computed, and that distinction is the whole bug.
+    ///
+    /// `@Observable` instruments stored properties only. When this was a
+    /// computed property reading and writing `UserDefaults` directly, setting
+    /// it persisted the value and emitted no change event, so `RootView` —
+    /// which switches on exactly this flag — never re-rendered. Tapping Done
+    /// on the schedule screen did nothing visible until the app was
+    /// relaunched. The value was right the whole time; the view had no idea.
+    ///
+    /// `UserDefaults` is still the storage layer: seeded in `init`, written
+    /// through in `didSet`. Regression covered by
+    /// `OnboardingStatePersistenceTests.testCompletingOnboardingPublishes...`,
+    /// which drives it through `withObservationTracking` — the only check
+    /// that can tell a stored property from a computed one, since both
+    /// round-trip and both persist.
     var hasCompletedOnboarding: Bool {
-        get { UserDefaults.standard.bool(forKey: Self.onboardingKey) }
-        set { UserDefaults.standard.set(newValue, forKey: Self.onboardingKey) }
+        didSet { UserDefaults.standard.set(hasCompletedOnboarding, forKey: Self.onboardingKey) }
     }
 
     /// The length chosen during onboarding. Sent with every generate request
@@ -36,18 +50,40 @@ final class AppState {
     /// rather than held in the onboarding view, which is torn down the moment
     /// onboarding finishes.
     var briefingLength: BriefingLength {
-        get {
-            guard let raw = UserDefaults.standard.string(forKey: Self.lengthKey),
-                  let value = BriefingLength(rawValue: raw)
-            else { return .standard }
-            return value
-        }
-        set { UserDefaults.standard.set(newValue.rawValue, forKey: Self.lengthKey) }
+        didSet { UserDefaults.standard.set(briefingLength.rawValue, forKey: Self.lengthKey) }
     }
 
     var manifest: BriefingManifest?
     var loadState: LoadState = .idle
     let playback = PlaybackCoordinator()
+
+    /// SwiftData persistence (PRD 3.7), handed over by `MercuryApp` from the
+    /// shared `ModelContainer`.
+    ///
+    /// This whole layer — `BriefingStore`, `PersistenceModels`, and the
+    /// `ResumePositionTests` that cover them — was written, tested and then
+    /// never called by anything. The container was built and injected into
+    /// the SwiftUI environment; nothing ever constructed a store from it. So
+    /// `ResumePositionTests` passed, in full, against code no running app
+    /// could reach: a green suite proving a feature the user did not have.
+    ///
+    /// Wired rather than deleted, for four reasons. PRD 3.7 requires
+    /// persistence, so deleting it means deleting a spec requirement and
+    /// rewriting it later. The user harm is concrete and daily: a
+    /// six-minute briefing abandoned at minute four restarts at "Good
+    /// morning" every time. The code is already complete and correct —
+    /// upsert, retention, resume position — so the gap was one wire, not a
+    /// subsystem. And offline transcript and show-notes access has nowhere
+    /// else to come from.
+    ///
+    /// Optional because `AppState` is also built in tests and previews with
+    /// no container; everything below degrades to "no persistence" rather
+    /// than failing.
+    @ObservationIgnored var store: BriefingStore?
+
+    /// Below this, resuming is not worth it — and within this much of the
+    /// end, a "resume" would drop the user into the sign-off.
+    static let minimumResumeMs = 3_000
 
     /// (not as a default property initializer — those run before `self` is
     /// available, and `playback` is an instance member); `init` also wires
@@ -60,11 +96,9 @@ final class AppState {
     /// the server-side cron schedule. Defaults to 7:00 AM, matching the
     /// default shown in the onboarding picker.
     var wakeTimeMinutesFromMidnight: Int {
-        get {
-            let stored = UserDefaults.standard.object(forKey: Self.wakeTimeKey) as? Int
-            return stored ?? 7 * 60
+        didSet {
+            UserDefaults.standard.set(wakeTimeMinutesFromMidnight, forKey: Self.wakeTimeKey)
         }
-        set { UserDefaults.standard.set(newValue, forKey: Self.wakeTimeKey) }
     }
 
     /// The next calendar date/time matching the configured wake time —
@@ -92,9 +126,21 @@ final class AppState {
     private static let lengthKey = "mercury.briefingLength"
     private static let wakeTimeKey = "mercury.wakeTimeMinutesFromMidnight"
 
+    /// The default wake time shown in the onboarding picker, and the value
+    /// used until the user chooses one.
+    static let defaultWakeTimeMinutes = 7 * 60
+
     init(api: APIClientProtocol = APIClient()) {
         self.api = api
 
+        // Seed the stored properties from UserDefaults. Assigning inside
+        // `init` does not fire `didSet`, so this reads without writing back.
+        let defaults = UserDefaults.standard
+        self.hasCompletedOnboarding = defaults.bool(forKey: Self.onboardingKey)
+        self.briefingLength = defaults.string(forKey: Self.lengthKey)
+            .flatMap(BriefingLength.init(rawValue:)) ?? .standard
+        self.wakeTimeMinutesFromMidnight =
+            defaults.object(forKey: Self.wakeTimeKey) as? Int ?? Self.defaultWakeTimeMinutes
     }
 
     /// Tapping the greeting card is the primary action of the entire app.
@@ -110,15 +156,37 @@ final class AppState {
     /// backend, where producing one on demand is genuinely useful.
     @MainActor
     func playBriefing() async {
+        // One tap at a time.
+        //
+        // The greeting card is a big, satisfying target and the first thing
+        // it does is go quiet for several seconds, so tapping it twice is
+        // the natural thing to do. That started two fetches which collided
+        // on the same destination file in `downloadAudio`, and then both
+        // called `playback.load` on the same coordinator. `AppState` is
+        // `@MainActor`, so this guard is genuinely exclusive: the second tap
+        // cannot observe `loadState` before the first has set it.
+        guard loadState != .loading else { return }
         loadState = .loading
         do {
             let manifest = try await fetchTodayOrGenerate()
             self.manifest = manifest
+            // Persist the transcript before touching the audio: it is worth
+            // keeping even if the download fails.
+            await persist(manifest, audioPath: nil)
             let audioURL = try await api.downloadAudio(briefingId: manifest.briefingId)
+            await persist(manifest, audioPath: audioURL.path)
             try playback.load(manifest: manifest, audioURL: audioURL)
-            playback.play()
+            await startPlayback(of: manifest)
             loadState = .ready
         } catch {
+            // Offline, or the backend is unreachable. If last night's
+            // prefetch already put today's briefing on this device, play
+            // that rather than reporting a failure the user cannot act on
+            // and that is not true of their briefing — it is on the phone.
+            if await playStoredBriefing() {
+                loadState = .ready
+                return
+            }
             loadState = .failed(error.localizedDescription)
         }
     }
@@ -178,7 +246,8 @@ final class AppState {
     func prefetchBriefing(id: String) async -> Bool {
         do {
             let manifest = try await api.fetchManifest(briefingId: id)
-            _ = try await api.downloadAudio(briefingId: id)
+            let audioURL = try await api.downloadAudio(briefingId: id)
+            await persist(manifest, audioPath: audioURL.path)
             self.manifest = manifest
             return true
         } catch {
@@ -195,6 +264,10 @@ final class AppState {
     /// best-effort optimization per ADR-001, never a precondition.
     @MainActor
     func playPrefetched(id: String?) async {
+        // Same guard as `playBriefing`: the notification's "Play" action and
+        // a tap on the card can both land, and the notification path is the
+        // one most likely to arrive while a fetch is already running.
+        guard loadState != .loading else { return }
         loadState = .loading
         do {
             let manifest: BriefingManifest
@@ -207,16 +280,137 @@ final class AppState {
                 // notification payload. Nothing to play; fall back to the
                 // ordinary tap-to-generate-or-fetch path so the user isn't
                 // left staring at a spinner.
+                //
+                // Release the guard first. This method has already set
+                // `loadState` to `.loading`, and `playBriefing` now refuses
+                // to start while a load is in flight — so without this the
+                // fallback would silently do nothing, producing exactly the
+                // spinner it exists to prevent.
+                loadState = .idle
                 await playBriefing()
                 return
             }
             self.manifest = manifest
+            await persist(manifest, audioPath: nil)
             let audioURL = try await api.downloadAudio(briefingId: manifest.briefingId)
+            await persist(manifest, audioPath: audioURL.path)
             try playback.load(manifest: manifest, audioURL: audioURL)
-            playback.play()
+            await startPlayback(of: manifest)
             loadState = .ready
         } catch {
             loadState = .failed(error.localizedDescription)
+        }
+    }
+
+    // MARK: - Persistence (PRD 3.7)
+
+    /// Where to start a briefing, given whatever position was saved.
+    ///
+    /// Pure so the policy can be checked exactly, with no container: a
+    /// briefing already heard to the end starts over rather than dropping
+    /// the user into the sign-off, and a few seconds in is not worth
+    /// resuming to.
+    static func resumeTarget(
+        savedMs: Int?,
+        durationMs: Int,
+        minimumMs: Int = AppState.minimumResumeMs
+    ) -> Int? {
+        guard let savedMs, savedMs > minimumMs else { return nil }
+        guard durationMs > 0 else { return savedMs }
+        guard savedMs < durationMs - minimumMs else { return nil }
+        return savedMs
+    }
+
+    /// Makes the last stored briefing available with no network at all.
+    ///
+    /// The store was write-only until now: transcripts, show notes and the
+    /// cached audio path all went in and nothing ever read them back, so
+    /// relaunching offline showed an error where a briefing already on disk
+    /// was sitting unused. Called at launch, before any fetch.
+    ///
+    /// Only fills a gap — never replaces a manifest already loaded, since
+    /// anything fetched this session is fresher than anything stored.
+    @MainActor
+    func restoreLastBriefing() async {
+        guard manifest == nil, let store else { return }
+        guard let stored = try? await store.latestStoredBriefing() else { return }
+        manifest = stored.manifest
+    }
+
+    /// Plays today's briefing from disk when the network cannot produce it.
+    ///
+    /// Restricted to TODAY deliberately. Falling back to whatever is newest
+    /// would answer "play my briefing" with yesterday's news and no
+    /// indication of it; if last night's prefetch did not land, an error is
+    /// the honest answer.
+    ///
+    /// Returns false when there is nothing playable, leaving the caller to
+    /// report the original network failure.
+    @MainActor
+    private func playStoredBriefing() async -> Bool {
+        guard let store,
+              let stored = try? await store.storedBriefing(id: AppDelegate.briefingId(for: .now)),
+              let path = stored.localAudioPath,
+              FileManager.default.fileExists(atPath: path)
+        else { return false }
+
+        // Set BEFORE loading the audio: a transcript is worth showing even
+        // if the cached file turns out to be unplayable.
+        manifest = stored.manifest
+        do {
+            try playback.load(manifest: stored.manifest,
+                              audioURL: URL(fileURLWithPath: path))
+        } catch {
+            print("[Mercury] Cached audio for \(stored.manifest.briefingId) "
+                  + "could not be loaded: \(error)")
+            return false
+        }
+        await startPlayback(of: stored.manifest)
+        return true
+    }
+
+    private func persist(_ manifest: BriefingManifest, audioPath: String?) async {
+        guard let store else { return }
+        do {
+            try await store.save(manifest, localAudioPath: audioPath)
+        } catch {
+            print("[Mercury] Could not persist briefing \(manifest.briefingId): \(error)")
+        }
+    }
+
+    /// Restores the resume point, wires position persistence, and starts.
+    @MainActor
+    private func startPlayback(of manifest: BriefingManifest) async {
+        wirePersistence(for: manifest.briefingId)
+
+        if let store {
+            let saved = try? await store.resumePositionMs(for: manifest.briefingId)
+            if let target = Self.resumeTarget(
+                savedMs: saved ?? nil, durationMs: manifest.durationMs
+            ) {
+                // Seeking while stopped schedules without starting, so the
+                // `play()` below is what actually begins playback.
+                playback.seek(toMs: target)
+            }
+        }
+        playback.play()
+    }
+
+    private func wirePersistence(for briefingId: String) {
+        playback.onPositionPersist = { [weak self] positionMs in
+            guard let store = self?.store else { return }
+            Task { try? await store.updateResumePosition(
+                briefingId: briefingId, positionMs: positionMs
+            ) }
+        }
+        playback.onFinished = { [weak self] in
+            guard let store = self?.store else { return }
+            // Completed AND rewound: next open starts from the top rather
+            // than from the sign-off.
+            Task {
+                try? await store.markCompleted(briefingId: briefingId)
+                try? await store.updateResumePosition(briefingId: briefingId, positionMs: 0)
+            }
         }
     }
 }
