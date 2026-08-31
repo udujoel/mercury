@@ -355,6 +355,15 @@ async def _build_world_stories(
         return [], emails
 
     stories = await build_stories(clusterable, embeddings=embeddings)
+    # The WHOLE fetch window, not the briefing day. `select_for_briefing`
+    # narrows events to today because the calendar segment is "the day walked
+    # chronologically" and the cold open is an observation "about the day
+    # ahead" — both make a claim about today. Ranking makes none: an attendee
+    # is a personal-relevance signal, and a story about someone you are seeing
+    # on Thursday is exactly the prep PRD F-02's 72 hours exist for. Narrowing
+    # it here does not protect a today story — that story's score does not
+    # move either way — it only stops a Thursday one outranking news you have
+    # no connection to at all.
     stories = score_stories(stories, calendar_events=events)
 
     world = [

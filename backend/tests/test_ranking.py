@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from app.core.schemas import Item, SourceType, Story
+from app.core.schemas import CalendarEvent, Item, SourceType, Story
 from app.pipeline.ranking import score_stories
 
 DATE = datetime(2026, 8, 21, 6, 0, tzinfo=UTC)
@@ -62,3 +62,84 @@ def test_three_publications_still_outrank_one():
         [solo, spread], calendar_events=[]
     )}
     assert scored["spread"] > scored["solo"]
+
+
+# ──────────────────────────────────────────────────────────────
+# Which calendar window the personal term sees
+# ──────────────────────────────────────────────────────────────
+
+
+def _event(event_id: str, attendee: str) -> CalendarEvent:
+    return CalendarEvent(
+        id=event_id, title="Meeting", start=DATE, end=DATE, attendees=[attendee]
+    )
+
+
+def test_an_attendee_from_later_in_the_window_still_lifts_a_story():
+    """Deliberate, and pinned here because it looks like an oversight.
+
+    `select_for_briefing` narrows events to the briefing day; ranking is
+    handed the full PRD F-02 fetch window on purpose. The narrowing exists
+    because the calendar segment is "the day walked chronologically" and the
+    cold open is an observation "about the day ahead" — both make a claim
+    about TODAY. The world segment makes no such claim, and a story about
+    someone you are seeing on Thursday is the prep the 72-hour window is for.
+    """
+    story = _story("chen", [_article(0, "Reuters")])
+    story.canonical.title = "Sam Chen's firm acquired"
+
+    # Floats captured immediately: score_stories writes Story.score in place,
+    # so holding the returned list and reading .score afterwards compares one
+    # object with itself.
+    with_window = score_stories(
+        [story], calendar_events=[_event("thu", "Sam Chen")]
+    )[0].score
+    without = score_stories([story], calendar_events=[])[0].score
+    assert with_window > without
+
+
+def test_a_wider_window_does_not_cost_a_today_story_its_score():
+    """The control for the claim that a future appointment can displace a
+    story relevant to today. It cannot: the today story's score does not
+    move. What the extra attendees lift is a story that would otherwise have
+    NO personal connection at all, which is the personal term working.
+    """
+    today_story = _story("today", [_article(0, "Reuters")])
+    today_story.canonical.title = "Priya Raman named CFO"
+
+    today_only = _event("today", "Priya Raman")
+    later = _event("thu", "Sam Chen")
+
+    narrow = score_stories([today_story], calendar_events=[today_only])[0].score
+    wide = score_stories(
+        [today_story], calendar_events=[today_only, later]
+    )[0].score
+    assert narrow == wide
+
+
+async def test_ranking_is_handed_the_whole_fetch_window_not_just_today(monkeypatch):
+    """The wiring decision itself, pinned where it is made.
+
+    The two tests above measure `score_stories`; this one measures what
+    `generate_briefing` hands it. Narrowing the events passed here to the
+    briefing day is a one-word change that no other test would catch, and it
+    would silently delete the prep value of the 72-hour window.
+    """
+    from app.core.schemas import BriefingLength
+    from app.pipeline import generate as gen
+
+    seen: dict = {}
+
+    def _capture(stories, *, calendar_events, **kwargs):
+        seen["events"] = calendar_events
+        return stories
+
+    monkeypatch.setattr(gen, "score_stories", _capture)
+    await gen._build_world_stories(
+        emails=[],
+        articles=[_article(0, "Reuters")],
+        events=[_event("today", "Priya Raman"), _event("thu", "Sam Chen")],
+        embeddings=None,
+        length=BriefingLength.STANDARD,
+    )
+    assert len(seen["events"]) == 2, seen
