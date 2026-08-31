@@ -29,6 +29,74 @@ final class ResumePositionTests: XCTestCase {
         XCTAssertEqual(resumed, 13500)
     }
 
+    // MARK: - Regression: a regenerated briefing is not the same briefing
+
+    /// A briefing id is a date ("2026-08-21"), so a regeneration REUSES it —
+    /// that is exactly what the backend's `--force` / `--briefing-id` path
+    /// does when a bad briefing is replaced. Everything below turns on the
+    /// id not being evidence of identical content.
+    private func manifest(generatedAt: Date, durationMs: Int) -> BriefingManifest {
+        BriefingManifest(
+            briefingId: "2026-08-21",
+            generatedAt: generatedAt,
+            durationMs: durationMs,
+            audioUrl: "/briefing/2026-08-21/audio",
+            segments: [BriefingSegment(id: "inbox", label: "Inbox", startMs: 0)],
+            turns: [Turn(speaker: "A", segment: "inbox", text: "morning",
+                         startMs: 0, endMs: 1_000)],
+            sources: []
+        )
+    }
+
+    /// macroscope/cubic: the upsert kept the old `lastPositionMs` and
+    /// `completed` when the content underneath them had been replaced, so
+    /// `startPlaying` seeked four minutes into a briefing the listener had
+    /// never heard — or, with `completed` carried over, skipped it.
+    func testARegeneratedBriefingStartsFromTheTop() async throws {
+        let container = try makeInMemoryContainer()
+        let store = BriefingStore(modelContainer: container)
+        let original = manifest(generatedAt: Date(timeIntervalSince1970: 1_000), durationMs: 360_000)
+
+        try await store.save(original, localAudioPath: "/tmp/2026-08-21.m4a")
+        try await store.updateResumePosition(briefingId: "2026-08-21", positionMs: 240_000)
+        try await store.markCompleted(briefingId: "2026-08-21")
+
+        // Same id, regenerated an hour later against a different script.
+        let replacement = manifest(generatedAt: Date(timeIntervalSince1970: 4_600), durationMs: 300_000)
+        try await store.save(replacement, localAudioPath: nil)
+
+        let resumed = try await store.resumePositionMs(for: "2026-08-21")
+        XCTAssertEqual(
+            resumed, 0,
+            "four minutes into the briefing that was replaced is not four "
+                + "minutes into its replacement"
+        )
+        let stored = try await store.allBriefings()
+        XCTAssertEqual(stored.first?.completed, false,
+                       "the listener has not heard this one")
+        XCTAssertEqual(stored.first?.generatedAt, Date(timeIntervalSince1970: 4_600),
+                       "the stored stamp must follow the content, or retention "
+                           + "orders briefings by when the id was first seen")
+    }
+
+    /// The negative control, and the reason this cannot simply reset on
+    /// every save: `AppState.playBriefing` persists the SAME manifest twice
+    /// per playback — once when it arrives, once with the local audio path.
+    /// Resetting unconditionally would wipe the resume point on every save
+    /// and break the feature this PR exists to wire up.
+    func testSavingTheSameBriefingAgainKeepsTheResumePoint() async throws {
+        let container = try makeInMemoryContainer()
+        let store = BriefingStore(modelContainer: container)
+        let same = manifest(generatedAt: Date(timeIntervalSince1970: 1_000), durationMs: 360_000)
+
+        try await store.save(same, localAudioPath: nil)
+        try await store.updateResumePosition(briefingId: "2026-08-21", positionMs: 240_000)
+        try await store.save(same, localAudioPath: "/tmp/2026-08-21.m4a")
+
+        let resumed = try await store.resumePositionMs(for: "2026-08-21")
+        XCTAssertEqual(resumed, 240_000, "same content, same place in it")
+    }
+
     // MARK: - Regression: the store must actually be REACHED
 
     /// Everything else in this file passed against code no running app

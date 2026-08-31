@@ -32,11 +32,38 @@ actor BriefingStore {
         }
 
         if let existing {
+            // A briefing id is a DATE, so a regeneration reuses it — that is
+            // exactly what the backend's `--force` / `--briefing-id` path
+            // does when a bad briefing is replaced. The id matching
+            // therefore says nothing about the content being the same, and
+            // carrying the old resume point across dropped the listener
+            // four minutes into a briefing they had never heard. A carried
+            // `completed` was worse: `startPlayback` treats it as already
+            // heard, so the replacement was skipped entirely.
+            //
+            // `generatedAt` is the version stamp; `durationMs` catches the
+            // case of a backend that reuses one. Both are compared BEFORE
+            // either is overwritten.
+            let isReplacement = existing.generatedAt != manifest.generatedAt
+                || existing.durationMs != manifest.durationMs
+
+            existing.generatedAt = manifest.generatedAt
             existing.durationMs = manifest.durationMs
+            existing.remoteAudioURL = manifest.audioURL ?? existing.remoteAudioURL
             existing.localAudioPath = localAudioPath ?? existing.localAudioPath
             existing.segments = segments
             existing.turns = turns
             existing.sources = sources
+
+            // Conditional, not unconditional: `AppState.playBriefing` saves
+            // the SAME manifest twice per playback — once when it arrives,
+            // once with the local audio path — so resetting on every save
+            // would wipe the resume point continuously and break the
+            // feature this is here to provide.
+            if isReplacement {
+                existing.lastPositionMs = 0
+                existing.completed = false
+            }
         } else {
             let entity = BriefingEntity(
                 id: manifest.briefingId,
