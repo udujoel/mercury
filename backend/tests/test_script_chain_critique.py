@@ -36,7 +36,7 @@ from app.core.schemas import (
     Turn,
     Weather,
 )
-from app.pipeline import quality
+from app.pipeline import quality, script_chain
 from app.pipeline.script_chain import (
     _has_valid_segment_coverage_and_order,
     _run_critique_and_revise,
@@ -251,7 +251,8 @@ class ScriptedLLMProvider:
         self.revise_response = revise_response
         self.calls: list[str] = []
 
-    async def complete(self, system, prompt, *, temperature=0.85, json_mode=False):
+    async def complete(self, system, prompt, *, temperature=0.85,
+                       json_mode=False, response_schema=None):
         if "Review this draft script critically" in prompt:
             self.calls.append("critique")
             return self.critique_response
@@ -275,9 +276,14 @@ async def test_critique_parse_failure_falls_back_to_draft():
         llm=llm, draft_turns=draft, source_data="irrelevant", budget=budget,
     )
     assert result == draft
-    assert llm.calls == ["critique"], (
+    assert "revise" not in llm.calls, (
         "revise must not be called after a critique failure"
     )
+    # The critique is now retried before we give up on it (see
+    # script_chain._complete_json) — a formatting slip should not silently
+    # cost us a pass we already paid for. The fallback itself is unchanged:
+    # once the retries are exhausted, the draft still wins.
+    assert llm.calls == ["critique"] * script_chain._JSON_ATTEMPTS
 
 
 async def test_revise_parse_failure_falls_back_to_draft():
@@ -291,7 +297,9 @@ async def test_revise_parse_failure_falls_back_to_draft():
         llm=llm, draft_turns=draft, source_data="irrelevant", budget=budget,
     )
     assert result == draft
-    assert llm.calls == ["critique", "revise"]
+    assert llm.calls == (
+        ["critique"] + ["revise"] * script_chain._JSON_ATTEMPTS
+    ), "revise is retried, then the draft still wins"
 
 
 async def test_revise_missing_segment_falls_back_to_draft():
@@ -417,22 +425,26 @@ async def test_revise_that_improves_on_draft_is_accepted():
 class _CritiqueExplodesProvider(FakeLLMProvider):
     """Draft succeeds, critique raises a transport-style error."""
 
-    async def complete(self, system, prompt, *, temperature=0.85, json_mode=False):
+    async def complete(self, system, prompt, *, temperature=0.85,
+                       json_mode=False, response_schema=None):
         if "Review this draft script" in prompt or "critically" in prompt:
             raise TimeoutError("provider timed out")
         return await super().complete(
-            system, prompt, temperature=temperature, json_mode=json_mode
+            system, prompt, temperature=temperature, json_mode=json_mode,
+            response_schema=response_schema,
         )
 
 
 class _RevisionWrongShapeProvider(FakeLLMProvider):
     """Revision returns valid JSON of the wrong shape."""
 
-    async def complete(self, system, prompt, *, temperature=0.85, json_mode=False):
+    async def complete(self, system, prompt, *, temperature=0.85,
+                       json_mode=False, response_schema=None):
         if "Apply these fixes" in prompt:
             return '{"turns": [{"speaker": "A", "segment": "inbox", "text": "hi"}]}'
         return await super().complete(
-            system, prompt, temperature=temperature, json_mode=json_mode
+            system, prompt, temperature=temperature, json_mode=json_mode,
+            response_schema=response_schema,
         )
 
 

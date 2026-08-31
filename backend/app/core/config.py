@@ -90,6 +90,15 @@ class Settings(BaseSettings):
     r2_access_key_id: str = ""
     r2_secret_access_key: str = ""
     r2_bucket: str = ""
+
+    # How many days of briefings to keep. Nothing deleted anything before this
+    # existed, so storage grew forever — ~3MB of audio plus a manifest every
+    # morning against a 10GB free tier. 30 days is about 90MB, which is both
+    # comfortably inside the tier and long enough to go back and listen to
+    # something. Must be at least 1; prune_briefings refuses 0 rather than
+    # interpreting it as "delete today".
+    retention_days: int = 30
+
     log_level: str = "INFO"
 
     # Clustering — tuned against a real threshold sweep, not guessed.

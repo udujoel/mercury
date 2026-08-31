@@ -7,8 +7,15 @@ and nothing that depends on a laptop being awake.
 
 R2 rather than S3 for one reason that dominates at this scale: **zero egress
 fees**. The phone downloads roughly 4MB every morning, and egress is what makes
-object storage expensive elsewhere. 10GB of storage is free, and a 7-day
-retention of ~4MB briefings uses about 30MB of it.
+object storage expensive elsewhere. 10GB of storage is free.
+
+That last number used to be followed by "and a 7-day retention of ~4MB
+briefings uses about 30MB of it". There was no 7-day retention. Nothing deleted
+anything, here or in the workflow or in any configuration — the sentence
+described a policy that was never implemented, and it read as reassurance every
+time anyone looked. Retention is real now (`prune_briefings`, 30 days by
+default, `RETENTION_DAYS`), which is what makes the arithmetic true rather than
+aspirational: ~3MB a day for 30 days is about 90MB of the 10GB.
 
 R2 speaks the S3 API, so this is boto3 against a custom endpoint. Satisfies the
 same `BriefingStorage` protocol as `LocalFilesystemStorage`, so nothing in the
@@ -24,7 +31,12 @@ from functools import cached_property
 
 from app.core.config import get_settings
 from app.core.schemas import BriefingManifest
-from app.synthesis.storage import AUDIO_MEDIA_TYPES, KNOWN_AUDIO_FORMATS
+from app.synthesis.storage import (
+    AUDIO_MEDIA_TYPES,
+    KNOWN_AUDIO_FORMATS,
+    UnreadableManifestError,
+    briefing_id_from_key,
+)
 
 log = logging.getLogger(__name__)
 
@@ -112,6 +124,57 @@ class R2Storage:
             Body=audio_bytes,
             ContentType=AUDIO_MEDIA_TYPES.get(audio_format, "application/octet-stream"),
         )
+
+        # Clear any audio left behind in a DIFFERENT format, now that the
+        # replacement is durably stored. load_audio returns the first format it
+        # finds in KNOWN_AUDIO_FORMATS order, so an m4a from an earlier run
+        # would outrank a freshly written wav and the phone would play the old
+        # audio against the new manifest, putting every turn boundary wrong.
+        #
+        # Ordering is the whole point. `--force` used to do this BEFORE
+        # regenerating, which meant a failed regeneration left the old manifest
+        # pointing at an object that no longer existed — 200 on the manifest,
+        # 404 on the audio. Doing it here means nothing is deleted until its
+        # replacement exists, and the old manifest is still the one being
+        # served throughout, so the pair stays consistent the whole way.
+        #
+        # A cleanup that FAILS is treated differently depending on which way
+        # round the two formats rank, because the consequences are opposite.
+        #
+        #   stale outranks the new file (an m4a superseded by a wav): the
+        #   leftover is what load_audio and the Worker will serve. Publishing
+        #   the new manifest over it hands the phone OLD audio against NEW turn
+        #   timings — every boundary wrong, permanently, and indistinguishable
+        #   from success in the Actions log. The old manifest and that old m4a
+        #   are still a consistent pair, so the run fails and leaves the user
+        #   the briefing they already had. Retention clears the orphan.
+        #
+        #   the new file outranks the stale one (a wav superseded by an m4a):
+        #   the leftover is never served, and publishing the manifest is
+        #   exactly what makes the pair consistent. A warning, not a failure —
+        #   a briefing must not be lost over a tidying-up problem.
+        rank = {fmt: i for i, fmt in enumerate(KNOWN_AUDIO_FORMATS)}
+        for fmt in KNOWN_AUDIO_FORMATS:
+            if fmt == audio_format:
+                continue
+            stale = self._audio_key(briefing_id, fmt)
+            try:
+                self._delete(stale)
+            except Exception:
+                if rank.get(fmt, len(rank)) < rank.get(audio_format, len(rank)):
+                    log.error(
+                        "could not remove stale audio %s, which outranks the "
+                        "%s just written; refusing to publish a manifest that "
+                        "would describe audio the phone will not be served",
+                        stale, audio_format,
+                    )
+                    raise
+                log.warning(
+                    "could not remove stale audio %s; it is outranked by the "
+                    "%s just written, so nothing will serve it",
+                    stale, audio_format, exc_info=True,
+                )
+
         # Manifest LAST, deliberately. It is what the client polls for, so
         # writing it only after the audio is durably stored means the phone
         # can never see a briefing whose audio is still uploading.
@@ -132,9 +195,16 @@ class R2Storage:
             return None
         try:
             return BriefingManifest.model_validate(json.loads(raw))
-        except Exception:
+        except Exception as exc:
+            # Raise rather than return None. None means "never written", and
+            # `app.cli check` turns that into "the scheduler dropped the run,
+            # go and re-run the workflow" — the wrong cause, pointing the
+            # operator at GitHub while the broken object sits in the bucket.
             log.exception("manifest for %s in R2 is unreadable", briefing_id)
-            return None
+            raise UnreadableManifestError(
+                f"the manifest object for {briefing_id} in R2 is not a "
+                "readable BriefingManifest"
+            ) from exc
 
     def load_audio(self, briefing_id: str) -> tuple[bytes, str] | None:
         for fmt in KNOWN_AUDIO_FORMATS:
@@ -143,17 +213,75 @@ class R2Storage:
                 return data, AUDIO_MEDIA_TYPES.get(fmt, "application/octet-stream")
         return None
 
+    def list_briefing_ids(self) -> list[str]:
+        ids = {
+            briefing_id
+            for key in self._iter_keys()
+            if (briefing_id := briefing_id_from_key(key)) is not None
+        }
+        return sorted(ids)
+
+    def delete_briefing(self, briefing_id: str) -> None:
+        # Every object under this id, not just the manifest and the two audio
+        # formats this module writes. Retention exists to reclaim space, and
+        # anything else stored for the briefing survived the deletion meant to
+        # reclaim it — unreferenced, invisible, still counted against the
+        # 10GB.
+        # The listing is materialised before anything is deleted: paginating
+        # a listing while mutating what it lists skips whatever slides into
+        # the page boundary.
+        keys = [
+            key
+            for key in self._iter_keys(prefix=f"{briefing_id}.")
+            if briefing_id_from_key(key) == briefing_id
+        ]
+        for key in keys:
+            self._delete(key)
+
     def delete_audio(self, briefing_id: str) -> None:
         for fmt in KNOWN_AUDIO_FORMATS:
-            key = self._audio_key(briefing_id, fmt)
-            try:
-                self._client.delete_object(Bucket=self._bucket, Key=key)
-            except Exception:
-                # Deleting a key that is not there is fine; anything else is
-                # worth knowing about but must not stop a regeneration.
-                log.debug("R2 delete of %s did nothing", key, exc_info=True)
+            self._delete(self._audio_key(briefing_id, fmt))
 
     # ── internals ─────────────────────────────────────────────
+
+    def _iter_keys(self, prefix: str | None = None):
+        """Every key in the bucket, or every key under a prefix.
+
+        Paginates properly. A bucket holding more than 1000 objects would
+        otherwise silently return only the first page, and retention would
+        quietly stop working at exactly the point it starts to matter.
+        """
+        token: str | None = None
+        while True:
+            kwargs: dict = {"Bucket": self._bucket}
+            if prefix:
+                kwargs["Prefix"] = prefix
+            if token:
+                kwargs["ContinuationToken"] = token
+            response = self._client.list_objects_v2(**kwargs)
+            for item in response.get("Contents", []):
+                yield item["Key"]
+            if not response.get("IsTruncated"):
+                return
+            token = response.get("NextContinuationToken")
+            if not token:
+                return
+
+    def _delete(self, key: str) -> None:
+        """Delete a key. A 404 is success; anything else is a real failure.
+
+        It used to swallow everything, so `prune_briefings` reported briefings
+        as deleted while a 403 from a rotated or under-scoped token left every
+        object exactly where it was — retention that claims success and
+        reclaims nothing, every morning, until the free tier runs out.
+        """
+        try:
+            self._client.delete_object(Bucket=self._bucket, Key=key)
+        except Exception as exc:
+            if self._status_code(exc) == 404 or type(exc).__name__ == "NoSuchKey":
+                log.debug("R2 key %s was already gone", key)
+                return
+            raise
 
     @staticmethod
     def _status_code(exc: Exception) -> int | None:

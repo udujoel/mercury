@@ -16,6 +16,7 @@ from app.synthesis.stitch import (
     FALLBACK_FORMAT,
     GAP_DIFFERENT_SPEAKER_MS,
     GAP_SAME_SPEAKER_MS,
+    EmptyBriefingError,
     ffmpeg_available,
     synthesize_briefing,
 )
@@ -277,3 +278,33 @@ async def test_source_refs_are_remapped_when_a_turn_is_dropped():
     assert by_title["kept-first"] == 0
     assert by_title["kept-last"] == 1, "index 2 no longer exists after compaction"
     assert all(s.turn_index < len(manifest.turns) for s in manifest.sources)
+
+
+# ──────────────────────────────────────────────────────────────
+# A briefing with nothing audible in it
+# ──────────────────────────────────────────────────────────────
+
+
+class _TotallyBrokenTTS(FakeTTSProvider):
+    """What a bad TTS key, an exhausted quota or a provider outage looks like
+    from in here: every call fails, not just some."""
+
+    async def synthesize(self, text: str, voice_id: str) -> bytes:
+        raise RuntimeError("synthetic total TTS failure")
+
+
+async def test_total_tts_failure_raises_instead_of_producing_a_manifest():
+    """Rule 7 covers a briefing that ships missing a segment. It does not
+    cover a briefing with no audio at all, and the two must not be handled the
+    same way — this one used to exit 0 with a green tick."""
+    with pytest.raises(EmptyBriefingError) as excinfo:
+        await synthesize_briefing(
+            _turns(), tts=_TotallyBrokenTTS(), briefing_id="2026-08-27",
+            audio_url_for=lambda fmt: "url", sources=[],
+        )
+
+    # The message has to name the briefing and point at the provider; this is
+    # what lands in the Actions log and it is all the operator gets.
+    message = str(excinfo.value)
+    assert "2026-08-27" in message
+    assert "TTS" in message

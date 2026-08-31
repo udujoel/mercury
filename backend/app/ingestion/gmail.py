@@ -338,12 +338,15 @@ def _fetch_live_messages(max_messages: int) -> list[dict[str, Any]]:
     scripts_dir = Path(__file__).resolve().parents[3] / "scripts"
     if str(scripts_dir) not in sys.path:
         sys.path.insert(0, str(scripts_dir))
-    from _google_auth import MissingCredentialsError, get_credentials
+    from _google_auth import get_credentials
 
-    try:
-        creds = get_credentials()
-    except MissingCredentialsError as exc:
-        raise RuntimeError(str(exc)) from exc
+    # Deliberately NOT re-wrapped in a plain RuntimeError. MissingCredentialsError
+    # already is one, so the documented contract holds, and flattening it threw
+    # away the ExpiredCredentialsError subtype — the single most likely
+    # production failure here, and the only one with a known permanent fix.
+    # app.cli keys its loudest error off that type, and it cannot do that if
+    # the type is discarded one frame after it is raised.
+    creds = get_credentials()
 
     service = build("gmail", "v1", credentials=creds)
 

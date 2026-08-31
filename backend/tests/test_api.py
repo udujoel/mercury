@@ -141,9 +141,11 @@ def test_get_manifest_returns_stored_manifest(client, monkeypatch, tmp_path):
     manifest = _fake_manifest("2026-08-22")
     storage.save("2026-08-22", b"fake audio", "wav", manifest)
 
+    # The routes call build_storage() now, so STORAGE_BACKEND is honoured on
+    # every entrypoint rather than app.cli alone.
     monkeypatch.setattr(
         briefing_api,
-        "LocalFilesystemStorage",
+        "build_storage",
         lambda: LocalFilesystemStorage(base_dir=tmp_path),
     )
 
@@ -155,9 +157,11 @@ def test_get_manifest_returns_stored_manifest(client, monkeypatch, tmp_path):
 def test_get_manifest_missing_is_404(client, monkeypatch, tmp_path):
     from app.synthesis.storage import LocalFilesystemStorage
 
+    # The routes call build_storage() now, so STORAGE_BACKEND is honoured on
+    # every entrypoint rather than app.cli alone.
     monkeypatch.setattr(
         briefing_api,
-        "LocalFilesystemStorage",
+        "build_storage",
         lambda: LocalFilesystemStorage(base_dir=tmp_path),
     )
     resp = client.get("/briefing/no-such-id")
@@ -173,9 +177,11 @@ def test_get_audio_returns_bytes_with_correct_media_type(
     manifest = _fake_manifest("2026-08-23")
     storage.save("2026-08-23", b"fake wav payload", "wav", manifest)
 
+    # The routes call build_storage() now, so STORAGE_BACKEND is honoured on
+    # every entrypoint rather than app.cli alone.
     monkeypatch.setattr(
         briefing_api,
-        "LocalFilesystemStorage",
+        "build_storage",
         lambda: LocalFilesystemStorage(base_dir=tmp_path),
     )
 
@@ -188,9 +194,11 @@ def test_get_audio_returns_bytes_with_correct_media_type(
 def test_get_audio_missing_is_404(client, monkeypatch, tmp_path):
     from app.synthesis.storage import LocalFilesystemStorage
 
+    # The routes call build_storage() now, so STORAGE_BACKEND is honoured on
+    # every entrypoint rather than app.cli alone.
     monkeypatch.setattr(
         briefing_api,
-        "LocalFilesystemStorage",
+        "build_storage",
         lambda: LocalFilesystemStorage(base_dir=tmp_path),
     )
     resp = client.get("/briefing/no-such-id/audio")

@@ -35,9 +35,35 @@ class _ClientError(Exception):
 class _FakeS3:
     def __init__(self) -> None:
         self.objects: dict[str, tuple[bytes, str]] = {}
+        # Ordering is load-bearing in this module twice over, so record it.
+        self.calls: list[tuple[str, str]] = []
 
     def put_object(self, *, Bucket, Key, Body, ContentType):  # noqa: N803
         self.objects[Key] = (Body, ContentType)
+        self.calls.append(("put", Key))
+
+    def delete_object(self, *, Bucket, Key):  # noqa: N803
+        self.objects.pop(Key, None)
+        self.calls.append(("delete", Key))
+
+    # Paginates two keys at a time. Real R2 returns at most 1000 per page, and
+    # a listing that silently stops at the first page would make retention
+    # quietly stop working at exactly the point it starts to matter.
+    PAGE_SIZE = 2
+
+    def list_objects_v2(self, *, Bucket, ContinuationToken=None, Prefix=None):  # noqa: N803
+        keys = sorted(k for k in self.objects if not Prefix or k.startswith(Prefix))
+        start = int(ContinuationToken or 0)
+        page = keys[start : start + self.PAGE_SIZE]
+        end = start + len(page)
+        truncated = end < len(keys)
+        response = {
+            "Contents": [{"Key": key} for key in page],
+            "IsTruncated": truncated,
+        }
+        if truncated:
+            response["NextContinuationToken"] = str(end)
+        return response
 
     def get_object(self, *, Bucket, Key):  # noqa: N803
         if Key not in self.objects:
@@ -121,12 +147,31 @@ def test_missing_briefing_returns_none_not_an_error(monkeypatch):
     assert storage.load_audio("never-generated") is None
 
 
-def test_unreadable_manifest_returns_none(monkeypatch):
+def test_unreadable_manifest_raises_rather_than_reading_as_absent(monkeypatch):
+    """Returning None made a corrupt manifest indistinguishable from one that
+    was never written, so `app.cli check` blamed GitHub's scheduler for
+    dropping a run when the object was sitting right there and unparseable."""
+    from app.synthesis.storage import UnreadableManifestError
+
     storage = _configured(monkeypatch)
-    storage.__dict__["_client"].objects["bad.manifest.json"] = (
+    storage.__dict__["_client"].objects["2026-08-22.manifest.json"] = (
         b"{not json", "application/json"
     )
-    assert storage.load_manifest("bad") is None
+    with pytest.raises(UnreadableManifestError):
+        storage.load_manifest("2026-08-22")
+
+
+def test_a_corrupt_manifest_does_not_block_its_own_replacement(monkeypatch):
+    """Generation is idempotent, so the probe that asks "is it already there?"
+    must treat an unparseable manifest as NOT there. Otherwise the one state
+    that most needs regenerating is the one that can never be regenerated."""
+    from app.synthesis.storage import existing_manifest
+
+    storage = _configured(monkeypatch)
+    storage.__dict__["_client"].objects["2026-08-22.manifest.json"] = (
+        b"{not json", "application/json"
+    )
+    assert existing_manifest(storage, "2026-08-22") is None
 
 
 def test_build_storage_selects_local_by_default(monkeypatch):
@@ -204,11 +249,6 @@ def test_delete_audio_removes_every_format(monkeypatch):
     storage = _configured(monkeypatch)
     client = storage.__dict__["_client"]
 
-    def _delete(*, Bucket, Key):  # noqa: N803
-        client.objects.pop(Key, None)
-
-    client.delete_object = _delete
-
     client.objects["2026-08-23.m4a"] = (b"OLD", "audio/mp4")
     client.objects["2026-08-23.wav"] = (b"NEW", "audio/wav")
 
@@ -216,3 +256,214 @@ def test_delete_audio_removes_every_format(monkeypatch):
 
     assert "2026-08-23.m4a" not in client.objects
     assert "2026-08-23.wav" not in client.objects
+
+
+def test_save_clears_audio_left_in_the_other_format(monkeypatch):
+    """A wav fallback superseding an earlier m4a, or the reverse.
+
+    `load_audio` returns the FIRST format it finds in KNOWN_AUDIO_FORMATS
+    order, so an m4a from an earlier run outranks a freshly written wav — the
+    phone plays the old audio against the new manifest and every turn boundary
+    is wrong. LocalFilesystemStorage.save has always done this; R2 did not, and
+    `--force` was papering over it from the CLI.
+    """
+    storage = _configured(monkeypatch)
+    client = storage.__dict__["_client"]
+
+    storage.save("2026-08-23", b"OLD", "m4a", _manifest("2026-08-23"))
+    storage.save("2026-08-23", b"NEW", "wav", _manifest("2026-08-23"))
+
+    assert "2026-08-23.m4a" not in client.objects
+    audio = storage.load_audio("2026-08-23")
+    assert audio is not None
+    assert audio[0] == b"NEW"
+
+
+def test_the_superseded_format_is_deleted_only_after_the_new_audio_lands(
+    monkeypatch,
+):
+    """The ordering finding. `--force` used to delete the old audio BEFORE
+    regenerating, so a regeneration that then failed left a manifest pointing
+    at an object that no longer existed — 200 on the manifest, 404 on the
+    audio, and that was the state of the day. Nothing may be deleted on the
+    strength of a write that has not happened yet."""
+    storage = _configured(monkeypatch)
+    client = storage.__dict__["_client"]
+
+    storage.save("2026-08-23", b"OLD", "m4a", _manifest("2026-08-23"))
+    client.calls.clear()
+    storage.save("2026-08-23", b"NEW", "wav", _manifest("2026-08-23"))
+
+    put_new = client.calls.index(("put", "2026-08-23.wav"))
+    delete_old = client.calls.index(("delete", "2026-08-23.m4a"))
+    put_manifest = client.calls.index(("put", "2026-08-23.manifest.json"))
+
+    assert put_new < delete_old, "old audio deleted before the new audio landed"
+    assert delete_old < put_manifest, "manifest published before the stale file went"
+
+
+def test_a_failed_cleanup_of_a_LOWER_ranked_stale_file_is_only_a_warning(
+    monkeypatch,
+):
+    """wav is superseded by m4a. m4a outranks wav in load_audio's order, so the
+    leftover wav is never served and publishing the manifest is exactly what
+    makes the pair consistent. Being unable to tidy up is worth a warning, not
+    a lost briefing."""
+    storage = _configured(monkeypatch)
+    client = storage.__dict__["_client"]
+    storage.save("2026-08-23", b"OLD", "wav", _manifest("2026-08-23"))
+
+    def _boom(*, Bucket, Key):  # noqa: N803
+        raise _ClientError(403, "AccessDenied")
+
+    client.delete_object = _boom
+
+    storage.save("2026-08-23", b"NEW", "m4a", _manifest("2026-08-23"))
+
+    assert storage.load_manifest("2026-08-23") is not None
+    audio = storage.load_audio("2026-08-23")
+    assert audio is not None and audio[0] == b"NEW"
+
+
+def test_a_failed_cleanup_of_a_HIGHER_ranked_stale_file_refuses_the_manifest(
+    monkeypatch,
+):
+    """m4a superseded by wav, and the m4a will not delete.
+
+    m4a outranks wav, so that leftover m4a is what `load_audio` and the Worker
+    will serve. Publishing the new manifest over it hands the phone OLD audio
+    against NEW turn timings — every boundary wrong, permanently, and it looks
+    like a healthy briefing from the Actions log.
+
+    The old manifest and the old m4a are still a consistent pair, so refusing
+    to publish leaves the user with the briefing they already had and fails the
+    run loudly. The orphaned wav is cleaned up by retention.
+
+    The previous behaviour was a warning and a published manifest, and there
+    was a test asserting that — a test that encoded the bug.
+    """
+    storage = _configured(monkeypatch)
+    client = storage.__dict__["_client"]
+    storage.save("2026-08-23", b"OLD", "m4a", _manifest("2026-08-23"))
+    old_manifest_body = client.objects["2026-08-23.manifest.json"][0]
+
+    def _boom(*, Bucket, Key):  # noqa: N803
+        raise _ClientError(403, "AccessDenied")
+
+    client.delete_object = _boom
+
+    with pytest.raises(_ClientError):
+        storage.save("2026-08-23", b"NEW", "wav", _manifest("2026-08-23"))
+
+    # What the phone sees is unchanged, and it is still self-consistent.
+    assert client.objects["2026-08-23.manifest.json"][0] == old_manifest_body
+    audio = storage.load_audio("2026-08-23")
+    assert audio is not None and audio[0] == b"OLD"
+
+
+def test_list_briefing_ids_reads_every_page(monkeypatch):
+    """R2 returns at most 1000 objects per page. Retention that read only the
+    first page would work fine on a small bucket and stop working on the
+    bucket that actually needed it."""
+    storage = _configured(monkeypatch)
+    for day in ("2026-08-20", "2026-08-21", "2026-08-22", "2026-08-23"):
+        storage.save(day, b"A", "m4a", _manifest(day))
+
+    # Eight objects, two per page, so this is four round trips.
+    assert storage.list_briefing_ids() == [
+        "2026-08-20", "2026-08-21", "2026-08-22", "2026-08-23",
+    ]
+
+
+def test_list_briefing_ids_ignores_keys_that_are_not_briefings(monkeypatch):
+    storage = _configured(monkeypatch)
+    client = storage.__dict__["_client"]
+    storage.save("2026-08-22", b"A", "m4a", _manifest())
+    client.objects["notes.txt"] = (b"x", "text/plain")
+    client.objects["backup/2026-08-01.m4a"] = (b"x", "audio/mp4")
+
+    assert storage.list_briefing_ids() == ["2026-08-22"]
+
+
+def test_delete_briefing_removes_the_manifest_and_every_audio_format(monkeypatch):
+    """Retention has to reclaim the audio, which is ~3MB of the ~3MB. A
+    manifest-only delete would leave the growth exactly where it was."""
+    storage = _configured(monkeypatch)
+    client = storage.__dict__["_client"]
+    storage.save("2026-08-22", b"A", "m4a", _manifest())
+    client.objects["2026-08-22.wav"] = (b"OLD", "audio/wav")
+
+    storage.delete_briefing("2026-08-22")
+
+    assert client.objects == {}
+    assert storage.list_briefing_ids() == []
+
+
+def test_delete_briefing_removes_objects_in_unknown_formats(monkeypatch):
+    """Retention deleted the manifest plus m4a and wav and nothing else, so
+    any other object for that briefing survived the deletion meant to reclaim
+    its space — invisible, unreferenced, and counted against the 10GB."""
+    storage = _configured(monkeypatch)
+    client = storage.__dict__["_client"]
+    storage.save("2026-08-22", b"A", "m4a", _manifest())
+    client.objects["2026-08-22.mp3"] = (b"x", "audio/mpeg")
+    client.objects["2026-08-22.script.json"] = (b"{}", "application/json")
+
+    storage.delete_briefing("2026-08-22")
+
+    assert client.objects == {}
+
+
+def test_a_delete_that_r2_rejects_is_not_reported_as_a_deletion(monkeypatch):
+    """`prune_briefings` names what it deleted and the workflow log prints
+    that list. Swallowing a 403 here made the list a claim about objects still
+    sitting in the bucket — retention that reports success and reclaims
+    nothing, every morning, until the free tier runs out."""
+    from app.synthesis.storage import prune_briefings
+
+    storage = _configured(monkeypatch)
+    client = storage.__dict__["_client"]
+    storage.save("2026-01-01", b"A", "m4a", _manifest("2026-01-01"))
+
+    def _denied(*, Bucket, Key):  # noqa: N803
+        raise _ClientError(403, "AccessDenied")
+
+    client.delete_object = _denied
+
+    with pytest.raises(_ClientError):
+        storage.delete_briefing("2026-01-01")
+
+    assert prune_briefings(storage, retention_days=30, today_id="2026-08-22") == []
+    assert "2026-01-01.m4a" in client.objects
+
+
+def test_deleting_a_key_that_is_already_gone_is_not_a_failure(monkeypatch):
+    """A 404 means the object is not there, which is the state deletion was
+    asking for. Only a real refusal is a failure."""
+    storage = _configured(monkeypatch)
+    client = storage.__dict__["_client"]
+    storage.save("2026-01-01", b"A", "m4a", _manifest("2026-01-01"))
+
+    def _missing(*, Bucket, Key):  # noqa: N803
+        raise _ClientError(404, "NoSuchKey")
+
+    client.delete_object = _missing
+
+    storage.delete_briefing("2026-01-01")  # must not raise
+
+
+def test_retention_against_r2_keeps_today(monkeypatch):
+    """The same safety property as the local backend, through the backend that
+    actually runs in production."""
+    from app.synthesis.storage import prune_briefings
+
+    storage = _configured(monkeypatch)
+    for day in ("2026-01-01", "2026-08-22"):
+        storage.save(day, b"A", "m4a", _manifest(day))
+
+    deleted = prune_briefings(
+        storage, retention_days=30, today_id="2026-08-22"
+    )
+
+    assert deleted == ["2026-01-01"]
+    assert storage.load_manifest("2026-08-22") is not None
