@@ -418,3 +418,18 @@ def test_offline_api_generation_does_not_go_to_real_publishers(
     rss_fixture = captured.get("rss_fixture")
     assert rss_fixture is not None
     assert rss_fixture.is_file()
+
+
+async def test_the_offline_news_fixture_actually_carries_news():
+    """A fixture that matches nothing is worse than no fixture: the offline
+    world segment came out empty behind something that looked wired up.
+
+    Driven through the exact call `generate_briefing` makes — fixture only,
+    no `feeds`, no `now` — because that is where both failures lived.
+    """
+    from app.ingestion.rss import fetch_articles
+
+    items = await fetch_articles(
+        fixture=briefing_api.FIXTURES_DIR / "rss_feeds.json"
+    )
+    assert items, "offline generation would ship with no world segment"
