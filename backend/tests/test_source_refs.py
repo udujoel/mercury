@@ -211,3 +211,34 @@ def test_a_junk_ref_does_not_reach_the_manifest():
     ]
     emails = [_email("Apple pushes back foldable iPhone to 2028", "The Verge")]
     assert _build_source_refs(turns, emails, []) == []
+
+
+def test_an_accented_sender_name_is_still_matched_on_its_own():
+    """`[a-z0-9]+` did not just skip the accent, it split the word around it.
+
+    "Élodie" tokenised to "lodie", and `\\blodie\\b` cannot match inside
+    "élodie" because the é on its left is itself a word character — so the
+    one host who names the sender produced no SourceRef and her email had no
+    tappable show-notes entry (PRD F-19). Silent, and only for people whose
+    names carry a diacritic.
+
+    The title here is deliberately unmatchable, so this measures the sender
+    loop rather than falling through to the title tokens.
+    """
+    assert _mentions(
+        "Élodie says it is ready to go out.",
+        "Quarterly numbers",
+        "Élodie Durand",
+    )
+
+
+def test_an_accented_title_word_does_not_match_its_ascii_fragment():
+    """The same regex invented tokens that were never in the text: "Réunion"
+    became "union", so a turn about a trade union scored a full match against
+    an email about a budget meeting and credited it in the show notes.
+    """
+    assert not _mentions(
+        "The union agreed the budget, so that fight is over.",
+        "Réunion budget",
+        "Someone Else",
+    )

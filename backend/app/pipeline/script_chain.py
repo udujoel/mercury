@@ -551,14 +551,22 @@ _STOP_WORDS = {
 
 
 def _distinctive_tokens(text: str) -> set[str]:
-    """Content-bearing tokens from a title, used for fuzzy matching.
+    r"""Content-bearing tokens from a title, used for fuzzy matching.
 
     Drops short words and the filler that shows up in almost every subject
     line, so "Q3 budget review before Friday" reduces to {q3, budget,
     review, friday} and can still match a host paraphrasing it as "the Q3
     budget review".
+
+    `[^\W_]` rather than `[a-z0-9]`: an ASCII class does not skip an accent,
+    it SPLITS the word around it. "Élodie" became "lodie", which then cannot
+    match inside "élodie" either, because the é to its left is a word
+    character and `\b` never fires there — so a sender with a diacritic in
+    her name silently lost her show-notes entry. It cut the other way too:
+    "Réunion" became "union", handing an email about a budget meeting a full
+    match against a turn about a trade union.
     """
-    words = re.findall(r"[a-z0-9]+", text.lower())
+    words = re.findall(r"[^\W_]+", text.lower())
     return {w for w in words if len(w) > 2 and w not in _STOP_WORDS}
 
 
