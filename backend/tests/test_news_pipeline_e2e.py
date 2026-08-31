@@ -11,12 +11,15 @@ That matters here more than usual: the existing end-to-end test injects fakes
 for calendar, weather, scoring and the script chain, which is exactly why
 every defect this branch fixes survived a green suite.
 
-The fixtures are the ADR-003 worked example, deliberately split across two
-transports: Stratechery and Benedict Evans arrive as newsletters over Gmail,
+The fixtures are shaped to the PRD's own acceptance line — "a story covered
+by three newsletters and two news sources appears exactly once in the
+briefing" — and deliberately split across two transports: Stratechery,
+Benedict Evans and Exponential View arrive as newsletters over Gmail,
 Reuters and Platformer as articles over RSS. That is the case CLAUDE.md says
-the shared `Item` schema exists for, and it is the case no fixture in this
-repo previously covered — `clustering_corpus.json` carries the same four
-sources, but as pre-normalised JSON that never touches an ingestion module.
+the shared `Item` schema exists for, and no fixture in this repo previously
+covered it — `clustering_corpus.json` carries four of the same sources, but
+as pre-normalised JSON that never touches an ingestion module, so it could
+not have caught a wiring defect.
 
 Two controls ride along and must NOT merge: an unrelated rocket launch on
 RSS, and a personal email from a colleague.
@@ -66,7 +69,11 @@ FIXED_NOW = datetime(2026, 8, 21, 0, 0, tzinfo=UTC)
 # re-checks the margin on THIS corpus.
 FAKE_PROVIDER_TEST_THRESHOLD = 0.60
 
-ACQUISITION_SOURCES = ["Benedict Evans", "Platformer", "Reuters", "Stratechery"]
+# Three newsletters (Gmail) and two news sources (RSS), per the PRD's
+# acceptance line. `Story.source_names` is sorted.
+ACQUISITION_NEWSLETTERS = ["Benedict Evans", "Exponential View", "Stratechery"]
+ACQUISITION_NEWS_SOURCES = ["Platformer", "Reuters"]
+ACQUISITION_SOURCES = sorted(ACQUISITION_NEWSLETTERS + ACQUISITION_NEWS_SOURCES)
 
 
 async def _ingest() -> tuple[list, list]:
@@ -109,27 +116,37 @@ async def test_the_fixtures_really_do_carry_the_same_story_twice():
     encoded the bug they claimed to guard.
     """
     emails, articles = await _ingest()
-    assert {e.source_name for e in emails} >= {"Stratechery", "Benedict Evans"}
-    assert {a.source_name for a in articles} >= {"Reuters", "Platformer"}
+    assert {e.source_name for e in emails} >= set(ACQUISITION_NEWSLETTERS)
+    assert {a.source_name for a in articles} >= set(ACQUISITION_NEWS_SOURCES)
+
     covering = [
         item for item in emails + articles if "DataFlow" in f"{item.title} {item.body}"
     ]
-    assert len(covering) == 4
-    assert {i.source_type for i in covering} == {SourceType.EMAIL, SourceType.RSS}
+    assert len(covering) == 5
+    assert sorted(
+        i.source_name for i in covering if i.source_type is SourceType.EMAIL
+    ) == ACQUISITION_NEWSLETTERS
+    assert sorted(
+        i.source_name for i in covering if i.source_type is SourceType.RSS
+    ) == ACQUISITION_NEWS_SOURCES
 
 
-async def test_the_same_story_appears_once_however_many_sources_carried_it():
-    """THE PHASE 2 GATE.
+async def test_a_story_covered_by_three_newsletters_and_two_news_sources_appears_once():
+    """THE PHASE 2 GATE, in the PRD's own words.
 
-    Six normalised items in, four of them the same acquisition. Out: three
+    Seven normalised items in, five of them the same acquisition. Out: three
     stories — the acquisition, the rocket launch, the personal email.
+
+    Asserted on the merged story's identity and its full source list rather
+    than on a total: "three stories" alone would also be satisfied by three
+    wrong clusters.
     """
     stories = await _stories()
 
     assert len(stories) == 3
 
     acquisition = max(stories, key=lambda s: s.cluster_size)
-    assert acquisition.cluster_size == 4
+    assert acquisition.cluster_size == 5
     assert acquisition.source_names == ACQUISITION_SOURCES
 
     # And the other two did not get swept in with it.
@@ -149,6 +166,30 @@ async def test_the_merge_holds_across_a_band_of_thresholds():
         biggest = max(stories, key=lambda s: s.cluster_size)
         assert biggest.source_names == ACQUISITION_SOURCES, threshold
         assert len(stories) == 3, threshold
+
+
+async def test_prd_f08_newsletter_and_news_feed_merge_with_both_sources_attributed():
+    """PRD F-08 exactly: "a story arriving via newsletter and via news feed
+    is merged into one item with both sources attributed."
+
+    The narrowest statement of the requirement — one newsletter, one feed —
+    asserted on the item they merge INTO, so a run that merged the
+    newsletters with each other but left the feeds alone would fail.
+    """
+    stories = await _stories()
+    merged = [
+        s for s in stories
+        if {m.source_type for m in s.members} == {SourceType.EMAIL, SourceType.RSS}
+    ]
+
+    assert len(merged) == 1
+    story = merged[0]
+    assert sorted(
+        m.source_name for m in story.members if m.source_type is SourceType.EMAIL
+    ) == ACQUISITION_NEWSLETTERS
+    assert sorted(
+        m.source_name for m in story.members if m.source_type is SourceType.RSS
+    ) == ACQUISITION_NEWS_SOURCES
 
 
 async def test_the_wire_report_represents_the_cluster():
@@ -205,7 +246,7 @@ async def test_every_source_that_carried_the_story_reaches_the_show_notes():
     refs = _build_source_refs(turns, [], [], [acquisition])
 
     assert sorted(r.source_name for r in refs) == ACQUISITION_SOURCES
-    assert {r.cluster_size for r in refs} == {4}
+    assert {r.cluster_size for r in refs} == {5}
 
 
 # ──────────────────────────────────────────────────────────────
@@ -253,7 +294,10 @@ async def test_the_world_segment_receives_the_clustered_story(
     # Two: the four-source acquisition, and the rocket launch nobody else
     # carried. Six ingested items, two things to talk about.
     assert "WORLD (2 clustered stories)" in prompt
-    assert "Covered by 4 source(s): Benedict Evans, Platformer, Reuters, " in prompt
+    assert (
+        "Covered by 5 source(s): Benedict Evans, Exponential View, "
+        "Platformer, Reuters, Stratechery"
+    ) in prompt
     assert "Covered by 1 source(s): Ars Technica" in prompt
 
     # Every publication named, so the hosts can say "three of your
@@ -262,23 +306,38 @@ async def test_the_world_segment_receives_the_clustered_story(
         assert source in prompt, source
 
 
-async def test_an_absorbed_newsletter_is_not_also_read_out_as_email(
+async def test_the_story_is_offered_to_exactly_one_segment_of_the_briefing(
     tmp_path, clustering_threshold
 ):
-    """The gate at the level the listener hears it. Both newsletters were
-    merged into the world story, so neither is offered to the inbox segment
-    as well — while the colleague's email, which merged with nothing, still
-    is."""
+    """"Appears exactly once IN THE BRIEFING", not merely "clusters into one
+    story". Clustering the acquisition correctly and then also handing all
+    three newsletters to the inbox segment would satisfy every assertion
+    above and still read the story out four times.
+
+    So: each newsletter's subject line appears exactly once across the whole
+    outline prompt — inside the world story it was absorbed into, and
+    nowhere else. The colleague's email merged with nothing and is still
+    offered to the inbox, which is what stops this passing by way of an
+    empty briefing.
+    """
     llm = PromptCapturingLLM()
     await _generate(tmp_path, llm)
 
     prompt = llm.outline_prompt
     inbox_block = prompt.split("INBOX (", 1)[1].split("WORLD (", 1)[0]
+    world_block = prompt.split("WORLD (", 1)[1].split("FOLLOW-UPS", 1)[0]
 
-    assert "The DataFlow Acquisition and What It Means for the Bundle" not in (
-        inbox_block
-    )
-    assert "notes on distribution" not in inbox_block
+    for subject in (
+        "The DataFlow Acquisition and What It Means for the Bundle",
+        "TechCorp buys DataFlow: notes on distribution",
+        "The DataFlow deal and where the scarcity really is",
+    ):
+        assert subject not in inbox_block, subject
+
+    # Named once in the world block, as members of the one story.
+    for newsletter in ACQUISITION_NEWSLETTERS:
+        assert world_block.count(newsletter) == 1, newsletter
+
     assert "Q3 budget review before Friday" in inbox_block
     assert inbox_block.startswith("1 items)")
 

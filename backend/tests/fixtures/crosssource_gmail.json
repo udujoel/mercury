@@ -105,6 +105,58 @@
    }
   },
   {
+   "id": "msg_expview_001",
+   "threadId": "thread_msg_expview_001",
+   "labelIds": [
+    "INBOX"
+   ],
+   "snippet": "The DataFlow deal is the third pipeline acquisition this year and by some distan",
+   "payload": {
+    "mimeType": "multipart/alternative",
+    "headers": [
+     {
+      "name": "From",
+      "value": "Exponential View <azeem@exponentialview.co>"
+     },
+     {
+      "name": "To",
+      "value": "udujoel@gmail.com"
+     },
+     {
+      "name": "Subject",
+      "value": "The DataFlow deal and where the scarcity really is"
+     },
+     {
+      "name": "Date",
+      "value": "Thu, 20 Aug 2026 09:05:00 +0000"
+     },
+     {
+      "name": "List-Unsubscribe",
+      "value": "<https://example.com/unsub>"
+     },
+     {
+      "name": "Precedence",
+      "value": "bulk"
+     }
+    ],
+    "parts": [
+     {
+      "mimeType": "text/plain",
+      "headers": [
+       {
+        "name": "Content-Type",
+        "value": "text/plain; charset=UTF-8"
+       }
+      ],
+      "body": {
+       "size": 405,
+       "data": "VGhlIERhdGFGbG93IGRlYWwgaXMgdGhlIHRoaXJkIHBpcGVsaW5lIGFjcXVpc2l0aW9uIHRoaXMgeWVhciBhbmQgYnkgc29tZSBkaXN0YW5jZSB0aGUgbGFyZ2VzdC4gVGVjaENvcnAgcGF5aW5nICQyLjMgYmlsbGlvbiBmb3IgRGF0YUZsb3cgdGVsbHMgeW91IHdoZXJlIHRoZSBzY2FyY2l0eSBpcyBpbiBBSSBpbmZyYXN0cnVjdHVyZSByaWdodCBub3c6IG5vdCBpbiBtb2RlbHMsIHdoaWNoIGFyZSBjb21tb2RpdGlzaW5nIGZhc3QsIGJ1dCBpbiB0aGUgcGx1bWJpbmcgdGhhdCBtb3ZlcyBlbnRlcnByaXNlIGRhdGEgdG8gdGhlbS4gV29ydGggd2F0Y2hpbmcgd2hldGhlciB0aGUgcmVndWxhdG9ycyB3aG8gd2F2ZWQgdGhpcyB0aHJvdWdoIGFwcGx5IHRoZSBzYW1lIHJlYXNvbmluZyB0byB0aGUgbmV4dCBvbmUu"
+      }
+     }
+    ]
+   }
+  },
+  {
    "id": "msg_maria_001",
    "threadId": "thread_msg_maria_001",
    "labelIds": [
