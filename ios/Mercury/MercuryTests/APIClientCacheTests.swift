@@ -43,10 +43,21 @@ final class APIClientCacheTests: XCTestCase {
         try super.tearDownWithError()
     }
 
+    /// Points the client at the per-test temp directory.
+    ///
+    /// These tests used to run against the real `Caches/Briefings`: the same
+    /// directory the app writes to, shared between every test in the suite,
+    /// and cleaned up only by best-effort `try? removeItem` calls that a
+    /// failing test skips. `directory` is created fresh in
+    /// `setUpWithError` and removed wholesale in `tearDownWithError`, so a
+    /// failure now leaves nothing behind for the next run to trip over.
     private func makeClient() -> APIClient {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [StubURLProtocol.self]
-        return APIClient(session: URLSession(configuration: configuration))
+        return APIClient(
+            session: URLSession(configuration: configuration),
+            audioDirectory: directory
+        )
     }
 
     private func clearETag(_ briefingId: String) {
@@ -150,7 +161,6 @@ final class APIClientCacheTests: XCTestCase {
         XCTAssertEqual(StubURLProtocol.conditionalRequestCount, 1,
                        "the second call must actually ask If-None-Match")
 
-        try? FileManager.default.removeItem(at: first)
     }
 
     /// Finding 3 from the self-review on PR #12.
@@ -162,7 +172,6 @@ final class APIClientCacheTests: XCTestCase {
     /// every morning.
     func testAnUnusableCachedFileIsRefetchedRatherThanRevalidated() async throws {
         let briefingId = "2026-08-30"
-        let directory = try APIClient.audioCacheDirectory()
         let empty = APIClient.audioURL(briefingId: briefingId, ext: "wav", in: directory)
         try Data().write(to: empty)
         APIClient.rememberETag("\"etag-1\"", briefingId: briefingId)
@@ -185,7 +194,6 @@ final class APIClientCacheTests: XCTestCase {
         )
         XCTAssertEqual(try Data(contentsOf: result), audioPayload("repaired"))
 
-        try? FileManager.default.removeItem(at: result)
     }
 
     /// A regenerated briefing keeps its id but gets a new ETag, so the
@@ -213,7 +221,6 @@ final class APIClientCacheTests: XCTestCase {
                        "same briefing id must not mean same audio")
         XCTAssertEqual(APIClient.cachedETag(briefingId: briefingId), "\"etag-2\"")
 
-        try? FileManager.default.removeItem(at: second)
     }
 
     /// A format switch between generations must not leave the old file
@@ -239,7 +246,74 @@ final class APIClientCacheTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: wav.path),
                        "the stale .wav would win the probe next time")
 
-        try? FileManager.default.removeItem(at: m4a)
+    }
+
+    // MARK: - concurrent downloads of the same briefing
+
+    /// macroscope/cubic: the overnight prefetch and a morning tap download
+    /// the same briefing into the same cache slot, and `downloadAudio`
+    /// removes the sibling of the other format around the install. Run
+    /// concurrently, the second call's cleanup could delete the file the
+    /// first had just installed and was about to return, so the caller got
+    /// a URL for a file that no longer existed.
+    ///
+    /// Serialisation is what this asserts, and the observable is the
+    /// conditional request: run concurrently, neither call has stored an
+    /// ETag by the time the other builds its request, so NEITHER is
+    /// conditional and both download the full ~4MB. Serialised, the second
+    /// finds the first's ETag and asks.
+    func testConcurrentDownloadsOfTheSameBriefingAreSerialised() async throws {
+        let briefingId = "2026-08-27"
+        clearETag(briefingId)
+        defer { clearETag(briefingId) }
+
+        StubURLProtocol.handler = { request in
+            if request.value(forHTTPHeaderField: "If-None-Match") == "\"etag-1\"" {
+                return (304, [:], Data())
+            }
+            return (200, ["Content-Type": "audio/wav", "Etag": "\"etag-1\""],
+                    audioPayload("the briefing"))
+        }
+
+        let client = makeClient()
+        async let first = client.downloadAudio(briefingId: briefingId)
+        async let second = client.downloadAudio(briefingId: briefingId)
+        let (a, b) = try await (first, second)
+
+        XCTAssertEqual(
+            StubURLProtocol.conditionalRequestCount, 1,
+            "the second download must see the first's ETag, which it can "
+                + "only do if the two did not run at the same time"
+        )
+        XCTAssertEqual(a, b, "both callers name the same cached file")
+        XCTAssertEqual(try Data(contentsOf: a), audioPayload("the briefing"),
+                       "the file the first caller was handed must still exist")
+        XCTAssertEqual(try Data(contentsOf: b), audioPayload("the briefing"))
+    }
+
+    /// Different briefings must NOT be serialised against each other — the
+    /// lock is per id, and a prefetch of tomorrow must not be held up
+    /// behind today.
+    func testDownloadsOfDifferentBriefingsDoNotBlockEachOther() async throws {
+        clearETag("2026-08-28")
+        clearETag("2026-08-29")
+        defer { clearETag("2026-08-28"); clearETag("2026-08-29") }
+
+        StubURLProtocol.handler = { request in
+            let marker = request.url?.absoluteString.contains("2026-08-28") == true
+                ? "first briefing" : "second briefing"
+            return (200, ["Content-Type": "audio/wav", "Etag": "\"e\""],
+                    audioPayload(marker))
+        }
+
+        let client = makeClient()
+        async let a = client.downloadAudio(briefingId: "2026-08-28")
+        async let b = client.downloadAudio(briefingId: "2026-08-29")
+        let (first, second) = try await (a, b)
+
+        XCTAssertNotEqual(first, second)
+        XCTAssertEqual(try Data(contentsOf: first), audioPayload("first briefing"))
+        XCTAssertEqual(try Data(contentsOf: second), audioPayload("second briefing"))
     }
 }
 

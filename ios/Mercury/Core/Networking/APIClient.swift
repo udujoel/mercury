@@ -31,12 +31,70 @@ protocol APIClientProtocol {
     func registerDevice(token: String) async throws
 }
 
+/// Serialises audio downloads per briefing id.
+///
+/// Two downloads of the same briefing genuinely overlap in this app: the
+/// overnight prefetch (PRD F-17) and a morning tap that does not wait for
+/// it. They target the same cache slot, and `downloadAudio` drops the
+/// sibling of the other format around the install — so when a regeneration
+/// switched format between the two requests, the second call's cleanup
+/// deleted the file the first had just installed and was about to return.
+/// The caller got a URL for a file that no longer existed and
+/// `AVAudioFile(forReading:)` threw on a download that had succeeded.
+///
+/// Serialising rather than coalescing, deliberately. The second caller does
+/// run a real request, but by then the first has stored an ETag, so it is a
+/// conditional request that comes back 304 and costs nothing — and each
+/// caller keeps its own cancellation and its own error rather than
+/// inheriting another task's.
+actor AudioDownloadSerializer {
+
+    private var busy: Set<String> = []
+    private var waiting: [String: [CheckedContinuation<Void, Never>]] = [:]
+
+    func acquire(_ id: String) async {
+        guard busy.contains(id) else {
+            busy.insert(id)
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiting[id, default: []].append(continuation)
+        }
+    }
+
+    func release(_ id: String) {
+        guard var queue = waiting[id], !queue.isEmpty else {
+            waiting[id] = nil
+            busy.remove(id)
+            return
+        }
+        // Hand ownership straight to the next waiter: `busy` stays set, so
+        // a third caller arriving in between still queues rather than
+        // running alongside it.
+        let next = queue.removeFirst()
+        waiting[id] = queue.isEmpty ? nil : queue
+        next.resume()
+    }
+}
+
+
 final class APIClient: APIClientProtocol {
 
     private let session: URLSession
     private let decoder: JSONDecoder
 
-    init(session: URLSession? = nil) {
+    /// Where downloaded audio is cached. `nil` means the real
+    /// `Caches/Briefings` directory, which is what the app always uses.
+    ///
+    /// Injectable for tests only. The end-to-end download tests used to run
+    /// against the real cache: they read and wrote the app's own
+    /// `Caches/Briefings`, so they could be perturbed by anything the app
+    /// had left there, and a failed run left artifacts behind for the next
+    /// one to trip over.
+    private let audioDirectory: URL?
+
+    init(session: URLSession? = nil, audioDirectory: URL? = nil) {
+        self.audioDirectory = audioDirectory
         // URLSession's default request timeout is 60 seconds. A real live
         // generation — two Gemini passes plus a TTS call per turn — measured
         // 71 seconds end to end, so the default would cancel the request just
@@ -85,8 +143,26 @@ final class APIClient: APIClientProtocol {
     /// when it is) — never hardcoded, and never guessed from a filename the
     /// server doesn't send.
     func downloadAudio(briefingId: String) async throws -> URL {
+        // Serialised per briefing id — see `AudioDownloadSerializer`.
+        await Self.downloads.acquire(briefingId)
+        do {
+            let url = try await performDownload(briefingId: briefingId)
+            await Self.downloads.release(briefingId)
+            return url
+        } catch {
+            await Self.downloads.release(briefingId)
+            throw error
+        }
+    }
+
+    /// Process-wide, because the two callers that collide do not share an
+    /// `APIClient`: the overnight prefetch runs from the background task
+    /// while a morning tap runs from `AppState`.
+    private static let downloads = AudioDownloadSerializer()
+
+    private func performDownload(briefingId: String) async throws -> URL {
         let endpoint = Endpoint.audio(briefingId: briefingId)
-        let directory = try Self.audioCacheDirectory()
+        let directory = try audioDirectory ?? Self.audioCacheDirectory()
         let cached = Self.cachedAudioURL(briefingId: briefingId, in: directory)
 
         var request = URLRequest(url: endpoint.url())
@@ -137,16 +213,21 @@ final class APIClient: APIClientProtocol {
             let ext = Self.fileExtension(forMimeType: response.mimeType)
             let destination = Self.audioURL(briefingId: briefingId, ext: ext, in: directory)
 
+            try Self.install(tempURL, at: destination)
+
             // A regeneration can switch format (the backend falls back to
             // WAV without ffmpeg). Drop the stale sibling so `cachedAudioURL`
             // cannot later find the wrong one.
+            //
+            // AFTER the install, not before. Deleting first opens a window
+            // where neither file exists, so an install that then throws has
+            // destroyed a perfectly good cached briefing to replace it with
+            // nothing.
             for other in Self.knownAudioExtensions where other != ext {
                 try? FileManager.default.removeItem(
                     at: Self.audioURL(briefingId: briefingId, ext: other, in: directory)
                 )
             }
-
-            try Self.install(tempURL, at: destination)
             Self.rememberETag(http?.value(forHTTPHeaderField: "Etag"), briefingId: briefingId)
             return destination
         } catch let error as APIError {
@@ -505,12 +586,25 @@ struct GenerationStatus: Decodable, Sendable {
 /// whole second serialises without a fractional part, so a parser that only
 /// handled microseconds would fail on a one-in-a-million morning.
 ///
-/// Resolution is MILLISECONDS: `.withFractionalSeconds` reads three
-/// fractional digits and discards the rest, so `.073032` becomes `.073`.
-/// `generated_at` dates and orders one briefing per day, so this is
-/// irrelevant in practice — but it is a real difference from the iOS 18+
-/// built-in, and `testTimestampParserAcceptsBothWireShapes` pins it so it
-/// stays a decision rather than a surprise.
+/// Resolution is MILLISECONDS: the fractional part is normalised to three
+/// digits before parsing, so `.073032` becomes `.073`. `generated_at` dates
+/// and orders one briefing per day, so this is irrelevant in practice — but
+/// it is a real difference from the iOS 18+ built-in, and
+/// `testTimestampParserAcceptsBothWireShapes` pins it so it stays a
+/// decision rather than a surprise.
+///
+/// The normalisation is not cosmetic, and it is here because of a claim
+/// that CANNOT be settled on this machine. cubic reported that on iOS 17
+/// `ISO8601DateFormatter` with `.withFractionalSeconds` still rejects a
+/// six-digit fraction outright. Only iOS 26.5 and 27.0 runtimes are
+/// installed here, both on the swift-foundation rewrite, so neither that
+/// claim nor its opposite can be measured — the earlier "measured" note in
+/// this file was measured on the new implementation and says nothing about
+/// the old one. Rather than bet on the leniency of a formatter on an OS we
+/// cannot run, hand it the exact shape it is specified for: exactly three
+/// fractional digits, truncated or zero-padded. That makes the parse
+/// independent of how many digits any given Foundation happens to
+/// tolerate, which was the point of moving off `.iso8601` to begin with.
 enum ISO8601Timestamp {
 
     private static let withFractionalSeconds: ISO8601DateFormatter = {
@@ -526,7 +620,33 @@ enum ISO8601Timestamp {
     }()
 
     static func date(from text: String) -> Date? {
-        withFractionalSeconds.date(from: text) ?? wholeSeconds.date(from: text)
+        let normalised = normalisingFraction(text)
+        return withFractionalSeconds.date(from: normalised)
+            ?? wholeSeconds.date(from: normalised)
+    }
+
+    /// Rewrites the fractional-seconds run to exactly three digits, leaving
+    /// everything else — including the timezone designator, which may be
+    /// `Z`, `+01:00` or `-05:00` — untouched. A timestamp with no fractional
+    /// part is returned unchanged, for `wholeSeconds` to handle.
+    ///
+    /// Pure and string-only so it can be checked exactly, on any runtime,
+    /// against every fraction width the backend could emit.
+    static func normalisingFraction(_ text: String) -> String {
+        guard let dot = text.firstIndex(of: ".") else { return text }
+        let firstDigit = text.index(after: dot)
+
+        var end = firstDigit
+        while end < text.endIndex, text[end].isASCII, text[end].isNumber {
+            end = text.index(after: end)
+        }
+        let digits = text[firstDigit..<end]
+        guard !digits.isEmpty else { return text }
+
+        let normalised = digits.count >= 3
+            ? String(digits.prefix(3))
+            : digits + String(repeating: "0", count: 3 - digits.count)
+        return String(text[..<firstDigit]) + normalised + String(text[end...])
     }
 }
 

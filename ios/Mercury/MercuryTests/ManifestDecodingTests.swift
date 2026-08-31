@@ -128,6 +128,72 @@ final class ManifestDecodingTests: XCTestCase {
     /// `ISO8601Timestamp` is ever narrowed back to a single
     /// `.withInternetDateTime` formatter, which is the actual regression
     /// to guard against.
+    /// cubic reported that on iOS 17 the fractional-seconds formatter still
+    /// rejects the backend's six-digit fraction outright. That cannot be
+    /// measured here — only iOS 26.5 and 27.0 runtimes are installed, both
+    /// on the swift-foundation rewrite — so rather than bet either way,
+    /// `ISO8601Timestamp` now hands the formatter exactly the three digits
+    /// it is specified for. These cover every fraction width the wire could
+    /// carry, and they are runtime-independent because the normalisation is
+    /// pure string work.
+    func testFractionalSecondsAreNormalisedToThreeDigits() {
+        // What pydantic's `model_dump_json` actually emits.
+        XCTAssertEqual(
+            ISO8601Timestamp.normalisingFraction("2026-08-23T10:49:22.073032Z"),
+            "2026-08-23T10:49:22.073Z"
+        )
+        // Fewer than three digits is padded, not left short: a formatter
+        // specified for exactly three has no obligation to accept one.
+        XCTAssertEqual(
+            ISO8601Timestamp.normalisingFraction("2026-08-23T10:49:22.07Z"),
+            "2026-08-23T10:49:22.070Z"
+        )
+        XCTAssertEqual(
+            ISO8601Timestamp.normalisingFraction("2026-08-23T10:49:22.7Z"),
+            "2026-08-23T10:49:22.700Z"
+        )
+        // Nanoseconds, in case a future backend stops using pydantic.
+        XCTAssertEqual(
+            ISO8601Timestamp.normalisingFraction("2026-08-23T10:49:22.073032123Z"),
+            "2026-08-23T10:49:22.073Z"
+        )
+        // The timezone designator is not a fraction and must survive intact,
+        // in either sign — the naive "find the next + or -" scan gets this
+        // wrong for a negative offset.
+        XCTAssertEqual(
+            ISO8601Timestamp.normalisingFraction("2026-08-23T10:49:22.073032+01:00"),
+            "2026-08-23T10:49:22.073+01:00"
+        )
+        XCTAssertEqual(
+            ISO8601Timestamp.normalisingFraction("2026-08-23T10:49:22.073032-05:00"),
+            "2026-08-23T10:49:22.073-05:00"
+        )
+        // No fractional part: left alone for the whole-seconds formatter.
+        XCTAssertEqual(
+            ISO8601Timestamp.normalisingFraction("2026-08-23T10:49:22Z"),
+            "2026-08-23T10:49:22Z"
+        )
+    }
+
+    /// Every shape above must also actually parse, not merely normalise.
+    func testEveryFractionWidthParsesToTheSameSecond() throws {
+        let base = try XCTUnwrap(ISO8601Timestamp.date(from: "2026-08-23T10:49:22Z"))
+        for text in ["2026-08-23T10:49:22.073032Z",
+                     "2026-08-23T10:49:22.073Z",
+                     "2026-08-23T10:49:22.073032123Z"] {
+            let parsed = try XCTUnwrap(ISO8601Timestamp.date(from: text),
+                                       "\(text) must parse")
+            XCTAssertEqual(parsed.timeIntervalSince1970 - base.timeIntervalSince1970,
+                           0.073, accuracy: 0.000_5, "\(text)")
+        }
+        // An offset timestamp names the same instant as its Z equivalent.
+        let offset = try XCTUnwrap(
+            ISO8601Timestamp.date(from: "2026-08-23T11:49:22.073032+01:00")
+        )
+        XCTAssertEqual(offset.timeIntervalSince1970 - base.timeIntervalSince1970,
+                       0.073, accuracy: 0.000_5)
+    }
+
     func testTimestampParserAcceptsBothWireShapes() throws {
         let fractional = try XCTUnwrap(
             ISO8601Timestamp.date(from: "2026-08-23T10:49:22.073032Z"),
