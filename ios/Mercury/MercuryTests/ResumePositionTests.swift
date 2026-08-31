@@ -225,6 +225,52 @@ final class ResumePositionTests: XCTestCase {
                            + "orders briefings by when the id was first seen")
     }
 
+    /// macroscope, on this batch's own commits: two individually reasonable
+    /// changes reassembled the mismatch this PR exists to remove.
+    ///
+    /// A briefing id is a date, so a replacement's audio has the same
+    /// filename on disk as the audio it replaces, and `playBriefing` saves
+    /// the new manifest with no audio path before downloading. Preserving
+    /// the old path across a replacement meant that when the download then
+    /// failed, the offline fallback found a path, found a file, and played
+    /// the PREVIOUS generation's speech under the new transcript's chapter
+    /// timings.
+    func testARegeneratedBriefingDropsTheStaleAudioPath() async throws {
+        let container = try makeInMemoryContainer()
+        let store = BriefingStore(modelContainer: container)
+        // Dated now, so `enforceRetention` is not the thing clearing the
+        // path — otherwise this would pass for the wrong reason.
+        let original = manifest(generatedAt: Date(), durationMs: 360_000)
+
+        try await store.save(original, localAudioPath: "/tmp/2026-08-21.m4a")
+
+        let replacement = manifest(generatedAt: Date().addingTimeInterval(60),
+                                   durationMs: 300_000)
+        try await store.save(replacement, localAudioPath: nil)
+
+        let stored = try await XCTUnwrapAsync(store.latestStoredBriefing())
+        XCTAssertNil(
+            stored.localAudioPath,
+            "that file is the audio this briefing replaced, and it is one "
+                + "failed download away from being played under the new "
+                + "transcript"
+        )
+    }
+
+    /// The control: an ordinary re-save must still keep the cached audio,
+    /// or every playback would re-download ~4MB it already has.
+    func testResavingTheSameBriefingKeepsTheCachedAudioPath() async throws {
+        let container = try makeInMemoryContainer()
+        let store = BriefingStore(modelContainer: container)
+        let same = manifest(generatedAt: Date(), durationMs: 360_000)
+
+        try await store.save(same, localAudioPath: "/tmp/2026-08-21.m4a")
+        try await store.save(same, localAudioPath: nil)
+
+        let stored = try await XCTUnwrapAsync(store.latestStoredBriefing())
+        XCTAssertEqual(stored.localAudioPath, "/tmp/2026-08-21.m4a")
+    }
+
     /// The negative control, and the reason this cannot simply reset on
     /// every save: `AppState.playBriefing` persists the SAME manifest twice
     /// per playback — once when it arrives, once with the local audio path.

@@ -186,6 +186,15 @@ final class InterruptionHandlingTests: XCTestCase {
                 + "not still believe a schedule is live, or play() will start "
                 + "silence it can never recover from"
         )
+        // kilo-code-bot, correctly: this test drove the no-options path
+        // from the day it was written and asserted only on the half that
+        // `.began` had already set. The interruption state it left behind
+        // is the part that mattered, and nothing looked at it.
+        XCTAssertFalse(
+            coordinator.isInterruptedForTesting,
+            "left set, playbackDidComplete rejects every later completion "
+                + "and isPlaying sticks at true for the rest of the session"
+        )
     }
 
     @MainActor

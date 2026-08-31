@@ -50,7 +50,6 @@ actor BriefingStore {
             existing.generatedAt = manifest.generatedAt
             existing.durationMs = manifest.durationMs
             existing.remoteAudioURL = manifest.audioURL ?? existing.remoteAudioURL
-            existing.localAudioPath = localAudioPath ?? existing.localAudioPath
             existing.segments = segments
             existing.turns = turns
             existing.sources = sources
@@ -63,6 +62,23 @@ actor BriefingStore {
             if isReplacement {
                 existing.lastPositionMs = 0
                 existing.completed = false
+
+                // And the cached audio path goes with them, verbatim —
+                // `nil` clears rather than preserves.
+                //
+                // A briefing id is a date, so the replacement's audio has
+                // the same filename on disk as the audio it replaces, and
+                // the first save of a newly fetched manifest passes no path
+                // at all. Preserving the old one here meant that if the
+                // audio download then failed, the offline fallback in
+                // `playBriefing` found a path, found a file, and played the
+                // PREVIOUS generation's audio against the new transcript —
+                // new chapter timings over old speech. That is the
+                // manifest/audio mismatch this PR exists to remove,
+                // reassembled out of two individually reasonable changes.
+                existing.localAudioPath = localAudioPath
+            } else {
+                existing.localAudioPath = localAudioPath ?? existing.localAudioPath
             }
         } else {
             let entity = BriefingEntity(
