@@ -161,3 +161,56 @@ def test_no_remainder_leaves_the_source_block_unchanged():
     with_zero = _flatten_source_text([_email(1)], [_event()], _weather(), 0)
     without = _flatten_source_text([_email(1)], [_event()], _weather())
     assert with_zero == without
+
+
+# ──────────────────────────────────────────────────────────────
+# The clock the hosts do not have
+# ──────────────────────────────────────────────────────────────
+
+
+async def test_the_outline_prompt_states_the_day_and_date():
+    llm = await _run()
+    assert "Friday, 21 August 2026" in llm.outline_prompt
+
+
+async def test_the_outline_prompt_states_no_time_of_day():
+    """`briefing_id` is a date, so `_parse_briefing_date` returns midnight and
+    `{date:%H:%M}` was structurally 00:00 in every briefing ever generated.
+    It was never a stale fact; it was never a fact.
+    """
+    llm = await _run()
+    # The DATE line only. Event start/end isoformats legitimately carry
+    # clock times further down the prompt.
+    date_line = next(
+        line for line in llm.outline_prompt.splitlines() if line.startswith("DATE:")
+    )
+    assert "00:00" not in date_line
+    assert "local time" not in date_line
+    assert date_line == "DATE: Friday, 21 August 2026"
+
+
+async def test_a_generation_time_is_not_smuggled_in_either():
+    """Not "fix the value" — remove it. Generation runs on an overnight cron
+    and the briefing is heard hours later (ADR-001, ADR-010), so the server
+    has no time worth stating: the phone knows when it is playing and the
+    server does not."""
+    llm = await _run(date=datetime(2026, 8, 21, 4, 12, tzinfo=UTC))
+    date_line = next(
+        line for line in llm.outline_prompt.splitlines() if line.startswith("DATE:")
+    )
+    assert "04:12" not in date_line
+
+
+def test_the_cold_open_is_not_asked_for_a_time_it_has_not_been_given():
+    """Both halves have to move together. Leaving "state the day, date and
+    time" in the prompt while removing the value makes it worse: the model
+    derives or invents the time instead. That is exactly how the cold open
+    once announced "Thursday" for a Friday — see the comment in
+    generate_script about never making the model derive a stateable fact.
+    """
+    from app.pipeline.prompts import OUTLINE_PROMPT
+
+    cold_open_line = next(
+        line for line in OUTLINE_PROMPT.splitlines() if "cold_open  —" in line
+    )
+    assert "time" not in cold_open_line.lower()

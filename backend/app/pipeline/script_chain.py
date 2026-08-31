@@ -490,6 +490,15 @@ def _is_valid_script(turns: list[Turn], budget: int) -> bool:
 # ──────────────────────────────────────────────────────────────
 
 
+_STOP_WORDS = {
+    "the", "and", "for", "you", "your", "with", "from", "this", "that",
+    "about", "into", "our", "are", "was", "were", "will", "have", "has",
+    "not", "but", "all", "any", "can", "out", "new", "now", "get", "got",
+    "before", "after", "week", "today", "tomorrow", "please", "update",
+    "updates", "meeting", "re", "fwd",
+}
+
+
 def _distinctive_tokens(text: str) -> set[str]:
     """Content-bearing tokens from a title, used for fuzzy matching.
 
@@ -498,15 +507,8 @@ def _distinctive_tokens(text: str) -> set[str]:
     review, friday} and can still match a host paraphrasing it as "the Q3
     budget review".
     """
-    stop = {
-        "the", "and", "for", "you", "your", "with", "from", "this", "that",
-        "about", "into", "our", "are", "was", "were", "will", "have", "has",
-        "not", "but", "all", "any", "can", "out", "new", "now", "get", "got",
-        "before", "after", "week", "today", "tomorrow", "please", "update",
-        "updates", "meeting", "re", "fwd",
-    }
     words = re.findall(r"[a-z0-9]+", text.lower())
-    return {w for w in words if len(w) > 2 and w not in stop}
+    return {w for w in words if len(w) > 2 and w not in _STOP_WORDS}
 
 
 # A turn counts as discussing a source when it reproduces most of that
@@ -527,12 +529,20 @@ def _mentions(turn_text: str, title: str, sender: str | None = None) -> bool:
     # A sender's name is a strong, low-noise signal on its own. Match the
     # full name or any single distinctive part of it, since hosts routinely
     # say "Priya" rather than "Priya Raman".
+    #
+    # The parts go through _distinctive_tokens rather than a bare `.split()`
+    # with a length check, which is what this used to do. "The Verge" splits
+    # into {"the", "verge"}, "the" clears three characters, and `\bthe\b`
+    # matches nearly every sentence in English — so The Verge was credited
+    # on the cold open, the weather and the sign-off of every briefing. Show
+    # notes filled with junk, and the grounding trail rule 3 depends on
+    # started attributing claims to a publication that had made none of
+    # them, which is worse than an empty trail because it looks verified.
     if sender:
-        sender_l = sender.lower()
-        if sender_l in lowered:
+        if sender.lower() in lowered:
             return True
-        for part in sender_l.split():
-            if len(part) > 2 and re.search(rf"\b{re.escape(part)}\b", lowered):
+        for part in _distinctive_tokens(sender):
+            if re.search(rf"\b{re.escape(part)}\b", lowered):
                 return True
 
     tokens = _distinctive_tokens(title)
@@ -1030,7 +1040,25 @@ async def generate_script(
         # neither critique pass fixed it — because from the model's side it
         # was a derivation, not an invention. Never make the model derive a
         # fact you can simply state.
-        date=date.strftime("%A, %d %B %Y") + f" (local time {date:%H:%M})",
+        # The day and the date, and no time of day.
+        #
+        # `{date:%H:%M}` used to be appended as "(local time HH:MM)". It was
+        # always 00:00: `briefing_id` is a "YYYY-MM-DD" string and
+        # `generate._parse_briefing_date` parses it to midnight, so the one
+        # clock fact the hosts were told to state was midnight in every
+        # briefing ever generated. Not a stale fact — never a fact.
+        #
+        # Passing the real generation time instead would be worse. Generation
+        # runs on an overnight cron and the briefing is heard hours later
+        # (ADR-001, ADR-010), so a host saying "it's twelve minutes past four"
+        # to someone listening over breakfast is confidently wrong in a way
+        # the listener can check instantly. The phone knows what time it is;
+        # the server does not. There is no correct value here, so there is no
+        # value here — and OUTLINE_PROMPT's cold_open definition stops asking
+        # for one, because a prompt that demands a time it was not given makes
+        # the model derive it, which is how the cold open once announced
+        # "Thursday" for a Friday.
+        date=date.strftime("%A, %d %B %Y"),
         weather=_format_weather(weather),
         n_events=len(events),
         # Fenced, like the draft pass has always fenced its source block.

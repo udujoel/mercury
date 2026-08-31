@@ -88,9 +88,12 @@ For each segment give:
 Segments in order, and what each one IS. These definitions are fixed. Do not
 reinterpret them, and do not move content between segments:
 
-- cold_open  — Greet the listener by name. State the day, date and time. One
-               host makes a SPECIFIC observation about the day ahead drawn
-               from the CALENDAR. Never open with a news story or an essay.
+- cold_open  — Greet the listener by name. State the day and the date. Do
+               NOT state a clock time: this briefing is generated overnight
+               and heard hours later, so any time you name will be wrong.
+               One host makes a SPECIFIC observation about the day ahead
+               drawn from the CALENDAR. Never open with a news story or an
+               essay.
 - weather    — Current conditions and the day's forecast. One wry remark.
                Short. This is texture, not information.
 - calendar   — The day walked chronologically. Flag anything needing prep.
