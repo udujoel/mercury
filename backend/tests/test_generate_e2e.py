@@ -337,6 +337,12 @@ async def test_both_personal_sources_failing_is_logged_loudly(caplog, tmp_path):
             storage=LocalFilesystemStorage(base_dir=tmp_path),
             fetch_emails=_failing_emails,
             fetch_events=_failing_events,
+            # The two keyless sources go through their fakes rather than the
+            # real ones: this test is about the personal half failing, and
+            # without them RSS and weather ran against the live internet,
+            # which the conftest guard now refuses.
+            fetch_weather=_fake_fetch_weather,
+            fetch_articles=_fake_fetch_articles,
         )
 
     assert any(

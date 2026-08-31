@@ -81,17 +81,77 @@ def _no_live_keyless_fetches(monkeypatch):
 
     Patched on the `app.ingestion.*` bindings rather than in
     `app.core.net_guard`, so `test_net_guard.py` still exercises the guard
-    itself and tests that monkeypatch `_fetch_feed_live`,
-    `_extract_full_text` or `_fetch_live` directly are unaffected.
+    itself and tests that monkeypatch these helpers directly are unaffected.
+
+    Two tiers, because raising is not enough on its own and blanket
+    escalation is wrong:
+
+    `_fetch_feed_live` and `weather._fetch_live` are reachable ONLY on the
+    `fixture=None` branch, so reaching them means a test forgot its fixture.
+    Their refusal is recorded and re-raised at teardown, because every
+    caller swallows it — `fetch_articles` gathers with
+    `return_exceptions=True` and skips any BaseException, `fetch_weather`
+    returns None on `except Exception` (rule 7, correctly, in both cases) —
+    so the AssertionError naming the exact fix reached nobody and the test
+    failed somewhere unrelated on missing content.
+
+    `safe_get` stays blocked but NOT escalated. `_extract_full_text` goes
+    through it, and the RSS fixture carries feed XML rather than article
+    bodies, so every fixture-backed test legitimately attempts full-text
+    extraction and legitimately falls back to the feed summary. Escalating
+    that fails fourteen correct tests.
     """
     from app.ingestion import rss, weather
 
-    async def _refuse(*args, **kwargs):
-        raise AssertionError(
-            "a test tried to fetch a live URL from a keyless ingestion "
-            "source. Pass fixture=<path> (rss_fixture=/weather_fixture= to "
-            "generate_briefing), or monkeypatch the live fetch helper."
+    _live_fetch_attempts.clear()
+
+    def _refusing(source: str, *, escalate: bool):
+        async def _refuse(*args, **kwargs):
+            if escalate:
+                url = next((a for a in args if isinstance(a, str)), None)
+                _live_fetch_attempts.append(f"{source} {url}" if url else source)
+            raise AssertionError(
+                f"a test let {source} run against the live internet. Pass "
+                "fixture=<path> (rss_fixture=/weather_fixture= to "
+                "generate_briefing), or monkeypatch the live fetch helper."
+            )
+
+        return _refuse
+
+    monkeypatch.setattr(rss, "safe_get", _refusing("an RSS fetch", escalate=False))
+    monkeypatch.setattr(
+        rss, "_fetch_feed_live", _refusing("an RSS feed fetch", escalate=True)
+    )
+    monkeypatch.setattr(
+        weather, "_fetch_live", _refusing("a weather fetch", escalate=True)
+    )
+    yield
+    if _live_fetch_attempts:
+        attempted = list(_live_fetch_attempts)
+        _live_fetch_attempts.clear()
+        pytest.fail(
+            f"this test ran a keyless ingestion source live: {attempted}. The "
+            "guard blocked the request, but the source swallowed the refusal "
+            "(rule 7), so the test saw an empty result rather than an error "
+            "and will have failed somewhere unrelated. Pass fixture=<path> "
+            "(rss_fixture=/weather_fixture= to generate_briefing), or "
+            "monkeypatch the live fetch helper. A test that means to trip "
+            "the guard should call tests.conftest.drain_live_fetch_attempts()."
         )
 
-    monkeypatch.setattr(rss, "safe_get", _refuse)
-    monkeypatch.setattr(weather, "_fetch_live", _refuse)
+
+# Every live fetch the guard above refused during the current test. Module
+# level rather than a fixture value because the callers that swallow the
+# refusal are several frames down and have no access to the fixture.
+_live_fetch_attempts: list[str] = []
+
+
+def drain_live_fetch_attempts() -> list[str]:
+    """Take and clear the recorded attempts.
+
+    For the one test that trips the guard ON PURPOSE, to prove the recording
+    works. Draining it is what stops the teardown above failing that test.
+    """
+    attempts = list(_live_fetch_attempts)
+    _live_fetch_attempts.clear()
+    return attempts
