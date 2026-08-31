@@ -179,6 +179,14 @@ final class AppState {
             await startPlayback(of: manifest)
             loadState = .ready
         } catch {
+            // Offline, or the backend is unreachable. If last night's
+            // prefetch already put today's briefing on this device, play
+            // that rather than reporting a failure the user cannot act on
+            // and that is not true of their briefing — it is on the phone.
+            if await playStoredBriefing() {
+                loadState = .ready
+                return
+            }
             loadState = .failed(error.localizedDescription)
         }
     }
@@ -311,6 +319,54 @@ final class AppState {
         guard durationMs > 0 else { return savedMs }
         guard savedMs < durationMs - minimumMs else { return nil }
         return savedMs
+    }
+
+    /// Makes the last stored briefing available with no network at all.
+    ///
+    /// The store was write-only until now: transcripts, show notes and the
+    /// cached audio path all went in and nothing ever read them back, so
+    /// relaunching offline showed an error where a briefing already on disk
+    /// was sitting unused. Called at launch, before any fetch.
+    ///
+    /// Only fills a gap — never replaces a manifest already loaded, since
+    /// anything fetched this session is fresher than anything stored.
+    @MainActor
+    func restoreLastBriefing() async {
+        guard manifest == nil, let store else { return }
+        guard let stored = try? await store.latestStoredBriefing() else { return }
+        manifest = stored.manifest
+    }
+
+    /// Plays today's briefing from disk when the network cannot produce it.
+    ///
+    /// Restricted to TODAY deliberately. Falling back to whatever is newest
+    /// would answer "play my briefing" with yesterday's news and no
+    /// indication of it; if last night's prefetch did not land, an error is
+    /// the honest answer.
+    ///
+    /// Returns false when there is nothing playable, leaving the caller to
+    /// report the original network failure.
+    @MainActor
+    private func playStoredBriefing() async -> Bool {
+        guard let store,
+              let stored = try? await store.storedBriefing(id: AppDelegate.briefingId(for: .now)),
+              let path = stored.localAudioPath,
+              FileManager.default.fileExists(atPath: path)
+        else { return false }
+
+        // Set BEFORE loading the audio: a transcript is worth showing even
+        // if the cached file turns out to be unplayable.
+        manifest = stored.manifest
+        do {
+            try playback.load(manifest: stored.manifest,
+                              audioURL: URL(fileURLWithPath: path))
+        } catch {
+            print("[Mercury] Cached audio for \(stored.manifest.briefingId) "
+                  + "could not be loaded: \(error)")
+            return false
+        }
+        await startPlayback(of: stored.manifest)
+        return true
     }
 
     private func persist(_ manifest: BriefingManifest, audioPath: String?) async {

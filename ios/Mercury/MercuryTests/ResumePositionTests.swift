@@ -2,6 +2,13 @@ import XCTest
 import SwiftData
 @testable import Mercury
 
+/// `XCTUnwrap` on an async expression, which the built-in autoclosure form
+/// cannot take.
+func XCTUnwrapAsync<T>(_ value: T?, file: StaticString = #filePath,
+                       line: UInt = #line) throws -> T {
+    try XCTUnwrap(value, file: file, line: line)
+}
+
 final class ResumePositionTests: XCTestCase {
 
     private func makeInMemoryContainer() throws -> ModelContainer {
@@ -27,6 +34,107 @@ final class ResumePositionTests: XCTestCase {
 
         let resumed = try await store.resumePositionMs(for: manifest.briefingId)
         XCTAssertEqual(resumed, 13500)
+    }
+
+    // MARK: - Regression: the store must be READ, not only written
+
+    /// cubic: everything went into the store and nothing ever came back
+    /// out, so a relaunch or an offline morning showed an error while a
+    /// briefing sat on disk unused.
+    func testAStoredBriefingIsReadableBackAsAManifest() async throws {
+        let container = try makeInMemoryContainer()
+        let store = BriefingStore(modelContainer: container)
+        // Generated today, not in 1970: `enforceRetention` deliberately
+        // drops `localAudioPath` for anything older than seven days while
+        // keeping the transcript, so an epoch-dated fixture would assert
+        // the wrong thing about the audio path.
+        let original = manifest(generatedAt: Date(), durationMs: 360_000)
+
+        try await store.save(original, localAudioPath: "/tmp/2026-08-21.m4a")
+        let stored = try await XCTUnwrapAsync(store.latestStoredBriefing())
+
+        XCTAssertEqual(stored.manifest.briefingId, original.briefingId)
+        XCTAssertEqual(stored.manifest.durationMs, original.durationMs)
+        XCTAssertEqual(stored.manifest.generatedAt, original.generatedAt)
+        XCTAssertEqual(stored.manifest.turns.map(\.text), original.turns.map(\.text))
+        XCTAssertEqual(stored.manifest.segments.map(\.id), original.segments.map(\.id))
+        XCTAssertEqual(stored.localAudioPath, "/tmp/2026-08-21.m4a",
+                       "the cached audio path is the point of storing it")
+    }
+
+    /// SwiftData relationships are UNORDERED: the array a `@Relationship`
+    /// hands back is not necessarily in insertion order. Every consumer of
+    /// a manifest depends on turns ascending by `startMs` — `renderedTurns`
+    /// feeds two binary searches, and `SourceRef.turnIndex` indexes into
+    /// it — so the read path sorts rather than trusting.
+    func testStoredTurnsComeBackInStartOrder() async throws {
+        let container = try makeInMemoryContainer()
+        let store = BriefingStore(modelContainer: container)
+        let scrambled = BriefingManifest(
+            briefingId: "2026-08-21",
+            generatedAt: Date(timeIntervalSince1970: 1_000),
+            durationMs: 9_000,
+            audioUrl: "/briefing/2026-08-21/audio",
+            segments: [BriefingSegment(id: "b", label: "Second", startMs: 5_000),
+                       BriefingSegment(id: "a", label: "First", startMs: 0)],
+            turns: [Turn(speaker: "B", segment: "b", text: "third", startMs: 6_000, endMs: 9_000),
+                    Turn(speaker: "A", segment: "a", text: "first", startMs: 0, endMs: 3_000),
+                    Turn(speaker: "B", segment: "a", text: "second", startMs: 3_000, endMs: 5_000)],
+            sources: []
+        )
+
+        try await store.save(scrambled, localAudioPath: nil)
+        let stored = try await XCTUnwrapAsync(store.latestStoredBriefing())
+
+        XCTAssertEqual(stored.manifest.turns.map(\.text), ["first", "second", "third"])
+        XCTAssertEqual(stored.manifest.segments.map(\.id), ["a", "b"])
+        XCTAssertEqual(stored.manifest.renderedTurns.map(\.startMs), [0, 3_000, 6_000],
+                       "derived from the sorted list, so the binary searches hold")
+    }
+
+    /// The read path reaching the UI: no network, and the transcript is
+    /// there anyway.
+    @MainActor
+    func testRestoreMakesAStoredTranscriptAvailableWithNoNetwork() async throws {
+        let container = try makeInMemoryContainer()
+        let store = BriefingStore(modelContainer: container)
+        try await store.save(
+            manifest(generatedAt: Date(timeIntervalSince1970: 1_000), durationMs: 360_000),
+            localAudioPath: nil
+        )
+
+        let state = AppState(api: RecordingAPI(
+            manifestResult: .failure(APIError.badStatus(503, "offline"))
+        ))
+        state.store = store
+        XCTAssertNil(state.manifest)
+
+        await state.restoreLastBriefing()
+
+        XCTAssertEqual(state.manifest?.briefingId, "2026-08-21",
+                       "a stored briefing must be able to reach the UI")
+        XCTAssertEqual(state.manifest?.turns.count, 1)
+    }
+
+    /// Restore fills a gap; it must never overwrite something fresher that
+    /// the session has already fetched.
+    @MainActor
+    func testRestoreDoesNotReplaceAnAlreadyLoadedBriefing() async throws {
+        let container = try makeInMemoryContainer()
+        let store = BriefingStore(modelContainer: container)
+        try await store.save(
+            manifest(generatedAt: Date(timeIntervalSince1970: 1_000), durationMs: 360_000),
+            localAudioPath: nil
+        )
+
+        let state = AppState(api: RecordingAPI(manifestResult: .success(ManifestFixtures.minimal)))
+        state.store = store
+        state.manifest = ManifestFixtures.minimal
+
+        await state.restoreLastBriefing()
+
+        XCTAssertEqual(state.manifest?.briefingId, "2026-08-23",
+                       "the fetched briefing stays; restore only fills a gap")
     }
 
     // MARK: - Regression: the background launch must reach the store too

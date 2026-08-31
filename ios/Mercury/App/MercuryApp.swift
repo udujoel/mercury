@@ -75,6 +75,10 @@ struct MercuryApp: App {
                 .environment(appState)
                 .preferredColorScheme(.dark)
                 .task {
+                    // Before anything is fetched: last night's briefing is
+                    // already on disk, and showing it beats showing a
+                    // spinner or an error while the network is asked.
+                    await appState.restoreLastBriefing()
                     // FALLBACK layer safety net regardless of onboarding
                     // state: if neither the push nor the background task
                     // ran overnight, request notification authorization
