@@ -74,14 +74,18 @@ enum MercuryColor {
     /// clears AA body on both grounds.
     static let inkMuted = AdaptiveColor(light: "5A5B66", dark: "A8A8B2")
 
-    /// The quietest legible ink. 4.91:1 light, 5.21:1 dark.
+    /// The quietest legible ink. 5.64:1 light, 6.12:1 dark on `surface`.
     ///
-    /// Retuned from the values this layer was first drafted with (`#8A8B96` /
-    /// `#77777F`), which measured 3.24:1 and 3.90:1 — under AA body, the same
-    /// defect as the `white.opacity(0.45)` tertiary they replaced. Darkening
-    /// the light value and lightening the dark one costs some delicacy and buys
-    /// a token that can hold small type anywhere without a case-by-case check.
-    static let inkFaint = AdaptiveColor(light: "6C6D76", dark: "86868F")
+    /// Retuned twice, both times by measurement rather than by eye. The values
+    /// this layer was first drafted with (`#8A8B96` / `#77777F`) measured
+    /// 3.24:1 and 3.90:1 — under AA body, the same defect as the
+    /// `white.opacity(0.45)` tertiary they replaced. The second pair cleared AA
+    /// unwashed but sat so close to the line that `AmbientBackground`'s tint
+    /// pushed them back under it: `ContrastTests` measured 4.28:1 over a washed
+    /// ground. A token whose legibility depends on nothing else being drawn
+    /// underneath it is under-specified, so this pair is set far enough out to
+    /// survive the strongest tint the wash can apply.
+    static let inkFaint = AdaptiveColor(light: "63646C", dark: "92929C")
 
     /// Text and glyphs drawn *on* an accent fill. Accents are pinned to a fixed
     /// luminance in each appearance, so which of these reads is decided once
@@ -120,7 +124,57 @@ enum MercuryColor {
 
     // ADR-012 replaced the dark-only palette. These forward to the semantic
     // tokens so `Features/` keeps building while tasks 2, 3 and 7 migrate.
-    // Migration is not mechanical for the two marked below — read the note.
+    //
+    // THE MIGRATION LIST. Every call site still on an old name, as of this
+    // commit — `xcodebuild build` reproduces it as deprecation warnings, which
+    // is the authoritative version. Task 2 owns Home, task 3 owns Player,
+    // task 7 owns Onboarding and ShowNotes.
+    //
+    //   canvas -> surface                (3 sites)
+    //     Features/Home/HomeView.swift:11
+    //     Features/Onboarding/ConnectAccountsView.swift:12
+    //     Features/Onboarding/ScheduleSetupView.swift:12
+    //     Also Features/Player/PlayerView.swift:55,57 and
+    //     Features/ShowNotes/ShowNotesView.swift:41.
+    //
+    //   textPrimary -> ink               (14 sites)
+    //     Home/BriefingCard.swift:21,48   Home/CalendarCard.swift:21,37
+    //     Home/InboxCard.swift:21,37      Home/WeatherCard.swift:11
+    //     Onboarding/ConnectAccountsView.swift:17,20,47
+    //     Onboarding/ScheduleSetupView.swift:16,57
+    //     Onboarding/WelcomeView.swift:12   Player/ChapterTabs.swift:18,22
+    //     Player/TranscriptView.swift:26    Player/TransportControls.swift:22,31
+    //     ShowNotes/ShowNotesView.swift:54
+    //     NOTE: ChapterTabs and TransportControls use `textPrimary` as a *fill*
+    //     behind black text, not as ink. Those two want `accent` with
+    //     `inkOnAccent` on top, not `ink` — a blind rename inverts them.
+    //
+    //   textSecondary -> inkMuted        (9 sites)
+    //     Home/BriefingCard.swift:28      Home/CalendarCard.swift:42
+    //     Home/InboxCard.swift:42         Home/WeatherCard.swift:14,22
+    //     Onboarding/ConnectAccountsView.swift:24
+    //     Onboarding/WelcomeView.swift:15
+    //     Player/PlayerView.swift:29,38   ShowNotes/ShowNotesView.swift:62,70
+    //
+    //   textTertiary -> inkFaint         (3 sites)
+    //     Onboarding/ConnectAccountsView.swift:36
+    //     Player/TransportControls.swift:40,45
+    //
+    //   {calendar,inbox,weather,greeting}Accent -> accent   (6 sites)
+    //     Home/CalendarCard.swift:27,31   Home/InboxCard.swift:27,32
+    //     Home/WeatherCard.swift:32       Home/BriefingCard.swift (via family)
+    //     NOTE: all four now resolve to the same colour, so the four cards go
+    //     identical until task 2 drops the distinction. That is the intended
+    //     end state, not a bug to work around by reintroducing four hues.
+    //
+    //   AmbientBackground(family:) -> seed-only, or drop
+    //     Home/BriefingCard.swift:11  Home/CalendarCard.swift:18
+    //     Home/InboxCard.swift:18     Home/WeatherCard.swift:6
+    //     Player/TranscriptView.swift:13
+    //
+    // Also not a rename, and the reason task 2 is a rewrite rather than a
+    // migration: `CardDeck.swift` carries `.shadow(color: .black.opacity(0.5))`
+    // on a black canvas, which never rendered. ADR-012 deletes the file.
 
     @available(*, deprecated, renamed: "surface",
                message: "ADR-012: the canvas is no longer true black. Use MercuryColor.surface.")

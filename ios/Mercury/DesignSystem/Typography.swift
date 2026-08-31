@@ -73,3 +73,31 @@ enum MercuryType {
     static let voiceLineSpacing: CGFloat = 8
     static let interfaceLineSpacing: CGFloat = 2
 }
+
+extension MercuryType {
+    /// What each token is *supposed* to be, as data.
+    ///
+    /// `Font` is opaque — there is no supported way to ask one for its point
+    /// size or text style — so the only sound way to prove a token scales is to
+    /// rebuild it from a text style and check the two are equal. `Font` is
+    /// `Hashable`, and a fixed `.system(size:)` font is never equal to a
+    /// text-style one, which is exactly the regression worth catching.
+    static let dynamicTypeContract: [(name: String, font: Font, style: Font.TextStyle,
+                                      design: Font.Design, weight: Font.Weight, tabular: Bool)] = [
+        ("greeting",      greeting,      .largeTitle,  .serif,   .light,    false),
+        ("transcript",    transcript,    .title2,      .serif,   .regular,  false),
+        ("quote",         quote,         .body,        .serif,   .regular,  false),
+        ("cardTitle",     cardTitle,     .title3,      .default, .semibold, false),
+        ("cardBody",      cardBody,      .subheadline, .default, .regular,  false),
+        ("chapterTab",    chapterTab,    .footnote,    .default, .semibold, false),
+        ("caption",       caption,       .caption,     .default, .regular,  false),
+        ("eyebrow",       eyebrow,       .caption2,    .default, .semibold, false),
+        ("timecode",      timecode,      .footnote,    .default, .regular,  true),
+        ("figure",        figure,        .title3,      .default, .medium,   true),
+        ("figureCaption", figureCaption, .caption,     .default, .regular,  true),
+    ]
+
+    /// Tokens whose voice is the hosts', not the app's. The serif/sans split is
+    /// the one rule every other screen has to follow, so it is worth a test.
+    static let voiceTokenNames: Set<String> = ["greeting", "transcript", "quote"]
+}

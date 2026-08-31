@@ -82,21 +82,33 @@ final class ContrastTests: XCTestCase {
         XCTAssertEqual(ratio(MercuryColor.ink, MercuryColor.surface, dark: true), 16.69, accuracy: 0.02)
         XCTAssertEqual(ratio(MercuryColor.inkMuted, MercuryColor.surface, dark: false), 6.45, accuracy: 0.02)
         XCTAssertEqual(ratio(MercuryColor.inkMuted, MercuryColor.surface, dark: true), 8.00, accuracy: 0.02)
-        XCTAssertEqual(ratio(MercuryColor.inkFaint, MercuryColor.surface, dark: false), 4.91, accuracy: 0.02)
-        XCTAssertEqual(ratio(MercuryColor.inkFaint, MercuryColor.surface, dark: true), 5.21, accuracy: 0.02)
+        XCTAssertEqual(ratio(MercuryColor.inkFaint, MercuryColor.surface, dark: false), 5.64, accuracy: 0.02)
+        XCTAssertEqual(ratio(MercuryColor.inkFaint, MercuryColor.surface, dark: true), 6.12, accuracy: 0.02)
     }
 
     func testTheDraftInkFaintValuesWouldHaveFailed() {
-        // Explicit regression on the values this layer was first drafted with.
-        // If someone lightens inkFaint back toward them for delicacy, this
-        // states the cost in the units that matter.
+        // Explicit regression on both earlier drafts. If someone lightens
+        // inkFaint back toward either of them for delicacy, this states the
+        // cost in the units that matter.
+        //
+        // First draft: under AA even on bare paper.
         XCTAssertLessThan(ColorMath.contrast(RGB(hex: "8A8B96"), MercuryColor.surfaceRaised.light),
                           ColorMath.aaBody)
         XCTAssertLessThan(ColorMath.contrast(RGB(hex: "77777F"), MercuryColor.surfaceRaised.dark),
                           ColorMath.aaBody)
+
+        // Second draft: cleared AA unwashed, then failed once the ambient tint
+        // was drawn under it — which is the case that actually ships.
+        let secondDraft = RGB(hex: "6C6D76")
         XCTAssertGreaterThanOrEqual(
-            ColorMath.contrast(MercuryColor.inkFaint.light, MercuryColor.surfaceRaised.light),
-            ColorMath.aaBody)
+            ColorMath.contrast(secondDraft, MercuryColor.surface.light), ColorMath.aaBody)
+        let washed = DawnPalette.accentColor(hue: DawnPalette.anchor(weekday: 2).hue, dark: false)
+            .composited(opacity: AmbientBackground.maxTintOpacity, over: MercuryColor.surface.light)
+        XCTAssertLessThan(ColorMath.contrast(secondDraft, washed), ColorMath.aaBody)
+
+        // What shipped survives both.
+        XCTAssertGreaterThanOrEqual(
+            ColorMath.contrast(MercuryColor.inkFaint.light, washed), ColorMath.aaBody)
     }
 
     func testTheSupersededDarkOnlyTertiaryWouldHaveFailed() {

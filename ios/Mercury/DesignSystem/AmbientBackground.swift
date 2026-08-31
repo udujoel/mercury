@@ -54,7 +54,7 @@ struct AmbientBackground: View {
     /// every ink token still clears AA over a ground washed this hard. A tint
     /// looks free and is not: it moves the ground's luminance, and the ink was
     /// measured against the unwashed value.
-    static let maxTintOpacity = 0.10
+    static let maxTintOpacity = 0.08
 
     private var hueOffset: Double {
         if let position = family.bandPosition { return position * DawnPalette.hueBand }

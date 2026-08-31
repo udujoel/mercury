@@ -10,48 +10,73 @@ final class DesignTokenTests: XCTestCase {
 
     // MARK: - Typography
 
-    func testEveryTypeTokenScalesWithDynamicType() {
+    func testEveryTypeTokenIsBuiltFromATextStyleSoDynamicTypeApplies() {
         // The bug this catches: every font in the app was `.system(size:)`,
-        // which ignores Dynamic Type completely. A text-style font resolves to
-        // a different point size per size category; a fixed-size one does not.
-        // Comparing the two extremes is the only way to tell them apart from
-        // outside SwiftUI.
-        let tokens: [(String, Font)] = [
-            ("greeting", MercuryType.greeting),
-            ("transcript", MercuryType.transcript),
-            ("quote", MercuryType.quote),
-            ("cardTitle", MercuryType.cardTitle),
-            ("cardBody", MercuryType.cardBody),
-            ("chapterTab", MercuryType.chapterTab),
-            ("caption", MercuryType.caption),
-            ("eyebrow", MercuryType.eyebrow),
-            ("timecode", MercuryType.timecode),
-            ("figure", MercuryType.figure),
-            ("figureCaption", MercuryType.figureCaption),
-        ]
-        for (name, font) in tokens {
-            let small = resolvedPointSize(font, sizeCategory: .extraSmall)
-            let huge = resolvedPointSize(font, sizeCategory: .accessibilityExtraExtraExtraLarge)
-            XCTAssertGreaterThan(
-                huge, small,
-                "\(name) did not grow with Dynamic Type — it is probably a fixed .system(size:)"
+        // which ignores Dynamic Type completely — an app whose whole purpose is
+        // reading things to you shipped type that would not grow for someone
+        // who needs it larger.
+        //
+        // `Font` is opaque, so the check is equality against a font rebuilt
+        // from a text style. A fixed-size font is never equal to a text-style
+        // one, which is precisely the regression worth catching.
+        for token in MercuryType.dynamicTypeContract {
+            var expected = Font.system(token.style, design: token.design, weight: token.weight)
+            if token.tabular { expected = expected.monospacedDigit() }
+            XCTAssertEqual(
+                token.font, expected,
+                "\(token.name) is not the text-style font it claims to be — "
+                + "if it was changed to .system(size:), Dynamic Type stopped working for it"
             )
         }
     }
 
-    func testAFixedSizeFontFailsTheDynamicTypeCheck() {
-        // Proves the check above can fail. Without this, a resolver that always
-        // reported growth would make every assertion in that test vacuous.
-        let fixed = Font.system(size: 40, weight: .light, design: .serif)
-        XCTAssertEqual(resolvedPointSize(fixed, sizeCategory: .extraSmall),
-                       resolvedPointSize(fixed, sizeCategory: .accessibilityExtraExtraExtraLarge))
+    func testAFixedSizeFontWouldFailThatCheck() {
+        // Proves the assertion above can fail. Without this, a token that was
+        // silently reverted to a point size might still slip through if `Font`
+        // equality were looser than assumed.
+        XCTAssertNotEqual(Font.system(size: 40, weight: .light, design: .serif),
+                          Font.system(.largeTitle, design: .serif, weight: .light))
+        XCTAssertNotEqual(Font.system(size: 26, weight: .medium),
+                          Font.system(.title2, design: .default, weight: .medium))
     }
 
-    /// Resolves a `Font` to a concrete point size at a given size category.
-    private func resolvedPointSize(_ font: Font, sizeCategory: ContentSizeCategory) -> CGFloat {
-        let traits = UITraitCollection(preferredContentSizeCategory:
-            UIContentSizeCategory(rawValue: sizeCategory.uiKitRawValue))
-        return UIFont.preferredFont(from: font, compatibleWith: traits).pointSize
+    func testTextStylesActuallyScaleOnThisPlatform() {
+        // The premise behind the test above: a text style resolves to a
+        // different point size per size category. Checked directly through
+        // UIKit so the contract is verified rather than assumed.
+        for token in MercuryType.dynamicTypeContract {
+            let style = UIFont.TextStyle(token.style)
+            let small = UIFont.preferredFont(
+                forTextStyle: style,
+                compatibleWith: UITraitCollection(preferredContentSizeCategory: .extraSmall))
+            let huge = UIFont.preferredFont(
+                forTextStyle: style,
+                compatibleWith: UITraitCollection(preferredContentSizeCategory: .accessibilityExtraExtraExtraLarge))
+            XCTAssertGreaterThan(huge.pointSize, small.pointSize, "\(token.name) (\(style.rawValue))")
+        }
+    }
+
+    func testSerifIsTheVoiceAndSansIsTheInterface() {
+        // The one rule tasks 2, 3 and 7 have to follow: anything a host says is
+        // set in the serif, anything the app says is set in SF.
+        for token in MercuryType.dynamicTypeContract {
+            let isVoice = MercuryType.voiceTokenNames.contains(token.name)
+            XCTAssertEqual(token.design, isVoice ? .serif : .default,
+                           "\(token.name) is on the wrong side of the serif/sans rule")
+        }
+        XCTAssertEqual(MercuryType.voiceTokenNames, ["greeting", "transcript", "quote"])
+    }
+
+    func testDigitsThatLineUpUseTabularFigures() {
+        // Proportional digits jitter as numbers change, which is wrong next to
+        // a progress bar and wrong in a column.
+        let tabular = Set(MercuryType.dynamicTypeContract.filter(\.tabular).map(\.name))
+        XCTAssertEqual(tabular, ["timecode", "figure", "figureCaption"])
+        for token in MercuryType.dynamicTypeContract where token.tabular {
+            XCTAssertNotEqual(token.font,
+                              Font.system(token.style, design: token.design, weight: token.weight),
+                              "\(token.name) claims tabular figures but is the plain font")
+        }
     }
 
     // MARK: - Spacing
@@ -173,52 +198,23 @@ final class DesignTokenTests: XCTestCase {
     }
 }
 
-// MARK: - Font resolution helper
-
-private extension ContentSizeCategory {
-    /// `ContentSizeCategory` and `UIContentSizeCategory` do not bridge.
-    var uiKitRawValue: String {
-        switch self {
-        case .extraSmall: return UIContentSizeCategory.extraSmall.rawValue
-        case .accessibilityExtraExtraExtraLarge:
-            return UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue
-        default: return UIContentSizeCategory.large.rawValue
+private extension UIFont.TextStyle {
+    /// `Font.TextStyle` and `UIFont.TextStyle` describe the same eleven styles
+    /// but do not bridge, so the mapping is written out once here.
+    init(_ style: Font.TextStyle) {
+        switch style {
+        case .largeTitle:  self = .largeTitle
+        case .title:       self = .title1
+        case .title2:      self = .title2
+        case .title3:      self = .title3
+        case .headline:    self = .headline
+        case .subheadline: self = .subheadline
+        case .body:        self = .body
+        case .callout:     self = .callout
+        case .footnote:    self = .footnote
+        case .caption:     self = .caption1
+        case .caption2:    self = .caption2
+        @unknown default:  self = .body
         }
-    }
-}
-
-private extension UIFont {
-    /// SwiftUI's `Font` is opaque, so there is no supported way to ask it for a
-    /// point size. Reflection over its internal provider is the standard
-    /// workaround; if a future SDK changes that shape this returns 0 and the
-    /// Dynamic Type test fails loudly rather than passing vacuously.
-    static func preferredFont(from font: Font, compatibleWith traits: UITraitCollection) -> UIFont {
-        guard let style = textStyle(from: font) else {
-            // Not a text-style font: resolve the fixed size it was built with.
-            return UIFont.systemFont(ofSize: fixedSize(from: font) ?? 0)
-        }
-        return UIFont.preferredFont(forTextStyle: style, compatibleWith: traits)
-    }
-
-    private static func textStyle(from font: Font) -> UIFont.TextStyle? {
-        let description = String(describing: font)
-        let map: [String: UIFont.TextStyle] = [
-            "largeTitle": .largeTitle, "title": .title1, "title2": .title2, "title3": .title3,
-            "headline": .headline, "subheadline": .subheadline, "body": .body,
-            "callout": .callout, "footnote": .footnote, "caption": .caption1, "caption2": .caption2,
-        ]
-        // Longest key first so "title2" is not matched by "title".
-        for key in map.keys.sorted(by: { $0.count > $1.count }) where description.contains(key) {
-            return map[key]
-        }
-        return nil
-    }
-
-    private static func fixedSize(from font: Font) -> CGFloat? {
-        let description = String(describing: font)
-        guard let range = description.range(of: #"size: ?([0-9.]+)"#, options: .regularExpression) else {
-            return nil
-        }
-        return CGFloat(Double(description[range].split(separator: " ").last ?? "") ?? 0)
     }
 }
