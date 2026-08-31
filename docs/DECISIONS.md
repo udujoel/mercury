@@ -450,3 +450,114 @@ configuration that lives only in a dashboard, which is precisely how the
 imaginary 7-day retention survived for months: nobody could tell by reading the
 repository whether it existed. This way it is in the code, it is in the
 workflow, and it is tested.
+
+## ADR-012 — Particle's light editorial register, superseding PRD 3.3 and 3.4
+
+**Status:** accepted
+
+The visual register moves from Huxe's ambient dark to Particle's light
+editorial. Warm off-white paper, a serif for anything a host says, SF for
+anything the app says, generous margins, and colour carried by ink rather than
+by atmosphere.
+
+**Huxe still governs behaviour.** One tap to the thing you came for, playback
+that survives the screen locking, and no dashboard to manage. That is the part
+of Huxe worth keeping and none of it is affected here. What changes is only
+what the app looks like while doing it.
+
+### What this supersedes
+
+PRD 3.3 and 3.4, by name, in full.
+
+PRD 3.3 opens: *"This is the Huxe home screen pattern, reconstructed from the
+app screenshots. A pure black canvas holding a deck of large rounded cards,
+each one a data source with its own ambient colour identity."* Every clause in
+that sentence is now false. The canvas is `#FBFAF8`. There is no deck. Cards do
+not have individual colour identities — the edition has one colour and every
+surface is a variation on it.
+
+PRD 3.4 specifies three vertical zones with *"the currently spoken sentence
+rendered as large centred white text"* over a full-bleed ambient background,
+and argues: *"The text is the visual composition, which is what makes the
+screen feel designed rather than functional."*
+
+**That argument is right, and it survives.** It is the best sentence in either
+section, and it is why the player works at all: the sentence is not a caption
+under something else, it is the thing on screen. What changes is the execution,
+not the intent. On paper a large serif line set ragged-right against a wide
+margin is also a composition — the way a printed pull-quote is a composition —
+and it composes better than centring does, because centred text on a light
+ground has no left edge for the eye to return to and reads as a greetings card
+rather than as something someone is saying to you. Centring earns its place in
+an ambient dark player, where the text floats in a field with no other
+structure to align to. It stops earning it the moment there is a margin.
+
+So: the sentence stays the composition, stays large, stays the only thing in
+the top zone, and keeps its 220ms cross-fade. It is set ragged-right in the
+serif instead of centred in SF.
+
+### One documentation correction that came out of this
+
+CLAUDE.md's first paragraph cited `docs/PRD.md`. That file does not exist and
+appears never to have. The real specification is
+`docs/mercury_ios_prd_blueprint.docx`, and there are 28 references to the
+missing path across the repository.
+
+Every section number in those citations was checked against the docx and every
+one is real — PRD 3.3, 3.4, 3.6 and 3.7 all say what the code claims they say.
+So this was a wrong path, not invented provenance. Worth recording anyway,
+because a standing brief whose first paragraph points at a missing file is the
+same drift that produced the imaginary 7-day retention in ADR-011: a document
+that reads as authoritative and cannot be checked without effort. CLAUDE.md now
+points at the real filename.
+
+### The real cost: the card deck does not survive
+
+PRD 3.3's fanned deck — cards offset vertically and horizontally, rearmost most
+inset, brought forward on vertical drag with `matchedGeometryEffect` — is a
+dark-register device. It works because the cards are luminous objects floating
+in black. On paper, overlapping white cards on off-white have almost no
+luminance difference to separate them, so the fan reads as a stack of
+misaligned paper rather than as depth, and the drag interaction becomes a
+gesture you have to discover in order to see content that could simply have
+been listed.
+
+`CardDeck.swift` is therefore deleted in task 2 rather than reworked, and Home
+becomes a vertical list. This also permanently settles the "deck sizing is off"
+complaint, which was a symptom of trying to make a 0.62-screen-width fanned
+card work across device sizes, not a tuning problem.
+
+That is a real loss. The deck is the most distinctive thing in the current app
+and the thing most obviously borrowed from Huxe. The judgement is that it was
+distinctive in a register we are leaving, and that keeping it would make the
+new register incoherent rather than making the deck work.
+
+### Why the structural work is the token layer
+
+The interesting part of this change is not choosing colours. It is that the app
+was *incapable* of light mode: every colour was a hardcoded literal —
+`Color.black` for the canvas, `Color.white.opacity(0.72)` for secondary text —
+so there was nowhere to put a second value. There was no seam.
+
+`AdaptiveColor` holds both appearances as data, which is what makes any of the
+rest possible, and has a second benefit that turned out to matter more: a token
+whose value is data can be *measured*. `MercuryColor.textTertiary` shipped at
+`white.opacity(0.45)`, which is 4.41:1 on black and fails WCAG AA for body
+text, and nothing in the codebase said so either way because a `Color` cannot
+be asked what it is. Contrast is now computed in tests, in both appearances,
+against every ground a token can land on. That found two further failures
+during this work that eyes had passed over — including one where a token
+cleared AA on bare paper and fell under it once the ambient tint was drawn
+underneath.
+
+The weekday accent idea survives the register change intact, but its constraint
+gets much harder: the seven anchors were background fills that only had to sit
+*under* white text, and are now foreground ink that has to clear 4.5:1 *on*
+`#FBFAF8`. They are pinned by relative luminance rather than by HSB brightness,
+because equal brightness is not equal lightness and a hue-jittered accent at
+fixed brightness drifts in and out of AA depending on which hue it lands on.
+
+`AmbientBackground`'s per-process `Hasher()` seed is replaced with FNV-1a in
+the same pass — see the file's own comment for the measurements. Its docstring
+promised "same title always produces the same visual identity" and that held
+only until you killed the app.
