@@ -299,9 +299,16 @@ def _format_emails(emails: list[Item]) -> str:
         return "(no emails)"
     lines = []
     for em in emails:
+        # Set by _build_world_stories when a newsletter-only cluster was
+        # collapsed to this item. The others are not in this list at all, so
+        # without naming them a story three publications covered would be
+        # read out as though one did — and the hosts would have no way to
+        # say the thing that makes it worth hearing.
+        also = em.raw.get("also_covered_by") or []
+        coverage = f" (also covered by {', '.join(also)})" if also else ""
         lines.append(
-            f"- From {em.source_name} <{em.author}> [{em.timestamp.isoformat()}]: "
-            f"{em.title}\n  {em.body}"
+            f"- From {em.source_name} <{em.author}> [{em.timestamp.isoformat()}]"
+            f"{coverage}: {em.title}\n  {em.body}"
         )
     return "\n".join(lines)
 

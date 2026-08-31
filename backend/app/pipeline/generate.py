@@ -370,12 +370,52 @@ async def _build_world_stories(
         for member in story.members
         if member.source_type is SourceType.EMAIL
     }
-    inbox_emails = [em for em in emails if em.id not in absorbed]
+
+    # A cluster the world segment did not take is still a cluster.
+    #
+    # Promotion requires an RSS member, so three newsletters covering one
+    # acquisition that no wired feed happened to carry used to arrive in the
+    # inbox as three separate emails and be read out one after another. The
+    # gate in CLAUDE.md is "the same story never appears twice REGARDLESS OF
+    # HOW MANY NEWSLETTERS COVERED IT", and the no-feed case is precisely the
+    # one that sentence is about — PRD F-08's narrower "newsletter and news
+    # feed" wording was satisfied while the gate itself was not. Mercury's
+    # news arrives largely as newsletters, so this is not an edge case.
+    #
+    # Collapsed rather than promoted. The world segment is for what the wider
+    # press carried; a story only your own newsletters covered is inbox
+    # material that happened to arrive three times.
+    promoted = {story.cluster_id for story in world}
+    superseded: set[str] = set()
+    for story in stories:
+        if story.cluster_id in promoted:
+            continue
+        members = [m for m in story.members if m.source_type is SourceType.EMAIL]
+        if len(members) < 2:
+            continue
+        # `canonical` is an email here by construction: this story has no RSS
+        # member, or it would have been promoted above.
+        keeper = story.canonical if story.canonical in members else members[0]
+        superseded.update(m.id for m in members if m.id != keeper.id)
+        # Not silent. Dropping the duplicates without saying so would trade
+        # one wrong behaviour for another — the hosts would read a story that
+        # three publications thought worth writing about as though one did.
+        # Naming the others is the multi-source signal the digest is built on,
+        # and it is the honest version of "the same story never appears twice".
+        keeper.raw["also_covered_by"] = sorted(
+            m.source_name for m in members if m.id != keeper.id
+        )
+
+    inbox_emails = [
+        em for em in emails if em.id not in absorbed and em.id not in superseded
+    ]
 
     log.info(
         "news: %d articles + %d emails clustered into %d stories; %d reach "
-        "the world segment, absorbing %d email(s) out of the inbox",
+        "the world segment, absorbing %d email(s); %d further email(s) "
+        "collapsed into a newsletter-only cluster",
         len(articles), len(emails), len(stories), len(world), len(absorbed),
+        len(superseded),
     )
     return world, inbox_emails
 

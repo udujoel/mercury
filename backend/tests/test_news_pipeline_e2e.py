@@ -34,11 +34,12 @@ from pathlib import Path
 import pytest
 
 from app.core.config import get_settings
-from app.core.schemas import BriefingLength, Segment, SourceType, Turn
+from app.core.schemas import BriefingLength, Item, Segment, SourceType, Turn
 from app.ingestion import rss
 from app.ingestion.gmail import fetch_emails
 from app.pipeline.dedup import build_stories
 from app.pipeline.generate import (
+    _build_world_stories,
     failed_personal_sources,
     generate_briefing,
 )
@@ -393,3 +394,153 @@ async def test_no_embedding_provider_still_ships_a_briefing(tmp_path):
     it treats a failing one."""
     manifest = await _generate(tmp_path, PromptCapturingLLM(), embeddings=None)
     assert manifest.turns
+
+
+# ──────────────────────────────────────────────────────────────
+# The layer between clustering and the briefing.
+#
+# The gate tests above drive `build_stories` directly. Everything that turns
+# a cluster into something a listener hears — the at-least-one-RSS promotion
+# filter, the world cap, the absorbed subtraction, and the newsletter-only
+# collapse — lives in `_build_world_stories` and had no coverage at all.
+# That is exactly why a story covered only by newsletters was read out three
+# times while a suite asserting the Phase 2 gate stayed green.
+# ──────────────────────────────────────────────────────────────
+
+
+
+def _newsletter(sender: str, title: str, body: str) -> Item:
+    return Item(
+        source_type=SourceType.EMAIL,
+        source_name=sender,
+        title=title,
+        body=body,
+        author=f"news@{sender.lower().replace(' ', '')}.com",
+        timestamp=datetime(2026, 8, 31, 6, 0, tzinfo=UTC),
+    )
+
+
+ACQUISITION_BODY = (
+    "Northwind has agreed to acquire Halcyon Robotics for 4.2 billion "
+    "dollars, the largest robotics deal on record."
+)
+
+
+async def _world(emails, articles, length=BriefingLength.STANDARD):
+    return await _build_world_stories(
+        emails=emails,
+        articles=articles,
+        events=[],
+        embeddings=FakeEmbeddingProvider(),
+        length=length,
+    )
+
+
+async def test_a_story_only_newsletters_covered_is_still_read_out_once():
+    """THE GATE, in the half PRD F-08 does not state.
+
+    CLAUDE.md: "the same story never appears twice regardless of how many
+    newsletters covered it." F-08 covers newsletter AND news feed, which the
+    promotion filter handles. This is the case with no feed coverage at all
+    — and since Mercury's news arrives largely as newsletters, it is the
+    common one, not the edge.
+    """
+    emails = [
+        _newsletter("Stratechery", "The Halcyon acquisition", ACQUISITION_BODY),
+        _newsletter("Benedict Evans", "Northwind buys Halcyon", ACQUISITION_BODY),
+        _newsletter("Platformer", "Northwind acquires Halcyon", ACQUISITION_BODY),
+    ]
+
+    world, inbox = await _world(emails, articles=[])
+
+    # Not promoted: no publication outside the inbox carried it.
+    assert world == []
+    # But read out ONCE, not three times.
+    assert len(inbox) == 1, [e.source_name for e in inbox]
+
+
+async def test_the_collapse_names_the_other_newsletters_rather_than_hiding_them():
+    """Dropping the duplicates silently would trade one wrong behaviour for
+    another: a story three publications thought worth writing about would be
+    read out as though one did."""
+    emails = [
+        _newsletter("Stratechery", "The Halcyon acquisition", ACQUISITION_BODY),
+        _newsletter("Benedict Evans", "Northwind buys Halcyon", ACQUISITION_BODY),
+        _newsletter("Platformer", "Northwind acquires Halcyon", ACQUISITION_BODY),
+    ]
+
+    _, inbox = await _world(emails, articles=[])
+    survivor = inbox[0]
+    others = survivor.raw.get("also_covered_by") or []
+
+    assert len(others) == 2
+    assert survivor.source_name not in others
+    assert sorted(others + [survivor.source_name]) == [
+        "Benedict Evans", "Platformer", "Stratechery",
+    ]
+
+    # ...and it reaches the model, which is the only reason to record it.
+    from app.pipeline.script_chain import _format_emails
+
+    rendered = _format_emails(inbox)
+    assert "also covered by" in rendered
+    for name in others:
+        assert name in rendered
+
+
+async def test_unrelated_emails_are_not_collapsed_into_each_other():
+    """The control. A collapse that swallowed ordinary mail would be far
+    worse than the duplication it replaces."""
+    emails = [
+        _newsletter("Stratechery", "The Halcyon acquisition", ACQUISITION_BODY),
+        _newsletter("Benedict Evans", "Northwind buys Halcyon", ACQUISITION_BODY),
+        _newsletter(
+            "Maria Chen", "Lunch Thursday?",
+            "Are you free Thursday? There is a new place near the office.",
+        ),
+    ]
+
+    _, inbox = await _world(emails, articles=[])
+
+    assert "Maria Chen" in {e.source_name for e in inbox}
+    assert len(inbox) == 2
+
+
+async def test_a_single_newsletter_is_left_completely_alone():
+    """One member is not a cluster. Nothing to collapse, nothing to annotate."""
+    emails = [_newsletter("Stratechery", "The Halcyon acquisition", ACQUISITION_BODY)]
+
+    _, inbox = await _world(emails, articles=[])
+
+    assert len(inbox) == 1
+    assert not inbox[0].raw.get("also_covered_by")
+
+
+async def test_a_newsletter_absorbed_by_the_world_segment_leaves_the_inbox():
+    """The promotion path, asserted on BOTH outputs rather than on clustering
+    alone — the contract the gate actually depends on."""
+    emails = [
+        _newsletter("Stratechery", "The Halcyon acquisition", ACQUISITION_BODY),
+        _newsletter(
+            "Maria Chen", "Lunch Thursday?",
+            "Are you free Thursday? There is a new place near the office.",
+        ),
+    ]
+    articles = [
+        Item(
+            source_type=SourceType.RSS,
+            source_name="Reuters",
+            title="Northwind to acquire Halcyon Robotics",
+            body=ACQUISITION_BODY,
+            url="https://example.com/northwind-halcyon",
+            timestamp=datetime(2026, 8, 31, 5, 30, tzinfo=UTC),
+        )
+    ]
+
+    world, inbox = await _world(emails, articles)
+
+    assert len(world) == 1
+    assert "Stratechery" in world[0].source_names
+    assert "Reuters" in world[0].source_names
+    # Absorbed out of the inbox, so it is not read twice.
+    assert {e.source_name for e in inbox} == {"Maria Chen"}
