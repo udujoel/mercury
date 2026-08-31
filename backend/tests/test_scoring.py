@@ -304,3 +304,45 @@ def test_the_mixed_sort_holds_with_no_briefing_date_either():
     )
     out = select_for_briefing([], [aware, naive], BriefingLength.STANDARD)
     assert [e.title for e in out["events"]] == ["Naive standup", "Aware review"]
+
+
+def test_narrowing_the_calendar_to_nothing_says_so(caplog):
+    """Every silent drop this project has shipped looked like this one:
+    correct code, nothing in the log, a segment quietly missing.
+
+    Ingestion reaches 72 hours ahead and this is where that is cut to the
+    briefing day, so "5 fetched, 0 spoken" is either a genuinely empty day or
+    a briefing id that does not match the data — indistinguishable from the
+    outside unless it is said out loud.
+    """
+    events = [
+        CalendarEvent(
+            id="ev1",
+            title="Company offsite",
+            start=datetime(2026, 8, 21, 9, tzinfo=UTC),
+            end=datetime(2026, 8, 21, 17, tzinfo=UTC),
+        )
+    ]
+
+    with caplog.at_level("WARNING"):
+        result = select_for_briefing(
+            [], events, BriefingLength.STANDARD,
+            date=datetime(2026, 8, 31, tzinfo=UTC),
+        )
+
+    assert result["events"] == []
+    warnings = [r.getMessage() for r in caplog.records]
+    assert any(
+        "1 event(s) fetched, none on 2026-08-31" in w for w in warnings
+    ), warnings
+
+
+def test_a_genuinely_empty_calendar_is_not_reported_as_a_drop(caplog):
+    """The control. Nothing fetched is not the same as everything discarded,
+    and warning on it would train the reader to ignore the warning."""
+    with caplog.at_level("WARNING"):
+        select_for_briefing(
+            [], [], BriefingLength.STANDARD, date=datetime(2026, 8, 31, tzinfo=UTC)
+        )
+
+    assert not [r for r in caplog.records if "none on" in r.getMessage()]
