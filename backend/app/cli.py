@@ -39,6 +39,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from app.core.config import get_settings
+from app.core.providers import build_embedding_provider
 from app.core.schemas import BriefingLength
 
 log = logging.getLogger("mercury.cli")
@@ -305,17 +306,7 @@ async def _generate(
     # just ships with the same story told twice. Not a reason to exit 2
     # alongside the LLM and TTS credentials, and not a reason to be quiet
     # about it either.
-    embeddings = None
-    try:
-        from app.providers.gemini_embeddings import GeminiEmbeddingProvider
-
-        embeddings = GeminiEmbeddingProvider()
-    except Exception as exc:
-        log.warning(
-            "no embedding provider (%s) — news will not be clustered and a "
-            "story covered by several sources will be told more than once",
-            exc,
-        )
+    embeddings = build_embedding_provider()
 
     try:
         manifest = await generate_briefing(

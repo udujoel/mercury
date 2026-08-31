@@ -24,6 +24,7 @@ from pydantic import BaseModel
 from app.api import jobs
 from app.core.auth import require_api_token
 from app.core.config import get_settings
+from app.core.providers import build_embedding_provider
 from app.core.schemas import BriefingLength, BriefingManifest
 from app.pipeline.generate import generate_briefing
 from app.providers.fake import FakeLLMProvider
@@ -165,6 +166,14 @@ async def generate(
 
     gmail_fixture = FIXTURES_DIR / "gmail_messages.json" if offline else None
     calendar_fixture = FIXTURES_DIR / "calendar_events.json" if offline else None
+    # Gmail and Calendar fail closed without credentials, so leaving their
+    # fixtures off in offline mode would at worst produce an empty briefing.
+    # RSS and weather are keyless: fixture=None means "go and fetch the real
+    # internet". Offline mode was therefore fetching live feeds and live
+    # weather — the one mode that exists to be deterministic, depending on
+    # what the BBC published that morning, inside a job the phone is polling.
+    rss_fixture = FIXTURES_DIR / "rss_feeds.json" if offline else None
+    weather_fixture = FIXTURES_DIR / "weather_openmeteo.json" if offline else None
 
     briefing_id = request.briefing_id or _today_briefing_id()
     storage = build_storage()
@@ -185,7 +194,12 @@ async def generate(
             tts=tts,
             gmail_fixture=gmail_fixture,
             calendar_fixture=calendar_fixture,
-            weather_fixture=None,
+            weather_fixture=weather_fixture,
+            rss_fixture=rss_fixture,
+            # Without this the API path never clustered anything: `embeddings`
+            # defaults to None and only the CLI and the cron were building a
+            # provider. See app/core/providers.build_embedding_provider.
+            embeddings=build_embedding_provider(),
             storage=storage,
         ),
     )

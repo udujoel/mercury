@@ -332,3 +332,72 @@ def test_cli_rejects_a_malformed_briefing_id(monkeypatch, tmp_path):
 
     for bad in ("today", "2026/08/23", "2026-8-23", "2026-08-23; rm -rf ~"):
         assert main(["generate", "--briefing-id", bad]) == 2, bad
+
+
+# ──────────────────────────────────────────────────────────────
+# What the API entrypoint actually hands the pipeline
+# ──────────────────────────────────────────────────────────────
+
+
+def _capture_generate_kwargs(monkeypatch, briefing_id: str, client) -> dict:
+    """POST /briefing/generate and return the kwargs the router passed on."""
+    from app.api import jobs
+
+    jobs.clear()
+    captured: dict = {}
+
+    async def _capture(**kwargs):
+        captured.update(kwargs)
+        return _fake_manifest(briefing_id)
+
+    monkeypatch.setattr(briefing_api, "generate_briefing", _capture)
+    resp = client.post(
+        "/briefing/generate", json={"briefing_id": briefing_id, "offline": True}
+    )
+    assert resp.status_code == 202
+
+    for _ in range(200):
+        job = jobs.get(briefing_id)
+        if job is not None and job.state.value != "generating":
+            break
+        time.sleep(0.05)
+    return captured
+
+
+def test_the_api_path_gets_an_embedding_provider(client, monkeypatch, tmp_path):
+    """Tapping the greeting card must dedupe like the cron does.
+
+    `embeddings` defaults to None in `generate_briefing`, and the CLI and the
+    scheduler each build a provider before calling it. The API did not, so a
+    briefing generated from the phone silently degraded to unclustered
+    singletons — the Phase 2 gate, off, on the one path a user actually
+    touches, with no warning anywhere.
+    """
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    get_settings.cache_clear()
+
+    captured = _capture_generate_kwargs(monkeypatch, "embed-day", client)
+    assert captured.get("embeddings") is not None
+
+
+def test_a_keyless_machine_still_generates_from_the_api(client, monkeypatch):
+    """No key is a supported answer, not an error: `build_stories` degrades
+    to singletons and the briefing still ships (rule 7)."""
+    captured = _capture_generate_kwargs(monkeypatch, "keyless-day", client)
+    assert captured.get("embeddings") is None
+    assert captured.get("briefing_id") == "keyless-day"
+
+
+def test_offline_api_generation_does_not_go_to_real_publishers(
+    client, monkeypatch
+):
+    """Offline mode swapped Gmail and Calendar for fixtures and left RSS
+    live, because `rss_fixture=None` means "fetch the real internet" for a
+    keyless source. So the one mode that exists to be deterministic depended
+    on what the BBC had published that morning, and could hang on a slow
+    feed inside a job the phone is polling.
+    """
+    captured = _capture_generate_kwargs(monkeypatch, "offline-day", client)
+    rss_fixture = captured.get("rss_fixture")
+    assert rss_fixture is not None
+    assert rss_fixture.is_file()
