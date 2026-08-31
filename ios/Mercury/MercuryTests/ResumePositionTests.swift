@@ -29,6 +29,44 @@ final class ResumePositionTests: XCTestCase {
         XCTAssertEqual(resumed, 13500)
     }
 
+    // MARK: - Regression: the background launch must reach the store too
+
+    /// cubic: wiring the store from `RootView.task` reaches it only when a
+    /// foreground scene appears. iOS launches this app with no scene for a
+    /// silent push or a `BGProcessingTask` — which is when the overnight
+    /// prefetch runs — so on exactly those launches there was no store to
+    /// save the prefetched transcript into.
+    ///
+    /// Worse, and pre-existing: `AppDelegate.appState` was assigned from
+    /// the same view task, so the prefetch handler's `guard let appState`
+    /// failed and the task completed as a failure without doing anything.
+    ///
+    /// No scene is constructed here, which is the whole point of the test.
+    @MainActor
+    func testTheAppDelegateHasAWiredStateWithoutAnyScene() throws {
+        let delegate = AppDelegate()
+
+        let state = try XCTUnwrap(
+            delegate.appState, "a background launch has no view to wire this up"
+        )
+        XCTAssertNotNil(
+            state.store,
+            "and no view to build the BriefingStore either, so a prefetched "
+                + "briefing had nowhere to be saved"
+        )
+    }
+
+    /// One process, one instance — otherwise the background path would save
+    /// into a store the UI never reads.
+    @MainActor
+    func testEveryEntryPointSharesOneAppState() {
+        XCTAssertTrue(
+            AppDelegate().appState === AppBootstrap.appState,
+            "the delegate and the scene must not each get their own"
+        )
+        XCTAssertTrue(AppBootstrap.appState === AppBootstrap.appState)
+    }
+
     // MARK: - Regression: a regenerated briefing is not the same briefing
 
     /// A briefing id is a date ("2026-08-21"), so a regeneration REUSES it —
