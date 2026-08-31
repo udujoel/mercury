@@ -78,7 +78,11 @@ def select_for_briefing(
     if date is not None:
         events = [e for e in events if _overlaps_day(e, date)]
 
-    sorted_events = sorted(events, key=lambda e: e.start)
+    # Through `_aware` for the same reason `_overlaps_day` is: one naive
+    # event among aware ones raises TypeError here, and this is the one call
+    # `generate_briefing` does not wrap, so the whole briefing dies rather
+    # than losing a segment.
+    sorted_events = sorted(events, key=lambda e: _aware(e.start))
 
     # Keep everything, rank it down: subscribed all-day noise stays in the
     # briefing but as one closing line rather than a chronological walk.

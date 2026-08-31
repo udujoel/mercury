@@ -263,3 +263,44 @@ def test_no_date_means_no_day_filter():
     ]
     out = select_for_briefing([], events, BriefingLength.STANDARD)
     assert len(out["events"]) == 2
+
+
+def test_a_naive_event_beside_an_aware_one_does_not_take_the_run_down():
+    """One naive event never compares against anything, so the existing
+    naive test could not reach the chronological sort. Two can, and
+    `sorted(events, key=e.start)` raises TypeError on the mixed pair —
+    uncaught, in the one call `generate_briefing` does not wrap, so the whole
+    briefing dies rather than losing a segment. Same failure that had already
+    disabled clustering, one module over.
+    """
+    naive = CalendarEvent(
+        id="naive", title="Naive standup",
+        start=datetime(2026, 8, 21, 9, 30),
+        end=datetime(2026, 8, 21, 10, 0),
+    )
+    aware = CalendarEvent(
+        id="aware", title="Aware review",
+        start=datetime(2026, 8, 21, 14, 0, tzinfo=UTC),
+        end=datetime(2026, 8, 21, 15, 0, tzinfo=UTC),
+    )
+    out = select_for_briefing(
+        [], [aware, naive], BriefingLength.STANDARD, date=BRIEFING_DAY
+    )
+    assert [e.title for e in out["events"]] == ["Naive standup", "Aware review"]
+
+
+def test_the_mixed_sort_holds_with_no_briefing_date_either():
+    """`date=None` skips `_overlaps_day` entirely, so the sort is the only
+    place awareness is reconciled on that path."""
+    naive = CalendarEvent(
+        id="naive", title="Naive standup",
+        start=datetime(2026, 8, 21, 9, 30),
+        end=datetime(2026, 8, 21, 10, 0),
+    )
+    aware = CalendarEvent(
+        id="aware", title="Aware review",
+        start=datetime(2026, 8, 21, 14, 0, tzinfo=UTC),
+        end=datetime(2026, 8, 21, 15, 0, tzinfo=UTC),
+    )
+    out = select_for_briefing([], [aware, naive], BriefingLength.STANDARD)
+    assert [e.title for e in out["events"]] == ["Naive standup", "Aware review"]
