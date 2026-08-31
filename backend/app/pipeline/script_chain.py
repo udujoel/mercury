@@ -43,6 +43,7 @@ from app.core.schemas import (
     Segment,
     SourceRef,
     SourceType,
+    Story,
     Turn,
     Weather,
 )
@@ -340,6 +341,42 @@ def _fence_untrusted(body: str) -> str:
     )
 
 
+# How much of an article body the model sees. Feed summaries are short but
+# trafilatura full-text extraction is not, and a dozen whole articles would
+# dominate the prompt. Deliberately used for BOTH the outline block and the
+# source-data block: the critique pass fact-checks the draft against source
+# data, so if the draft could see a paragraph the critique cannot, every
+# claim drawn from it is flagged as ungrounded and then "fixed" out.
+_STORY_BODY_CHARS = 700
+
+
+def _format_stories(stories: list[Story]) -> str:
+    """The clustered world stories, as the outline and source blocks see them.
+
+    Every source that carried a story is named. That is the ADR-003 product
+    promise — four newsletters and a wire report on one acquisition is ONE
+    story with four sources attributed — and the hosts can only say "three
+    of your newsletters led with this" if the prompt tells them so.
+    """
+    if not stories:
+        return "(none — no clustered news stories today)"
+
+    lines = []
+    for story in stories:
+        item = story.canonical
+        sources = ", ".join(story.source_names)
+        lines.append(
+            f"- {item.title} [{item.source_name}, {item.timestamp.isoformat()}]"
+        )
+        lines.append(f"  Covered by {story.cluster_size} source(s): {sources}")
+        if item.url:
+            lines.append(f"  {item.url}")
+        body = item.body[:_STORY_BODY_CHARS].strip()
+        if body:
+            lines.append(f"  {body}")
+    return "\n".join(lines)
+
+
 def _inbox_policy(aggregated_count: int) -> str:
     """How the model should treat the emails below the cut. Trusted instruction.
 
@@ -363,6 +400,7 @@ def _flatten_source_text(
     events: list[CalendarEvent],
     weather: Weather | None,
     aggregated_count: int = 0,
+    stories: list[Story] | None = None,
 ) -> str:
     """Flatten the day's material into the prompt's source block.
 
@@ -390,6 +428,12 @@ def _flatten_source_text(
         # flagged as an invention by the pass that exists to catch
         # inventions, and then "fixed" out of the script.
         parts.append(f"{aggregated_count} further emails, not individually listed.")
+    if stories:
+        # Without this the world segment is ungroundable by construction:
+        # check_grounding and the critique pass both check the script against
+        # THIS block, so every name and number drawn from an article would be
+        # flagged as invented and revised away.
+        parts.append(_format_stories(stories))
     return _fence_untrusted("\n".join(parts))
 
 
@@ -555,17 +599,44 @@ def _mentions(turn_text: str, title: str, sender: str | None = None) -> bool:
 
 
 def _build_source_refs(
-    turns: list[Turn], emails: list[Item], events: list[CalendarEvent]
+    turns: list[Turn],
+    emails: list[Item],
+    events: list[CalendarEvent],
+    stories: list[Story] | None = None,
 ) -> list[SourceRef]:
-    """Link each turn back to the emails/events it plausibly discusses.
+    """Link each turn back to the emails/events/stories it plausibly discusses.
 
     This is the grounding audit trail rule 3 depends on, and the data behind
     show notes (PRD F-19): every item mentioned in audio needs a tappable
     entry. Matching is deliberately fuzzy — see `_mentions`.
+
+    A matched story contributes one ref PER MEMBER, not one for the cluster.
+    ADR-003's promise is "one item in your briefing with four sources
+    attributed", and a single ref for the canonical would silently drop the
+    other three publications from the show notes — the visible half of the
+    feature. `cluster_size` on each ref is what lets the client group them
+    back into one entry.
     """
     refs: list[SourceRef] = []
 
     for i, turn in enumerate(turns):
+        for story in stories or []:
+            if not any(
+                _mentions(turn.text, m.title, m.source_name) for m in story.members
+            ):
+                continue
+            refs.extend(
+                SourceRef(
+                    turn_index=i,
+                    title=member.title,
+                    url=member.url,
+                    source_name=member.source_name,
+                    source_type=member.source_type,
+                    cluster_size=story.cluster_size,
+                )
+                for member in story.members
+            )
+
         for ev in events:
             if _mentions(turn.text, ev.title):
                 refs.append(
@@ -590,15 +661,15 @@ def _build_source_refs(
                     )
                 )
 
-    if not refs and (emails or events):
+    if not refs and (emails or events or stories):
         # An empty trail means show notes are blank and no factual claim in
         # the briefing can be checked against its source. That is a rule 3
         # failure, so it must be visible rather than silent.
         logger.warning(
-            "no SourceRefs matched across %d turns despite %d emails and "
-            "%d events — show notes will be empty and the briefing has no "
-            "grounding trail",
-            len(turns), len(emails), len(events),
+            "no SourceRefs matched across %d turns despite %d emails, "
+            "%d events and %d stories — show notes will be empty and the "
+            "briefing has no grounding trail",
+            len(turns), len(emails), len(events), len(stories or []),
         )
 
     return refs
@@ -1005,6 +1076,7 @@ async def generate_script(
     length: BriefingLength,
     date: datetime,
     aggregated_email_count: int = 0,
+    stories: list[Story] | None = None,
     passes: int = 2,
 ) -> tuple[list[Turn], list[SourceRef]]:
     """Script chain: outline -> draft (2 passes, the default), or
@@ -1027,8 +1099,9 @@ async def generate_script(
         raise ValueError(f"passes must be 2 or 4, got {passes}")
 
     budget = LENGTH_BUDGETS[length]["words"]
+    stories = stories or []
     source_data = _flatten_source_text(
-        emails, events, weather, aggregated_email_count
+        emails, events, weather, aggregated_email_count, stories
     )
 
     outline_prompt = OUTLINE_PROMPT.format(
@@ -1078,8 +1151,10 @@ async def generate_script(
             _fence_untrusted(_format_emails(emails))
             + _inbox_policy(aggregated_email_count)
         ),
-        n_stories=0,
-        stories="(none — Phase 1 has no news clustering)",
+        n_stories=len(stories),
+        # Fenced: article bodies are third-party text from feeds anyone can
+        # publish to, exactly like email bodies.
+        stories=_fence_untrusted(_format_stories(stories)),
         follow_ups="(none)",
         total_words=budget,
     )
@@ -1109,6 +1184,6 @@ async def generate_script(
     else:
         final_turns = draft_turns
 
-    source_refs = _build_source_refs(final_turns, emails, events)
+    source_refs = _build_source_refs(final_turns, emails, events, stories)
 
     return final_turns, source_refs

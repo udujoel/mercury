@@ -63,6 +63,13 @@ async def _fake_fetch_weather(*, lat: float, lon: float, fixture):
     return None  # weather is optional; None must not break the run
 
 
+async def _fake_fetch_articles(*, fixture) -> list[Item]:
+    """No news. These tests are about the personal half of the pipeline;
+    the news half has its own end-to-end coverage in
+    test_news_pipeline_e2e.py, against real RSS fixtures."""
+    return []
+
+
 def _fake_score_emails(
     emails: list[Item], events: list[CalendarEvent] | None = None
 ) -> list[Item]:
@@ -95,6 +102,7 @@ async def _fake_generate_script(
     date,
     background_events: list[CalendarEvent] | None = None,
     aggregated_email_count: int = 0,
+    stories: list | None = None,
     passes: int = 2,
 ) -> tuple[list[Turn], list[SourceRef]]:
     # Exercise the injected LLM (as the real script chain would) without
@@ -155,6 +163,7 @@ async def test_generate_briefing_end_to_end_produces_audio_and_valid_manifest(st
         fetch_events=_fake_fetch_events,
         fetch_weather=_fake_fetch_weather,
         score_emails=_fake_score_emails,
+        fetch_articles=_fake_fetch_articles,
         select_for_briefing=_fake_select_for_briefing,
         generate_script=_fake_generate_script,
         storage=storage,
@@ -226,6 +235,7 @@ async def test_generate_briefing_drops_raw_email_bodies_before_persisting(storag
         fetch_events=_fake_fetch_events,
         fetch_weather=_fake_fetch_weather,
         score_emails=_fake_score_emails,
+        fetch_articles=_fake_fetch_articles,
         select_for_briefing=_fake_select_for_briefing,
         generate_script=_fake_generate_script,
         storage=storage,
@@ -259,6 +269,7 @@ async def test_generate_briefing_degrades_gracefully_when_a_source_fails(storage
         fetch_events=_failing_fetch_events,  # <- deliberately broken
         fetch_weather=_fake_fetch_weather,
         score_emails=_fake_score_emails,
+        fetch_articles=_fake_fetch_articles,
         select_for_briefing=_fake_select_for_briefing,
         generate_script=_fake_generate_script,
         storage=storage,
@@ -289,6 +300,7 @@ async def test_generate_briefing_degrades_when_every_optional_source_fails(stora
         fetch_events=_failing_fetch_events,
         fetch_weather=_failing_fetch_weather,
         score_emails=_fake_score_emails,
+        fetch_articles=_fake_fetch_articles,
         select_for_briefing=_fake_select_for_briefing,
         generate_script=_fake_generate_script,
         storage=storage,
@@ -371,7 +383,8 @@ async def test_a_total_tts_failure_persists_nothing(tmp_path):
             fetch_events=_fake_fetch_events,
             fetch_weather=_fake_fetch_weather,
             score_emails=_fake_score_emails,
-            select_for_briefing=_fake_select_for_briefing,
+            fetch_articles=_fake_fetch_articles,
+        select_for_briefing=_fake_select_for_briefing,
             generate_script=_fake_generate_script,
             storage=storage,
             gmail_fixture=FIXTURES_DIR / "gmail_messages.json",
@@ -454,6 +467,7 @@ async def test_an_expired_token_survives_the_real_calendar_ingestion(
         # the code under test.
         fetch_weather=_fake_fetch_weather,
         score_emails=_fake_score_emails,
+        fetch_articles=_fake_fetch_articles,
         select_for_briefing=_fake_select_for_briefing,
         generate_script=_fake_generate_script,
         storage=LocalFilesystemStorage(base_dir=tmp_path),

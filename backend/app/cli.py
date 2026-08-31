@@ -299,9 +299,32 @@ async def _generate(
         log.error("credentials are not configured: %s", exc)
         return 2
 
+    # Embeddings are what make cross-source dedup work (ADR-003), and they
+    # are the only provider whose absence is survivable: build_stories
+    # degrades to unclustered singletons, so the briefing still ships, it
+    # just ships with the same story told twice. Not a reason to exit 2
+    # alongside the LLM and TTS credentials, and not a reason to be quiet
+    # about it either.
+    embeddings = None
+    try:
+        from app.providers.gemini_embeddings import GeminiEmbeddingProvider
+
+        embeddings = GeminiEmbeddingProvider()
+    except Exception as exc:
+        log.warning(
+            "no embedding provider (%s) — news will not be clustered and a "
+            "story covered by several sources will be told more than once",
+            exc,
+        )
+
     try:
         manifest = await generate_briefing(
-            briefing_id=briefing_id, length=length, llm=llm, tts=tts, storage=storage
+            briefing_id=briefing_id,
+            length=length,
+            llm=llm,
+            tts=tts,
+            embeddings=embeddings,
+            storage=storage,
         )
     except EmptyBriefingError as exc:
         # Named separately from a generic failure because the operator action

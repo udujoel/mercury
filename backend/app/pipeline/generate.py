@@ -34,8 +34,17 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.core.config import get_settings
-from app.core.providers import LLMProvider, TTSProvider
-from app.core.schemas import BriefingLength, BriefingManifest, Item
+from app.core.providers import EmbeddingProvider, LLMProvider, TTSProvider
+from app.core.schemas import (
+    LENGTH_BUDGETS,
+    BriefingLength,
+    BriefingManifest,
+    Item,
+    SourceType,
+    Story,
+)
+from app.pipeline.dedup import build_stories
+from app.pipeline.ranking import score_stories
 from app.synthesis.stitch import synthesize_briefing
 from app.synthesis.storage import BriefingStorage, build_storage
 
@@ -68,6 +77,11 @@ except ImportError:
     _real_select_for_briefing = None
 
 try:
+    from app.ingestion.rss import fetch_articles as _real_fetch_articles
+except ImportError:
+    _real_fetch_articles = None
+
+try:
     from app.pipeline.script_chain import generate_script as _real_generate_script
 except ImportError:
     _real_generate_script = None
@@ -79,9 +93,11 @@ async def generate_briefing(
     tts: TTSProvider,
     briefing_id: str | None = None,
     length: BriefingLength = BriefingLength.STANDARD,
+    embeddings: EmbeddingProvider | None = None,
     fetch_emails: Any = _real_fetch_emails,
     fetch_events: Any = _real_fetch_events,
     fetch_weather: Any = _real_fetch_weather,
+    fetch_articles: Any = _real_fetch_articles,
     score_emails: Any = _real_score_emails,
     select_for_briefing: Any = _real_select_for_briefing,
     generate_script: Any = _real_generate_script,
@@ -89,6 +105,7 @@ async def generate_briefing(
     gmail_fixture: Path | None = None,
     calendar_fixture: Path | None = None,
     weather_fixture: Path | None = None,
+    rss_fixture: Path | None = None,
     max_messages: int = 60,
     # PRD F-02 and the ROADMAP both specify today plus 72 hours. What is
     # SPOKEN is decided by select_for_briefing; this is only the fetch
@@ -110,20 +127,37 @@ async def generate_briefing(
     briefing_id = briefing_id or datetime.now(UTC).strftime("%Y-%m-%d")
     briefing_date = _parse_briefing_date(briefing_id)
 
-    emails, events, weather = await _ingest_concurrently(
+    emails, events, weather, articles = await _ingest_concurrently(
         fetch_emails=fetch_emails,
         fetch_events=fetch_events,
         fetch_weather=fetch_weather,
+        fetch_articles=fetch_articles,
         gmail_fixture=gmail_fixture,
         calendar_fixture=calendar_fixture,
         weather_fixture=weather_fixture,
+        rss_fixture=rss_fixture,
         max_messages=max_messages,
         hours_ahead=hours_ahead,
         user_lat=settings.user_lat,
         user_lon=settings.user_lon,
     )
 
-    scored_emails = _score_emails(score_emails, emails, events)
+    # Newsletters and articles cluster TOGETHER, in one call, which is the
+    # whole reason every source normalises into `Item` before anything else
+    # happens (CLAUDE.md, "The pipeline"). Clustering the news in isolation
+    # would dedupe Reuters against the BBC and leave the three newsletters
+    # that covered the same acquisition to be read out separately —
+    # precisely the "concatenated, not edited" failure ADR-003 exists to
+    # prevent.
+    world_stories, inbox_emails = await _build_world_stories(
+        emails=emails,
+        articles=articles,
+        events=events,
+        embeddings=embeddings,
+        length=length,
+    )
+
+    scored_emails = _score_emails(score_emails, inbox_emails, events)
 
     if select_for_briefing is None:
         raise RuntimeError(
@@ -155,6 +189,7 @@ async def generate_briefing(
         # so most of the inbox disappeared without so much as a "plus eleven
         # others, nothing urgent".
         aggregated_email_count=selection.get("aggregated_count", 0),
+        stories=world_stories,
         # Phase 2: outline -> draft -> critique -> revise. The chain keeps
         # the draft if revision scores worse on the quality gates, which a
         # live run showed is not hypothetical (19 issues -> 20).
@@ -195,15 +230,17 @@ async def _ingest_concurrently(
     fetch_emails: Any,
     fetch_events: Any,
     fetch_weather: Any,
+    fetch_articles: Any,
     gmail_fixture: Path | None,
     calendar_fixture: Path | None,
     weather_fixture: Path | None,
+    rss_fixture: Path | None,
     max_messages: int,
     hours_ahead: int,
     user_lat: float,
     user_lon: float,
-) -> tuple[list[Item], list[Any], Any]:
-    """Fetch all three sources concurrently. Any source that fails (missing
+) -> tuple[list[Item], list[Any], Any, list[Item]]:
+    """Fetch all four sources concurrently. Any source that fails (missing
     module, network error, malformed fixture, anything) is logged and
     replaced with an empty/None default — CLAUDE.md rule 7."""
 
@@ -230,10 +267,17 @@ async def _ingest_concurrently(
             lat=user_lat, lon=user_lon, fixture=weather_fixture
         )
 
-    labels = ("email", "calendar", "weather")
-    defaults: tuple[Any, Any, Any] = ([], [], None)
+    async def _articles() -> list[Item]:
+        if fetch_articles is None:
+            raise RuntimeError(
+                "fetch_articles not available (app.ingestion.rss.fetch_articles)"
+            )
+        return await fetch_articles(fixture=rss_fixture)
+
+    labels = ("email", "calendar", "weather", "news")
+    defaults: tuple[Any, Any, Any, Any] = ([], [], None, [])
     results = await asyncio.gather(
-        _emails(), _events(), _weather(), return_exceptions=True
+        _emails(), _events(), _weather(), _articles(), return_exceptions=True
     )
 
     out: list[Any] = []
@@ -252,6 +296,12 @@ async def _ingest_concurrently(
     # A real Actions run dropped BOTH email and calendar, shipped a
     # weather-and-news briefing, and exited 0 — a green tick over a briefing
     # missing the entire personal half of what Mercury is for.
+    #
+    # News is deliberately NOT in this set. A failed feed costs the world
+    # segment, which rule 7 covers and the outline prompt already has an
+    # empty-segment rule for; it does not mean the briefing lost the
+    # personal content it exists to deliver, and folding it in here would
+    # make the degraded-run warning fire on mornings that were fine.
     personal_failed = {
         label: result
         for label, result in zip(labels[:2], results[:2], strict=True)
@@ -267,6 +317,67 @@ async def _ingest_concurrently(
         )
 
     return tuple(out)  # type: ignore[return-value]
+
+
+async def _build_world_stories(
+    *,
+    emails: list[Item],
+    articles: list[Item],
+    events: list[Any],
+    embeddings: EmbeddingProvider | None,
+    length: BriefingLength,
+) -> tuple[list[Story], list[Item]]:
+    """Cluster the day's news and decide what the world segment gets.
+
+    Returns (stories for the world segment, emails still owed to the inbox).
+
+    Everything goes into ONE `build_stories` call — newsletters and articles
+    together. That is the point of the shared `Item` schema, and clustering
+    news on its own would leave three newsletters covering one acquisition
+    to be read out one after another.
+
+    A story reaches the world segment when at least one RSS item is in it.
+    That rule needs no newsletter classifier and gets the split right in both
+    directions: a newsletter a publication also covered becomes one world
+    story with every source attributed, while a newsletter nobody else
+    carried — and every ordinary email — stays in the inbox where it belongs.
+    Without it, a personal email that happened to cluster with an article
+    would be promoted into "your world".
+
+    Emails absorbed into a SELECTED story are then removed from the inbox
+    list, which is the Phase 2 gate stated exactly: the same story does not
+    appear twice however many newsletters covered it. Absorbed is computed
+    after the cap, so a newsletter whose story missed the cut is still read
+    out as email rather than vanishing from the briefing entirely.
+    """
+    clusterable = emails + articles
+    if not clusterable:
+        return [], emails
+
+    stories = await build_stories(clusterable, embeddings=embeddings)
+    stories = score_stories(stories, calendar_events=events)
+
+    world = [
+        story
+        for story in stories
+        if any(m.source_type is SourceType.RSS for m in story.members)
+    ]
+    world = world[: LENGTH_BUDGETS[length]["stories"]]
+
+    absorbed = {
+        member.id
+        for story in world
+        for member in story.members
+        if member.source_type is SourceType.EMAIL
+    }
+    inbox_emails = [em for em in emails if em.id not in absorbed]
+
+    log.info(
+        "news: %d articles + %d emails clustered into %d stories; %d reach "
+        "the world segment, absorbing %d email(s) out of the inbox",
+        len(articles), len(emails), len(stories), len(world), len(absorbed),
+    )
+    return world, inbox_emails
 
 
 # Set by the ingestion gather so callers (app.cli) can report a degraded run

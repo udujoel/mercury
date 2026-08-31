@@ -64,3 +64,32 @@ def _no_ambient_credentials(monkeypatch):
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _no_live_feed_fetches(monkeypatch):
+    """Make RSS's outbound HTTP impossible for every test.
+
+    The other sources fail closed without credentials, which is what keeps
+    the suite honest. RSS does not: the feeds are keyless, so `fixture=None`
+    means "go and fetch the real internet" and nothing above it says no. The
+    moment `fetch_articles` was wired into `generate_briefing`, every
+    end-to-end test started making real requests to real publishers — the
+    run went from 24 seconds to two minutes, and its results depended on
+    what the BBC had published that morning.
+
+    Patched on the `app.ingestion.rss` binding rather than in
+    `app.core.net_guard`, so `test_net_guard.py` still exercises the guard
+    itself, and so tests that monkeypatch `_fetch_feed_live` or
+    `_extract_full_text` directly are unaffected.
+    """
+    from app.ingestion import rss
+
+    async def _refuse(*args, **kwargs):
+        raise AssertionError(
+            "a test tried to fetch a live URL through app.ingestion.rss. "
+            "Pass fixture=<path> (or rss_fixture=<path> to generate_briefing), "
+            "or monkeypatch _fetch_feed_live / _extract_full_text."
+        )
+
+    monkeypatch.setattr(rss, "safe_get", _refuse)

@@ -32,7 +32,7 @@ from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI
 
 from app.core.config import get_settings
-from app.core.providers import LLMProvider, TTSProvider
+from app.core.providers import EmbeddingProvider, LLMProvider, TTSProvider
 from app.core.schemas import BriefingLength
 from app.notifications.apns import (
     APNsConfigurationError,
@@ -131,6 +131,25 @@ def _build_live_providers() -> tuple[LLMProvider, TTSProvider]:
     return FakeLLMProvider(), FakeTTSProvider()
 
 
+def _build_embedding_provider() -> EmbeddingProvider | None:
+    """The live embedding provider, or None when this machine has no key.
+
+    None is a supported answer, not an error: `build_stories` degrades to
+    unclustered singletons, so a keyless machine still produces a briefing.
+    """
+    try:
+        from app.providers.gemini_embeddings import GeminiEmbeddingProvider
+
+        return GeminiEmbeddingProvider()
+    except Exception as exc:
+        log.warning(
+            "no embedding provider (%s) — scheduled run will not cluster "
+            "news, so a story several sources covered will be told twice",
+            exc,
+        )
+        return None
+
+
 async def _send_push(push_provider: PushProvider | None, briefing_id: str) -> None:
     from app.api.devices import list_registered_tokens
 
@@ -176,6 +195,7 @@ async def run_daily_briefing_job(
     *,
     llm: LLMProvider | None = None,
     tts: TTSProvider | None = None,
+    embeddings: EmbeddingProvider | None = None,
     push_provider: PushProvider | None = None,
     storage: BriefingStorage | None = None,
 ) -> None:
@@ -219,6 +239,12 @@ async def run_daily_briefing_job(
         llm = llm if llm is not None else built_llm
         tts = tts if tts is not None else built_tts
 
+    # Same reasoning as app/cli.py: without an embedding provider the run
+    # still ships, it just ships without cross-source dedup. Optional, and
+    # said out loud rather than discovered by noticing the same story twice.
+    if embeddings is None:
+        embeddings = _build_embedding_provider()
+
     try:
         # Honour the configured length. Without this the cron always took
         # the STANDARD default, so BRIEFING_LENGTH=full produced a 15-minute
@@ -229,6 +255,7 @@ async def run_daily_briefing_job(
             llm=llm,
             tts=tts,
             storage=storage,
+            embeddings=embeddings,
             length=_configured_length(settings.briefing_length),
         )
     except Exception:
