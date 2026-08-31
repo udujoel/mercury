@@ -375,7 +375,11 @@ def _format_stories(stories: list[Story]) -> str:
         lines.append(
             f"- {item.title} [{item.source_name}, {item.timestamp.isoformat()}]"
         )
-        lines.append(f"  Covered by {story.cluster_size} source(s): {sources}")
+        # Distinct sources, not members. One publication running a follow-up
+        # on its own story is ordinary — see the two-feeds-one-publication
+        # note in app/ingestion/rss.py — and `cluster_size` counts members,
+        # so it told the model three sources had covered a story one had.
+        lines.append(f"  Covered by {len(story.source_names)} source(s): {sources}")
         if item.url:
             lines.append(f"  {item.url}")
         body = item.body[:_STORY_BODY_CHARS].strip()
@@ -397,8 +401,11 @@ def _inbox_policy(aggregated_count: int) -> str:
         f"\n\n{aggregated_count} further emails were below the cut and are "
         "NOT listed above. They rank lower than everything that is. "
         "Acknowledge them collectively in at most one short clause — "
-        '"plus eleven others, nothing urgent" — and never invent what any '
-        "of them said, who sent it, or what it was about."
+        # The worked example carried a hardcoded eleven, so a four-email
+        # remainder was still shown the phrase "plus eleven others" — spelled
+        # out, which `check_grounding` (digits only) would never have caught.
+        f'"plus {aggregated_count} others, nothing urgent" — and never invent '
+        "what any of them said, who sent it, or what it was about."
     )
 
 

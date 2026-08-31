@@ -214,3 +214,62 @@ def test_the_cold_open_is_not_asked_for_a_time_it_has_not_been_given():
         line for line in OUTLINE_PROMPT.splitlines() if "cold_open  —" in line
     )
     assert "time" not in cold_open_line.lower()
+
+
+# ──────────────────────────────────────────────────────────────
+# Counts the hosts will read out loud
+# ──────────────────────────────────────────────────────────────
+
+
+def _article(n: int, source_name: str) -> Item:
+    return Item(
+        source_type=SourceType.RSS,
+        source_name=source_name,
+        title=f"Northwind buys Halcyon, take {n}",
+        body="Northwind confirmed the acquisition this morning.",
+        url=f"https://example.com/story-{n}",
+        timestamp=DATE,
+    )
+
+
+async def test_a_publication_that_ran_the_story_twice_is_still_one_source():
+    """`cluster_size` counts MEMBERS. The label calls them sources.
+
+    One publication running a follow-up on its own story is ordinary — the
+    RSS ingestion comment already documents two feeds resolving to one
+    publication — and it told the model three sources had covered a story
+    one had. Rule 3: the hosts say nothing the source data does not support,
+    and "three of them led with this" is exactly the kind of claim the
+    prompt is supposed to make safe.
+    """
+    from app.core.schemas import Story
+
+    members = [_article(n, "The Verge") for n in range(3)]
+    story = Story(cluster_id="c1", canonical=members[0], members=members)
+    llm = await _run(stories=[story])
+    assert "Covered by 1 source(s): The Verge" in llm.outline_prompt
+
+
+async def test_distinct_publications_are_still_counted_separately():
+    """The discipline must not cost the signal. Three publications on one
+    story is the whole ADR-003 promise."""
+    from app.core.schemas import Story
+
+    members = [
+        _article(0, "The Verge"), _article(1, "Reuters"), _article(2, "BBC News")
+    ]
+    story = Story(cluster_id="c1", canonical=members[0], members=members)
+    llm = await _run(stories=[story])
+    assert "Covered by 3 source(s):" in llm.outline_prompt
+
+
+async def test_the_remainder_example_uses_the_real_count():
+    """The inbox policy handed the model a worked example with a hardcoded
+    number in it. On a morning with four emails below the cut it still read
+    "plus eleven others" — and spelled out, so `check_grounding` (which
+    matches digits) would not have flagged the hosts repeating it.
+    """
+    llm = await _run(aggregated_email_count=4)
+    prompt = llm.outline_prompt
+    assert "plus 4 others" in prompt
+    assert "eleven" not in prompt.lower()
