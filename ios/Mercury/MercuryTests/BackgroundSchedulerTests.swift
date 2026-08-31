@@ -1,4 +1,5 @@
 import BackgroundTasks
+import Observation
 import XCTest
 @testable import Mercury
 
@@ -22,10 +23,70 @@ final class BackgroundSchedulerTests: XCTestCase {
         XCTAssertEqual(request.identifier, BackgroundScheduler.prefetchIdentifier)
     }
 
-    func testEarliestBeginDateIsThirtyMinutesBeforeWakeTime() {
-        let wake = Date(timeIntervalSince1970: 1_700_000_000)
-        let request = BackgroundScheduler.makeRequest(wakeTime: wake)
+    /// This test USED to read:
+    ///
+    ///     let wake = Date(timeIntervalSince1970: 1_700_000_000)   // Nov 2023
+    ///     XCTAssertEqual(request.earliestBeginDate, wake - 30 * 60)
+    ///
+    /// — a wake time permanently in the past, asserting that the window
+    /// opens in the past too. It did not merely fail to catch the
+    /// reschedule bug below; it pinned the behaviour that IS the bug. Now
+    /// `now` is passed explicitly, and the wake time is ahead of it.
+    func testEarliestBeginDateIsThirtyMinutesBeforeAFutureWakeTime() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let wake = now.addingTimeInterval(6 * 60 * 60)
+        let request = BackgroundScheduler.makeRequest(wakeTime: wake, now: now)
         XCTAssertEqual(request.earliestBeginDate, wake.addingTimeInterval(-30 * 60))
+    }
+
+    /// THE RESCHEDULE BUG.
+    ///
+    /// `handlePrefetch` reschedules from inside the fired task's own
+    /// handler, passing `AppState.nextWakeDate` — the next occurrence of the
+    /// configured hour. Fire the task at 06:35 for an 07:00 wake and "next"
+    /// is today's 07:00, so the resubmitted window opened at 06:30: already
+    /// past, therefore immediately eligible again. The one prefetch before
+    /// the alarm became a request to run repeatedly, on exactly the budget
+    /// iOS grants least willingly.
+    func testReschedulingFromInsideThePrefetchWindowLandsInTheFuture() {
+        // 06:35, with the wake at 07:00 the same morning.
+        let wake = Date(timeIntervalSince1970: 1_700_000_000)
+        let now = wake.addingTimeInterval(-25 * 60)
+
+        let request = BackgroundScheduler.makeRequest(wakeTime: wake, now: now)
+        let begin = request.earliestBeginDate
+
+        XCTAssertNotNil(begin)
+        XCTAssertGreaterThan(
+            begin!, now,
+            "a window in the past makes the task immediately eligible again"
+        )
+        // Tomorrow's window, not some arbitrary offset from `now`.
+        XCTAssertEqual(begin!.timeIntervalSince(wake.addingTimeInterval(-30 * 60)),
+                       24 * 60 * 60, accuracy: 60 * 60,
+                       "it must roll forward a day, not drift by the lead time")
+    }
+
+    /// The boundary: firing exactly at the moment the window opens must
+    /// still produce a future window, not the same instant back again.
+    func testReschedulingExactlyAtTheWindowOpeningRollsForward() {
+        let wake = Date(timeIntervalSince1970: 1_700_000_000)
+        let now = wake.addingTimeInterval(-30 * 60)
+
+        let begin = BackgroundScheduler.makeRequest(wakeTime: wake, now: now).earliestBeginDate
+        XCTAssertNotNil(begin)
+        XCTAssertGreaterThan(begin!, now)
+    }
+
+    /// A task that fires late — after the wake time has passed — gets the
+    /// same treatment.
+    func testReschedulingAfterTheWakeTimeLandsInTheFuture() {
+        let wake = Date(timeIntervalSince1970: 1_700_000_000)
+        let now = wake.addingTimeInterval(90 * 60)
+
+        let begin = BackgroundScheduler.makeRequest(wakeTime: wake, now: now).earliestBeginDate
+        XCTAssertNotNil(begin)
+        XCTAssertGreaterThan(begin!, now)
     }
 
     func testRequiresNetworkConnectivityIsTrue() {
@@ -46,8 +107,13 @@ final class BackgroundSchedulerTests: XCTestCase {
     }
 
     func testDifferentWakeTimesProduceDifferentEarliestBeginDates() {
-        let a = BackgroundScheduler.makeRequest(wakeTime: Date(timeIntervalSince1970: 0))
-        let b = BackgroundScheduler.makeRequest(wakeTime: Date(timeIntervalSince1970: 3600))
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let a = BackgroundScheduler.makeRequest(
+            wakeTime: now.addingTimeInterval(3 * 60 * 60), now: now
+        )
+        let b = BackgroundScheduler.makeRequest(
+            wakeTime: now.addingTimeInterval(4 * 60 * 60), now: now
+        )
         XCTAssertNotEqual(a.earliestBeginDate, b.earliestBeginDate)
     }
 }
@@ -157,6 +223,69 @@ final class OnboardingStatePersistenceTests: XCTestCase {
             "must still persist — UserDefaults remains the storage layer"
         )
         XCTAssertTrue(AppState().hasCompletedOnboarding, "and survive a relaunch")
+    }
+
+    // MARK: - Observation
+
+    /// The regression the round-trip tests above could never catch.
+    ///
+    /// A computed property over `UserDefaults` round-trips perfectly and
+    /// persists perfectly — which is all the two tests above assert — while
+    /// emitting no observation event at all, because `@Observable` only
+    /// instruments *stored* properties. That is exactly the shape the bug
+    /// came back in: every persistence assertion stayed green and Done in
+    /// onboarding still did nothing until the app was relaunched.
+    ///
+    /// `withObservationTracking` is the only thing that tells the two apart:
+    /// it reads the property inside a tracked scope and fails if mutating it
+    /// does not call back.
+    func testCompletingOnboardingPublishesAnObservationChange() {
+        let state = AppState()
+        var didChange = false
+
+        withObservationTracking {
+            _ = state.hasCompletedOnboarding
+        } onChange: {
+            didChange = true
+        }
+
+        state.hasCompletedOnboarding = true
+
+        XCTAssertTrue(
+            didChange,
+            "RootView switches on hasCompletedOnboarding; without an "
+            + "observation event it never re-renders and Done appears dead"
+        )
+    }
+
+    func testWakeTimeChangePublishesAnObservationChange() {
+        let state = AppState()
+        var didChange = false
+
+        withObservationTracking {
+            _ = state.wakeTimeMinutesFromMidnight
+        } onChange: {
+            didChange = true
+        }
+
+        state.wakeTimeMinutesFromMidnight = 6 * 60 + 15
+
+        XCTAssertTrue(didChange, "the schedule picker binds to this")
+    }
+
+    func testBriefingLengthChangePublishesAnObservationChange() {
+        let state = AppState()
+        var didChange = false
+
+        withObservationTracking {
+            _ = state.briefingLength
+        } onChange: {
+            didChange = true
+        }
+
+        state.briefingLength = .express
+
+        XCTAssertTrue(didChange, "the length picker binds to this")
     }
 
     func testWakeTimeAndLengthRoundTripAndPersist() {
