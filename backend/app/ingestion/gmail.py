@@ -31,7 +31,7 @@ from bs4 import BeautifulSoup
 
 from app.core.config import get_settings
 from app.core.schemas import Item, Priority, SourceType
-from app.ingestion.drops import log_drop, report_drops
+from app.ingestion.drops import drop_id, log_drop, report_drops
 
 log = logging.getLogger(__name__)
 
@@ -408,6 +408,6 @@ async def fetch_emails(
             # SEEN. See app/ingestion/drops.py for why the silent version of
             # this was worse than no error handling at all.
             dropped += 1
-            log_drop(log, "gmail", raw.get("id"))
+            log_drop(log, "gmail", drop_id(raw))
     report_drops(log, "gmail", total=len(considered), dropped=dropped)
     return items

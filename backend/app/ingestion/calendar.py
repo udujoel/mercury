@@ -23,7 +23,7 @@ from zoneinfo import ZoneInfo
 
 from app.core.config import get_settings
 from app.core.schemas import CalendarEvent
-from app.ingestion.drops import log_drop, report_drops
+from app.ingestion.drops import drop_id, log_drop, report_drops
 
 log = logging.getLogger(__name__)
 
@@ -279,7 +279,7 @@ async def fetch_events(
                 # (CLAUDE.md rule 7 — graceful degradation) — but it must be
                 # SEEN. See app/ingestion/drops.py.
                 dropped += 1
-                log_drop(log, "calendar", raw_event.get("id"))
+                log_drop(log, "calendar", drop_id(raw_event))
                 continue
             # A None here is a deliberate filter, not a failure: cancelled
             # events and ones the user declined are supposed to disappear.

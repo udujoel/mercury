@@ -21,6 +21,7 @@ print the degraded-run warning. No parallel reporting channel.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 
 # Both bars have to be cleared before a source is called broken.
 #
@@ -42,6 +43,21 @@ class SourceNormalisationError(RuntimeError):
     fix reads differently from a transient one, and matching on message
     text breaks the first time somebody rewords a string.
     """
+
+
+def drop_id(raw: object) -> object:
+    """The id to log for an item that failed to normalise.
+
+    Reaching for `raw["id"]` in the except block assumes the thing that would
+    not normalise is at least a mapping. A `null` in a message list is not,
+    so the AttributeError escaped the handler and aborted the whole fetch —
+    the run-ending failure the handler exists to prevent, caused by the
+    handler. The shape name rather than the value because a non-mapping entry
+    has no id worth printing, and a stray string could be an entire body.
+    """
+    if isinstance(raw, Mapping):
+        return raw.get("id")
+    return f"<non-mapping {type(raw).__name__}>"
 
 
 def log_drop(log: logging.Logger, label: str, item_id: object) -> None:

@@ -216,3 +216,40 @@ async def test_the_shipped_gmail_fixture_still_normalises(tmp_path):
     deliberately carries one payload-less message."""
     items = await gmail_mod.fetch_emails(fixture=FIXTURES / "gmail_messages.json")
     assert len(items) == 4
+
+
+# ──────────────────────────────────────────────────────────────
+# The handler itself must not be the thing that takes the run down
+# ──────────────────────────────────────────────────────────────
+
+
+async def test_a_non_mapping_message_is_dropped_like_any_other(tmp_path):
+    """The `except` block was reaching into the item it had just failed on.
+
+    `raw.get("id")` assumes the thing that would not normalise is at least a
+    dict. A `null` in the message list is not, so the AttributeError escaped
+    the handler and aborted `fetch_emails` — the exact whole-run failure the
+    handler exists to prevent, triggered by the handler.
+    """
+    fixture = _gmail_fixture(
+        tmp_path, [_good_message("ok1"), None, "not-a-message", _good_message("ok2")]
+    )
+    items = await gmail_mod.fetch_emails(fixture=fixture)
+    assert len(items) == 2
+
+
+async def test_a_non_mapping_event_is_dropped_like_any_other(tmp_path):
+    fixture = _calendar_fixture(
+        tmp_path, [_good_event("ok1"), None, _good_event("ok2")]
+    )
+    events = await calendar_mod.fetch_events(fixture=fixture)
+    assert len(events) == 2
+
+
+async def test_the_drop_log_says_what_shape_arrived_instead(tmp_path, caplog):
+    """A logged id of `None` is indistinguishable from a dict whose id key is
+    missing. The operator needs to know the payload shape itself was wrong."""
+    fixture = _gmail_fixture(tmp_path, [_good_message("ok1"), None])
+    with caplog.at_level(logging.WARNING):
+        await gmail_mod.fetch_emails(fixture=fixture)
+    assert any("non-mapping NoneType" in rec.getMessage() for rec in caplog.records)
