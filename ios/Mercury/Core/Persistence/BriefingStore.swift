@@ -32,11 +32,54 @@ actor BriefingStore {
         }
 
         if let existing {
+            // A briefing id is a DATE, so a regeneration reuses it — that is
+            // exactly what the backend's `--force` / `--briefing-id` path
+            // does when a bad briefing is replaced. The id matching
+            // therefore says nothing about the content being the same, and
+            // carrying the old resume point across dropped the listener
+            // four minutes into a briefing they had never heard. A carried
+            // `completed` was worse: `startPlayback` treats it as already
+            // heard, so the replacement was skipped entirely.
+            //
+            // `generatedAt` is the version stamp; `durationMs` catches the
+            // case of a backend that reuses one. Both are compared BEFORE
+            // either is overwritten.
+            let isReplacement = existing.generatedAt != manifest.generatedAt
+                || existing.durationMs != manifest.durationMs
+
+            existing.generatedAt = manifest.generatedAt
             existing.durationMs = manifest.durationMs
-            existing.localAudioPath = localAudioPath ?? existing.localAudioPath
+            existing.remoteAudioURL = manifest.audioURL ?? existing.remoteAudioURL
             existing.segments = segments
             existing.turns = turns
             existing.sources = sources
+
+            // Conditional, not unconditional: `AppState.playBriefing` saves
+            // the SAME manifest twice per playback — once when it arrives,
+            // once with the local audio path — so resetting on every save
+            // would wipe the resume point continuously and break the
+            // feature this is here to provide.
+            if isReplacement {
+                existing.lastPositionMs = 0
+                existing.completed = false
+
+                // And the cached audio path goes with them, verbatim —
+                // `nil` clears rather than preserves.
+                //
+                // A briefing id is a date, so the replacement's audio has
+                // the same filename on disk as the audio it replaces, and
+                // the first save of a newly fetched manifest passes no path
+                // at all. Preserving the old one here meant that if the
+                // audio download then failed, the offline fallback in
+                // `playBriefing` found a path, found a file, and played the
+                // PREVIOUS generation's audio against the new transcript —
+                // new chapter timings over old speech. That is the
+                // manifest/audio mismatch this PR exists to remove,
+                // reassembled out of two individually reasonable changes.
+                existing.localAudioPath = localAudioPath
+            } else {
+                existing.localAudioPath = localAudioPath ?? existing.localAudioPath
+            }
         } else {
             let entity = BriefingEntity(
                 id: manifest.briefingId,
@@ -81,6 +124,62 @@ actor BriefingStore {
         guard let entity = try modelContext.fetch(descriptor).first else { return }
         entity.completed = true
         try modelContext.save()
+    }
+
+    // MARK: - Reading back
+
+    /// A stored briefing, detached from SwiftData.
+    ///
+    /// `BriefingEntity` cannot leave the actor safely — it is a `@Model`
+    /// bound to this context — so the read path hands back value types.
+    /// That is also why the rebuild happens in here rather than at the call
+    /// site.
+    struct Stored: Sendable {
+        let manifest: BriefingManifest
+        let localAudioPath: String?
+    }
+
+    /// The most recently generated stored briefing, or nil if there are
+    /// none. Used at launch so the transcript and show notes are there
+    /// before — or without — a network round trip.
+    func latestStoredBriefing() throws -> Stored? {
+        try allBriefings().first.map(Self.stored)
+    }
+
+    func storedBriefing(id: String) throws -> Stored? {
+        let descriptor = FetchDescriptor<BriefingEntity>(
+            predicate: #Predicate { $0.id == id }
+        )
+        return try modelContext.fetch(descriptor).first.map(Self.stored)
+    }
+
+    /// Rebuilds the wire manifest from what was stored.
+    ///
+    /// Both lists are sorted on the way out. SwiftData relationships are
+    /// UNORDERED — the array order a `@Relationship` gives back is not the
+    /// order it was written in — and every consumer of a manifest depends
+    /// on turns ascending by `startMs`: `renderedTurns` feeds two binary
+    /// searches, and `SourceRef.turnIndex` indexes into it.
+    private static func stored(_ entity: BriefingEntity) -> Stored {
+        let manifest = BriefingManifest(
+            briefingId: entity.id,
+            generatedAt: entity.generatedAt,
+            durationMs: entity.durationMs,
+            audioUrl: entity.remoteAudioURL.absoluteString,
+            segments: entity.segments
+                .sorted { $0.startMs < $1.startMs }
+                .map { BriefingSegment(id: $0.segmentID, label: $0.label, startMs: $0.startMs) },
+            turns: entity.turns
+                .sorted { $0.startMs < $1.startMs }
+                .map { Turn(speaker: $0.speaker, segment: $0.segmentID, text: $0.text,
+                            startMs: $0.startMs, endMs: $0.endMs) },
+            sources: entity.sources
+                .sorted { $0.turnIndex < $1.turnIndex }
+                .map { SourceRef(turnIndex: $0.turnIndex, title: $0.title,
+                                 url: $0.url?.absoluteString, sourceName: $0.sourceName,
+                                 sourceType: $0.sourceType, clusterSize: $0.clusterSize) }
+        )
+        return Stored(manifest: manifest, localAudioPath: entity.localAudioPath)
     }
 
     func allBriefings() throws -> [BriefingEntity] {

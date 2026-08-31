@@ -67,4 +67,76 @@ final class BinarySearchTests: XCTestCase {
         )
         XCTAssertNil(empty.turn(containing: 0))
     }
+
+    // MARK: - transcript resolution after a seek
+
+    /// A seek must resolve the transcript IMMEDIATELY. Waiting for the next
+    /// display-link tick meant a seek while paused never updated it at all,
+    /// because a paused coordinator has no display link to tick.
+    ///
+    /// `turn(coveringOrAfter:)` is what makes that possible for a position
+    /// landing in the silence between turns, where `turn(containing:)`
+    /// correctly returns nil.
+    func testSeekIntoAGapResolvesForwardToTheNextTurn() throws {
+        let manifest = try ManifestDecodingTests.loadFixture()
+
+        // 19800..20000 is a gap in the fixture: turns[5] ends at 19800 and
+        // turns[6] starts at 20000.
+        XCTAssertNil(manifest.turn(containing: 19_900), "precondition: a real gap")
+
+        let next = try XCTUnwrap(manifest.turn(coveringOrAfter: 19_900))
+        XCTAssertEqual(next.startMs, 20_000)
+    }
+
+    func testStartingAtOrAfterInsideATurnReturnsThatTurn() throws {
+        let manifest = try ManifestDecodingTests.loadFixture()
+        let inside = try XCTUnwrap(manifest.turn(coveringOrAfter: 13_500))
+        XCTAssertEqual(inside.startMs, 12_000)
+        XCTAssertEqual(inside.endMs, 16_000)
+    }
+
+    func testStartingAtOrAfterPastTheLastTurnIsNil() throws {
+        let manifest = try ManifestDecodingTests.loadFixture()
+        XCTAssertNil(manifest.turn(coveringOrAfter: 999_999))
+    }
+
+    func testStartingAtOrAfterBeforeTheFirstTurnReturnsTheFirst() throws {
+        let manifest = try ManifestDecodingTests.loadFixture()
+        let first = try XCTUnwrap(manifest.turn(coveringOrAfter: 0))
+        XCTAssertEqual(first.startMs, 0)
+    }
+
+    // MARK: - rendered turns are computed once
+
+    /// `turn(containing:)` ran `turns.filter(\.isRendered)` on entry, so the
+    /// O(log n) binary search searched an array it had just rebuilt in O(n)
+    /// — twenty times a second, for the whole briefing. Now the list is
+    /// derived once, at decode.
+    func testRenderedTurnsIsStoredNotRecomputedPerCall() throws {
+        let manifest = try ManifestDecodingTests.loadFixture()
+        let a = manifest.renderedTurns
+        let b = manifest.renderedTurns
+        XCTAssertEqual(a, b)
+        XCTAssertEqual(a.count, manifest.turns.filter(\.isRendered).count)
+    }
+
+    func testUnrenderedTurnsAreExcludedFromTheStoredList() {
+        let rendered = Turn(speaker: "A", segment: "cold_open", text: "spoken",
+                            startMs: 0, endMs: 2_000)
+        let failed = Turn(speaker: "B", segment: "cold_open", text: "tts failed",
+                          startMs: -1, endMs: -1)
+        let manifest = BriefingManifest(
+            briefingId: "2026-08-21",
+            generatedAt: .now,
+            durationMs: 2_000,
+            audioUrl: "/briefing/2026-08-21/audio",
+            segments: [],
+            turns: [rendered, failed],
+            sources: []
+        )
+
+        XCTAssertEqual(manifest.turns.count, 2)
+        XCTAssertEqual(manifest.renderedTurns, [rendered],
+                       "a turn whose TTS failed must never reach the transcript")
+    }
 }

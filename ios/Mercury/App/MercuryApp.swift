@@ -2,26 +2,72 @@ import SwiftUI
 import SwiftData
 import UIKit
 
-@main
-struct MercuryApp: App {
+/// One process, one `AppState`, one `ModelContainer`.
+///
+/// Both of those used to be reachable only through `RootView.task`, and a
+/// view task requires a foreground scene. iOS launches this app with no
+/// scene at all for a silent push or a `BGProcessingTask` — which is
+/// precisely when the overnight prefetch runs (PRD 3.6, the PRIMARY and
+/// SECONDARY layers). The delegate found `appState` nil, completed the
+/// task as a failure, and the prefetch never ran; once a store was being
+/// built in the same place, the background path could not have saved a
+/// prefetched transcript either.
+///
+/// Building both at process scope is what makes the background entry points
+/// and the UI the same instance rather than two that disagree. `static let`
+/// so it happens exactly once, whichever door the process was opened
+/// through.
+enum AppBootstrap {
 
-    // `AppState` is created once here and handed to the delegate so push
-    // and background-task callbacks (which fire outside any SwiftUI view
-    // lifecycle) can still reach it.
-    @State private var appState = AppState()
-    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    static let container: ModelContainer = makeContainer()
 
-    var sharedModelContainer: ModelContainer = {
+    static let appState: AppState = {
+        let state = AppState()
+        state.store = BriefingStore(modelContainer: container)
+        return state
+    }()
+
+    /// Falls back to an in-memory store rather than trapping.
+    ///
+    /// A `fatalError` here means a corrupt or unmigratable store file kills
+    /// the app on launch with no way back — for a cache of the last seven
+    /// briefings, which the backend can serve again. Degrading loses resume
+    /// positions and offline transcripts for the session; trapping loses the
+    /// app.
+    private static func makeContainer() -> ModelContainer {
         let schema = Schema([
             BriefingEntity.self, SegmentEntity.self, TurnEntity.self, SourceRefEntity.self,
         ])
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
         do {
-            return try ModelContainer(for: schema, configurations: [configuration])
+            return try ModelContainer(
+                for: schema,
+                configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)]
+            )
         } catch {
-            fatalError("Could not create SwiftData ModelContainer: \(error)")
+            print("[Mercury] On-disk SwiftData store unavailable (\(error)); "
+                  + "continuing without persistence across launches.")
         }
-    }()
+        do {
+            return try ModelContainer(
+                for: schema,
+                configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)]
+            )
+        } catch {
+            fatalError("Could not create even an in-memory ModelContainer: \(error)")
+        }
+    }
+}
+
+@main
+struct MercuryApp: App {
+
+    // Both come from `AppBootstrap` so that the push and background-task
+    // callbacks — which fire outside any SwiftUI view lifecycle, and often
+    // with no scene at all — reach the same wired instance this scene does.
+    @State private var appState = AppBootstrap.appState
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
+    var sharedModelContainer: ModelContainer { AppBootstrap.container }
 
     var body: some Scene {
         WindowGroup {
@@ -29,7 +75,10 @@ struct MercuryApp: App {
                 .environment(appState)
                 .preferredColorScheme(.dark)
                 .task {
-                    appDelegate.appState = appState
+                    // Before anything is fetched: last night's briefing is
+                    // already on disk, and showing it beats showing a
+                    // spinner or an error while the network is asked.
+                    await appState.restoreLastBriefing()
                     // FALLBACK layer safety net regardless of onboarding
                     // state: if neither the push nor the background task
                     // ran overnight, request notification authorization
@@ -60,12 +109,19 @@ struct MercuryApp: App {
 /// `BackgroundScheduler`.
 final class AppDelegate: NSObject, UIApplicationDelegate {
 
-    /// Set by `MercuryApp` right after launch. Optional because the
-    /// delegate is constructed before `MercuryApp`'s `@State` exists;
-    /// callbacks that fire before it's set (vanishingly unlikely in
-    /// practice — registration happens synchronously in
-    /// `didFinishLaunchingWithOptions`) simply no-op.
-    var appState: AppState?
+    /// The process-wide `AppState`, resolved on first use.
+    ///
+    /// This used to be assigned by `MercuryApp` from `RootView.task`, and
+    /// stayed nil until a scene appeared. Every callback on this delegate
+    /// fires in cases where one may never appear — a silent push, a
+    /// `BGProcessingTask` — so the prefetch handler below hit `guard let
+    /// appState = self?.appState else { setTaskCompleted(success: false) }`
+    /// and gave up, on exactly the launches it exists to serve. Defaulting
+    /// to `AppBootstrap.appState` means there is always one, already wired
+    /// to the store, and it is the same instance the UI uses.
+    ///
+    /// Still a settable var so a test can substitute one.
+    lazy var appState: AppState? = AppBootstrap.appState
 
     func application(
         _ application: UIApplication,
