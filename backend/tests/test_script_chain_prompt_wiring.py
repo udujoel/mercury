@@ -201,19 +201,53 @@ async def test_a_generation_time_is_not_smuggled_in_either():
     assert "04:12" not in date_line
 
 
+def _outline_segment_definition(name: str) -> str:
+    """The whole `- <name> — …` block from OUTLINE_PROMPT, continuation lines
+    folded into one string.
+
+    Reading only the first physical line is what the earlier version of the
+    test below did, and the definition is four lines long — so a positive
+    instruction re-added on line two would not have been seen.
+    """
+    import re
+
+    from app.pipeline.prompts import OUTLINE_PROMPT
+
+    lines = OUTLINE_PROMPT.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith(f"- {name}"))
+    block = [lines[start]]
+    for line in lines[start + 1:]:
+        if line.startswith("- ") or not line.strip():
+            break
+        block.append(line)
+    return re.sub(r"\s+", " ", " ".join(block)).strip()
+
+
 def test_the_cold_open_is_not_asked_for_a_time_it_has_not_been_given():
     """Both halves have to move together. Leaving "state the day, date and
     time" in the prompt while removing the value makes it worse: the model
     derives or invents the time instead. That is exactly how the cold open
     once announced "Thursday" for a Friday — see the comment in
     generate_script about never making the model derive a stateable fact.
-    """
-    from app.pipeline.prompts import OUTLINE_PROMPT
 
-    cold_open_line = next(
-        line for line in OUTLINE_PROMPT.splitlines() if "cold_open  —" in line
+    Checked across the whole definition rather than its first line, and the
+    prohibition is cut out before the search rather than searched for: the
+    prohibition is itself the only place the word "time" is allowed to
+    appear, so "is `time` absent?" over the raw block can only be satisfied
+    by deleting the prohibition too.
+    """
+    import re
+
+    section = _outline_segment_definition("cold_open")
+
+    prohibition = re.search(r"Do NOT state a clock time\b[^.]*\.", section)
+    assert prohibition, f"the cold open no longer forbids a clock time: {section}"
+
+    remainder = section.replace(prohibition.group(0), "")
+    assert "time" not in remainder.lower(), (
+        f"the cold open is asked for a time somewhere else in its "
+        f"definition: {remainder}"
     )
-    assert "time" not in cold_open_line.lower()
 
 
 # ──────────────────────────────────────────────────────────────

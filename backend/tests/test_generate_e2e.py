@@ -384,7 +384,7 @@ async def test_a_total_tts_failure_persists_nothing(tmp_path):
             fetch_weather=_fake_fetch_weather,
             score_emails=_fake_score_emails,
             fetch_articles=_fake_fetch_articles,
-        select_for_briefing=_fake_select_for_briefing,
+            select_for_briefing=_fake_select_for_briefing,
             generate_script=_fake_generate_script,
             storage=storage,
             gmail_fixture=FIXTURES_DIR / "gmail_messages.json",

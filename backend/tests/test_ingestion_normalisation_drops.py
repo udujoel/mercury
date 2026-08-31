@@ -211,6 +211,23 @@ async def test_one_drop_out_of_two_does_not_raise(tmp_path):
     assert len(items) == 1
 
 
+async def test_three_drops_out_of_thirteen_does_not_raise(tmp_path):
+    """The other bar, pinned in the other direction.
+
+    Every existing "does not raise" case here drops fewer than
+    ESCALATION_MIN_DROPPED, so `report_drops` short-circuits on the absolute
+    floor and never reaches the ratio at all — delete ESCALATION_RATIO and
+    they all still pass. This one clears the floor (3) and stays well under
+    the ratio (3/13), so it fails if the ratio bar is removed and both bars
+    are now load-bearing.
+    """
+    messages = [_good_message(f"ok{i}") for i in range(10)] + [
+        _broken_message(f"bad{i}") for i in range(3)
+    ]
+    items = await gmail_mod.fetch_emails(fixture=_gmail_fixture(tmp_path, messages))
+    assert len(items) == 10
+
+
 async def test_the_shipped_gmail_fixture_still_normalises(tmp_path):
     """Guard against the escalation firing on the repo's own fixture, which
     deliberately carries one payload-less message."""
