@@ -125,56 +125,78 @@ enum MercuryColor {
     // ADR-012 replaced the dark-only palette. These forward to the semantic
     // tokens so `Features/` keeps building while tasks 2, 3 and 7 migrate.
     //
-    // THE MIGRATION LIST. Every call site still on an old name, as of this
-    // commit — `xcodebuild build` reproduces it as deprecation warnings, which
-    // is the authoritative version. Task 2 owns Home, task 3 owns Player,
-    // task 7 owns Onboarding and ShowNotes.
+    // THE MIGRATION LIST — 46 call sites, generated from `xcodebuild build`
+    // deprecation warnings at commit time, not from memory. The build is the
+    // authoritative version; regenerate rather than trusting these line
+    // numbers once the files start moving.
     //
-    //   canvas -> surface                (3 sites)
-    //     Features/Home/HomeView.swift:11
-    //     Features/Onboarding/ConnectAccountsView.swift:12
-    //     Features/Onboarding/ScheduleSetupView.swift:12
-    //     Also Features/Player/PlayerView.swift:55,57 and
-    //     Features/ShowNotes/ShowNotesView.swift:41.
+    // Task 2 owns Home, task 3 owns Player, task 7 owns Onboarding and
+    // ShowNotes.
     //
-    //   textPrimary -> ink               (14 sites)
-    //     Home/BriefingCard.swift:21,48   Home/CalendarCard.swift:21,37
-    //     Home/InboxCard.swift:21,37      Home/WeatherCard.swift:11
+    //   canvas -> surface   (7 sites)
+    //     Home/HomeView.swift:11
+    //     Onboarding/ConnectAccountsView.swift:12
+    //     Onboarding/ScheduleSetupView.swift:12
+    //     Onboarding/WelcomeView.swift:7
+    //     Player/PlayerView.swift:55,57
+    //     ShowNotes/ShowNotesView.swift:41
+    //
+    //   textPrimary -> ink   (20 sites)
+    //     Home/BriefingCard.swift:21,48
+    //     Home/CalendarCard.swift:21,37
+    //     Home/InboxCard.swift:21,37
+    //     Home/WeatherCard.swift:11
     //     Onboarding/ConnectAccountsView.swift:17,20,47
     //     Onboarding/ScheduleSetupView.swift:16,57
-    //     Onboarding/WelcomeView.swift:12   Player/ChapterTabs.swift:18,22
-    //     Player/TranscriptView.swift:26    Player/TransportControls.swift:22,31
+    //     Onboarding/WelcomeView.swift:12,25
+    //     Player/ChapterTabs.swift:18,22
+    //     Player/TranscriptView.swift:26
+    //     Player/TransportControls.swift:22,31
     //     ShowNotes/ShowNotesView.swift:54
-    //     NOTE: ChapterTabs and TransportControls use `textPrimary` as a *fill*
-    //     behind black text, not as ink. Those two want `accent` with
-    //     `inkOnAccent` on top, not `ink` — a blind rename inverts them.
     //
-    //   textSecondary -> inkMuted        (9 sites)
-    //     Home/BriefingCard.swift:28      Home/CalendarCard.swift:42
-    //     Home/InboxCard.swift:42         Home/WeatherCard.swift:14,22
+    //   textSecondary -> inkMuted   (11 sites)
+    //     Home/BriefingCard.swift:28
+    //     Home/CalendarCard.swift:42
+    //     Home/InboxCard.swift:42
+    //     Home/WeatherCard.swift:14,22
     //     Onboarding/ConnectAccountsView.swift:24
     //     Onboarding/WelcomeView.swift:15
-    //     Player/PlayerView.swift:29,38   ShowNotes/ShowNotesView.swift:62,70
+    //     Player/PlayerView.swift:29,38
+    //     ShowNotes/ShowNotesView.swift:62,70
     //
-    //   textTertiary -> inkFaint         (3 sites)
+    //   textTertiary -> inkFaint   (3 sites)
     //     Onboarding/ConnectAccountsView.swift:36
     //     Player/TransportControls.swift:40,45
     //
-    //   {calendar,inbox,weather,greeting}Accent -> accent   (6 sites)
-    //     Home/CalendarCard.swift:27,31   Home/InboxCard.swift:27,32
-    //     Home/WeatherCard.swift:32       Home/BriefingCard.swift (via family)
-    //     NOTE: all four now resolve to the same colour, so the four cards go
-    //     identical until task 2 drops the distinction. That is the intended
-    //     end state, not a bug to work around by reintroducing four hues.
+    //   calendarAccent -> accent   (2 sites)
+    //     Home/CalendarCard.swift:27,31
     //
-    //   AmbientBackground(family:) -> seed-only, or drop
-    //     Home/BriefingCard.swift:11  Home/CalendarCard.swift:18
-    //     Home/InboxCard.swift:18     Home/WeatherCard.swift:6
-    //     Player/TranscriptView.swift:13
+    //   inboxAccent -> accent   (2 sites)
+    //     Home/InboxCard.swift:27,32
     //
-    // Also not a rename, and the reason task 2 is a rewrite rather than a
-    // migration: `CardDeck.swift` carries `.shadow(color: .black.opacity(0.5))`
-    // on a black canvas, which never rendered. ADR-012 deletes the file.
+    //   weatherAccent -> accent   (1 sites)
+    //     Home/WeatherCard.swift:32
+    //
+    // Two of these are NOT a blind rename:
+    //
+    //   Player/ChapterTabs.swift:22 and Player/TransportControls.swift:31 use
+    //   `textPrimary` as a *fill* behind black text — the active pill and the
+    //   play button — not as ink. Those want `accent` with `inkOnAccent` on
+    //   top. Renaming them to `ink` inverts them into black-on-black.
+    //
+    //   The four *Accent names now all resolve to the same colour, so the four
+    //   cards go identical until task 2 drops the distinction. That is the
+    //   intended end state — one edition, one colour — not a bug to work
+    //   around by reintroducing four hues.
+    //
+    // `AmbientBackground(family:)` is also superseded, at Home/BriefingCard:11,
+    // Home/CalendarCard:18, Home/InboxCard:18, Home/WeatherCard:6 and
+    // Player/TranscriptView:13. It still compiles and resolves through the
+    // day's anchor; pass only a seed, or drop it.
+    //
+    // Not a rename, and the reason task 2 is a rewrite rather than a migration:
+    // `CardDeck.swift` carries `.shadow(color: .black.opacity(0.5))` on a black
+    // canvas, which never rendered. ADR-012 deletes the file.
 
     @available(*, deprecated, renamed: "surface",
                message: "ADR-012: the canvas is no longer true black. Use MercuryColor.surface.")
