@@ -500,8 +500,10 @@ serif instead of centred in SF.
 
 CLAUDE.md's first paragraph cited `docs/PRD.md`. That file does not exist and
 appears never to have. The real specification is
-`docs/mercury_ios_prd_blueprint.docx`, and there are 28 references to the
-missing path across the repository.
+`docs/mercury_ios_prd_blueprint.docx`. Source and test files carry 47 explicit
+`PRD <section>` citations across 12 distinct sections — count them with
+`grep -rhoE "PRD [0-9]+\.[0-9]+|PRD F-[0-9]+" ios/ backend/app scripts worker/src`
+— every one of which points a reader at a path that is not there.
 
 Every section number in those citations was checked against the docx and every
 one is real — PRD 3.3, 3.4, 3.6 and 3.7 all say what the code claims they say.
