@@ -32,7 +32,12 @@ from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI
 
 from app.core.config import get_settings
-from app.core.providers import LLMProvider, TTSProvider
+from app.core.providers import (
+    EmbeddingProvider,
+    LLMProvider,
+    TTSProvider,
+    build_embedding_provider,
+)
 from app.core.schemas import BriefingLength
 from app.notifications.apns import (
     APNsConfigurationError,
@@ -176,6 +181,7 @@ async def run_daily_briefing_job(
     *,
     llm: LLMProvider | None = None,
     tts: TTSProvider | None = None,
+    embeddings: EmbeddingProvider | None = None,
     push_provider: PushProvider | None = None,
     storage: BriefingStorage | None = None,
 ) -> None:
@@ -219,6 +225,12 @@ async def run_daily_briefing_job(
         llm = llm if llm is not None else built_llm
         tts = tts if tts is not None else built_tts
 
+    # Same reasoning as app/cli.py: without an embedding provider the run
+    # still ships, it just ships without cross-source dedup. Optional, and
+    # said out loud rather than discovered by noticing the same story twice.
+    if embeddings is None:
+        embeddings = build_embedding_provider()
+
     try:
         # Honour the configured length. Without this the cron always took
         # the STANDARD default, so BRIEFING_LENGTH=full produced a 15-minute
@@ -229,6 +241,7 @@ async def run_daily_briefing_job(
             llm=llm,
             tts=tts,
             storage=storage,
+            embeddings=embeddings,
             length=_configured_length(settings.briefing_length),
         )
     except Exception:

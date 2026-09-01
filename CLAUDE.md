@@ -73,6 +73,14 @@ script quality, voice quality or pacing. Fix the most frequent category first.
 Phases 0-2 complete. Phase 3 (voice) was built then dropped — ADR-009.
 Next: deploy via GitHub Actions + Cloudflare R2 (ADR-008, docs/DEPLOYMENT.md).
 
+Phase 2's news half was finished and connected to nothing until
+2026-08-31. RSS ingestion, cross-source dedup, clustering and ranking all
+existed and were tested; none of them had a caller outside the test suite,
+and the script chain passed a hardcoded `n_stories=0` into every briefing.
+Worth remembering as a failure mode: a green suite certified a feature the
+product had never once run. When a phase is marked done, check what CALLS
+the new code, not just what tests it.
+
 Phase 0 gate: **met**. Google Cloud TTS Neural2 passed the ten second test —
 "good, but can be better", which is a pass, not an endorsement. ElevenLabs is
 a planned upgrade rather than an emergency swap; see ADR-006.
@@ -80,8 +88,17 @@ a planned upgrade rather than an emergency swap; see ADR-006.
 Phase 1 gate: **met**. A real briefing from real Gmail and Calendar generates
 in 71 seconds, inside the PRD's 90-second budget.
 
-Phase 2 gate, still open: you stop opening the app to generate, and the same
-story never appears twice regardless of how many newsletters covered it.
+Phase 2 gate, dedup half: **met offline**, not yet in production. The PRD's
+acceptance case — one story covered by three newsletters and two news
+sources — goes through real Gmail and RSS ingestion, real clustering and
+real prompt assembly and reaches the briefing exactly once, in one segment,
+with all five sources attributed (`backend/tests/test_news_pipeline_e2e.py`).
+
+What that does not prove: the 0.78 similarity threshold is tuned for Gemini
+embeddings and has still never run against real feeds, and a fixture written
+to contain duplicates cannot tell you whether real newsletters cluster. Both
+need a morning of live data. The automation half of the gate — you stop
+opening the app — belongs to ADR-010/ADR-011.
 
 ## How work lands
 

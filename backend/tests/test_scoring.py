@@ -156,3 +156,193 @@ def test_select_for_briefing_splits_foreground_from_background():
     assert [e.title for e in out["background_events"]] == ["Week 35 of 2026"]
     # Nothing is lost.
     assert len(out["events"]) + len(out["background_events"]) == len(events)
+
+
+# ──────────────────────────────────────────────────────────────
+# "Your day" means the briefing day
+# ──────────────────────────────────────────────────────────────
+
+BRIEFING_DAY = datetime(2026, 8, 21, 0, 0, tzinfo=UTC)
+
+
+def _timed_event(title: str, start: datetime, *, hours: int = 1) -> CalendarEvent:
+    return CalendarEvent(
+        id=title,
+        title=title,
+        start=start,
+        end=start + timedelta(hours=hours),
+    )
+
+
+def test_events_after_the_briefing_day_are_not_in_your_day():
+    """PRD F-02 fetches today plus 72 hours, and `select_for_briefing` is
+    where that window is supposed to narrow to what is actually SPOKEN.
+    It never did, so the calendar segment — defined in OUTLINE_PROMPT as
+    "the day walked chronologically" — walked the next three days.
+    """
+    events = [
+        _timed_event("Standup today", datetime(2026, 8, 21, 9, 30, tzinfo=UTC)),
+        _timed_event("Review today", datetime(2026, 8, 21, 16, 0, tzinfo=UTC)),
+        _timed_event("Dentist Sunday", datetime(2026, 8, 23, 10, 0, tzinfo=UTC)),
+    ]
+    out = select_for_briefing(
+        [], events, BriefingLength.STANDARD, date=BRIEFING_DAY
+    )
+    assert [e.title for e in out["events"]] == ["Standup today", "Review today"]
+
+
+def test_events_before_the_briefing_day_are_excluded_too():
+    events = [
+        _timed_event("Yesterday evening", datetime(2026, 8, 20, 19, 0, tzinfo=UTC)),
+        _timed_event("Standup today", datetime(2026, 8, 21, 9, 30, tzinfo=UTC)),
+    ]
+    out = select_for_briefing(
+        [], events, BriefingLength.STANDARD, date=BRIEFING_DAY
+    )
+    assert [e.title for e in out["events"]] == ["Standup today"]
+
+
+def test_a_multi_day_event_spanning_the_briefing_day_is_kept():
+    """The filter is overlap, not "starts today". A conference that began
+    yesterday and runs through tomorrow is very much part of your day."""
+    conference = CalendarEvent(
+        id="conf",
+        title="Conference",
+        start=datetime(2026, 8, 20, 0, 0, tzinfo=UTC),
+        end=datetime(2026, 8, 22, 23, 59, 59, tzinfo=UTC),
+        all_day=True,
+    )
+    out = select_for_briefing(
+        [], [conference], BriefingLength.STANDARD, date=BRIEFING_DAY
+    )
+    assert [e.title for e in out["events"]] == ["Conference"]
+
+
+def test_background_events_are_filtered_to_the_briefing_day_as_well():
+    """Ambient entries are ranked down, not exempted from the day. A holiday
+    next Thursday is not context for this morning."""
+    today = CalendarEvent(
+        id="today", title="Week 34 of 2026",
+        start=datetime(2026, 8, 21, 0, 0, tzinfo=UTC),
+        end=datetime(2026, 8, 21, 23, 59, 59, tzinfo=UTC),
+        all_day=True, owned=False,
+    )
+    later = CalendarEvent(
+        id="later", title="A holiday next week",
+        start=datetime(2026, 8, 27, 0, 0, tzinfo=UTC),
+        end=datetime(2026, 8, 27, 23, 59, 59, tzinfo=UTC),
+        all_day=True, owned=False,
+    )
+    out = select_for_briefing(
+        [], [today, later], BriefingLength.STANDARD, date=BRIEFING_DAY
+    )
+    assert [e.title for e in out["background_events"]] == ["Week 34 of 2026"]
+
+
+def test_naive_event_timestamps_do_not_break_the_day_filter():
+    """An injected or hand-built event with a naive timestamp must not take
+    the run down comparing itself to the aware briefing date — the same
+    class of failure that silently disabled clustering."""
+    naive = CalendarEvent(
+        id="naive", title="Naive standup",
+        start=datetime(2026, 8, 21, 9, 30),
+        end=datetime(2026, 8, 21, 10, 0),
+    )
+    out = select_for_briefing(
+        [], [naive], BriefingLength.STANDARD, date=BRIEFING_DAY
+    )
+    assert [e.title for e in out["events"]] == ["Naive standup"]
+
+
+def test_no_date_means_no_day_filter():
+    """`date=None` keeps every event. Callers that have no briefing date —
+    and every existing direct caller — behave exactly as before."""
+    events = [
+        _timed_event("Standup today", datetime(2026, 8, 21, 9, 30, tzinfo=UTC)),
+        _timed_event("Dentist Sunday", datetime(2026, 8, 23, 10, 0, tzinfo=UTC)),
+    ]
+    out = select_for_briefing([], events, BriefingLength.STANDARD)
+    assert len(out["events"]) == 2
+
+
+def test_a_naive_event_beside_an_aware_one_does_not_take_the_run_down():
+    """One naive event never compares against anything, so the existing
+    naive test could not reach the chronological sort. Two can, and
+    `sorted(events, key=e.start)` raises TypeError on the mixed pair —
+    uncaught, in the one call `generate_briefing` does not wrap, so the whole
+    briefing dies rather than losing a segment. Same failure that had already
+    disabled clustering, one module over.
+    """
+    naive = CalendarEvent(
+        id="naive", title="Naive standup",
+        start=datetime(2026, 8, 21, 9, 30),
+        end=datetime(2026, 8, 21, 10, 0),
+    )
+    aware = CalendarEvent(
+        id="aware", title="Aware review",
+        start=datetime(2026, 8, 21, 14, 0, tzinfo=UTC),
+        end=datetime(2026, 8, 21, 15, 0, tzinfo=UTC),
+    )
+    out = select_for_briefing(
+        [], [aware, naive], BriefingLength.STANDARD, date=BRIEFING_DAY
+    )
+    assert [e.title for e in out["events"]] == ["Naive standup", "Aware review"]
+
+
+def test_the_mixed_sort_holds_with_no_briefing_date_either():
+    """`date=None` skips `_overlaps_day` entirely, so the sort is the only
+    place awareness is reconciled on that path."""
+    naive = CalendarEvent(
+        id="naive", title="Naive standup",
+        start=datetime(2026, 8, 21, 9, 30),
+        end=datetime(2026, 8, 21, 10, 0),
+    )
+    aware = CalendarEvent(
+        id="aware", title="Aware review",
+        start=datetime(2026, 8, 21, 14, 0, tzinfo=UTC),
+        end=datetime(2026, 8, 21, 15, 0, tzinfo=UTC),
+    )
+    out = select_for_briefing([], [aware, naive], BriefingLength.STANDARD)
+    assert [e.title for e in out["events"]] == ["Naive standup", "Aware review"]
+
+
+def test_narrowing_the_calendar_to_nothing_says_so(caplog):
+    """Every silent drop this project has shipped looked like this one:
+    correct code, nothing in the log, a segment quietly missing.
+
+    Ingestion reaches 72 hours ahead and this is where that is cut to the
+    briefing day, so "5 fetched, 0 spoken" is either a genuinely empty day or
+    a briefing id that does not match the data — indistinguishable from the
+    outside unless it is said out loud.
+    """
+    events = [
+        CalendarEvent(
+            id="ev1",
+            title="Company offsite",
+            start=datetime(2026, 8, 21, 9, tzinfo=UTC),
+            end=datetime(2026, 8, 21, 17, tzinfo=UTC),
+        )
+    ]
+
+    with caplog.at_level("WARNING"):
+        result = select_for_briefing(
+            [], events, BriefingLength.STANDARD,
+            date=datetime(2026, 8, 31, tzinfo=UTC),
+        )
+
+    assert result["events"] == []
+    warnings = [r.getMessage() for r in caplog.records]
+    assert any(
+        "1 event(s) fetched, none on 2026-08-31" in w for w in warnings
+    ), warnings
+
+
+def test_a_genuinely_empty_calendar_is_not_reported_as_a_drop(caplog):
+    """The control. Nothing fetched is not the same as everything discarded,
+    and warning on it would train the reader to ignore the warning."""
+    with caplog.at_level("WARNING"):
+        select_for_briefing(
+            [], [], BriefingLength.STANDARD, date=datetime(2026, 8, 31, tzinfo=UTC)
+        )
+
+    assert not [r for r in caplog.records if "none on" in r.getMessage()]

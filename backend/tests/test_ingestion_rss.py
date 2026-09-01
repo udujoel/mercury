@@ -349,3 +349,45 @@ async def test_unusable_first_copy_does_not_suppress_a_usable_one(tmp_path):
 
     assert len(items) == 1, "the usable copy should survive, exactly once"
     assert items[0].title == "Real article"
+
+
+# ──────────────────────────────────────────────────────────────
+# A fixture is a self-contained snapshot
+# ──────────────────────────────────────────────────────────────
+
+
+async def test_a_fixture_alone_is_enough_to_get_items_out():
+    """`fixture=` without `feeds=` and `now=` returned nothing at all.
+
+    Two independent reasons, and fixing either alone still yields zero:
+    `feeds` defaulted to DEFAULT_FEEDS, whose real URLs are not keys in the
+    fixture, so every feed was "skipped, no fixture entry"; and the 24-hour
+    window was measured against wall-clock now, which a dated snapshot falls
+    out of the day after it is written.
+
+    This is what the offline API path calls, so it shipped a briefing with an
+    empty world segment and a fixture that looked like it was working.
+    """
+    items = await rss.fetch_articles(fixture=FIXTURE)
+    assert items, "a fixture-backed call should produce the fixture's items"
+    # Both of the fixture's feeds, not just whichever one happened to match.
+    assert len({i.source_name for i in items}) == 2, [i.source_name for i in items]
+
+
+async def test_an_explicit_feed_list_still_wins_over_the_fixture_keys():
+    """The fallback is a default, not an override — a test narrowing to one
+    feed must still get one feed."""
+    items = await rss.fetch_articles(fixture=FIXTURE, feeds=[TECH_FEED])
+    assert {i.source_name for i in items} == {"Example Tech Daily"}
+
+
+async def test_an_explicit_now_still_wins_over_the_snapshot_anchor():
+    """Every existing test here pins `now` against the fixture's dates. That
+    has to keep meaning what it meant, including when it excludes
+    everything."""
+    from datetime import timedelta
+
+    items = await rss.fetch_articles(
+        fixture=FIXTURE, now=FIXED_NOW + timedelta(days=365)
+    )
+    assert items == []

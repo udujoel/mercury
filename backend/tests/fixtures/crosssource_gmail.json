@@ -1,0 +1,204 @@
+{
+ "messages": [
+  {
+   "id": "msg_strat_001",
+   "threadId": "thread_msg_strat_001",
+   "labelIds": [
+    "INBOX"
+   ],
+   "snippet": "TechCorp's purchase of DataFlow this week is best understood as a bundling move,",
+   "payload": {
+    "mimeType": "multipart/alternative",
+    "headers": [
+     {
+      "name": "From",
+      "value": "Stratechery <ben@stratechery.com>"
+     },
+     {
+      "name": "To",
+      "value": "udujoel@gmail.com"
+     },
+     {
+      "name": "Subject",
+      "value": "The DataFlow Acquisition and What It Means for the Bundle"
+     },
+     {
+      "name": "Date",
+      "value": "Thu, 20 Aug 2026 06:30:00 +0000"
+     },
+     {
+      "name": "List-Unsubscribe",
+      "value": "<https://example.com/unsub>"
+     },
+     {
+      "name": "Precedence",
+      "value": "bulk"
+     }
+    ],
+    "parts": [
+     {
+      "mimeType": "text/plain",
+      "headers": [
+       {
+        "name": "Content-Type",
+        "value": "text/plain; charset=UTF-8"
+       }
+      ],
+      "body": {
+       "size": 507,
+       "data": "VGVjaENvcnAncyBwdXJjaGFzZSBvZiBEYXRhRmxvdyB0aGlzIHdlZWsgaXMgYmVzdCB1bmRlcnN0b29kIGFzIGEgYnVuZGxpbmcgbW92ZSwgbm90IGFuIGluZnJhc3RydWN0dXJlIG1vdmUuIFRoZSAkMi4zIGJpbGxpb24gcHJpY2UgdGFnIGlzIGhpZ2ggZm9yIGEgY29tcGFueSBEYXRhRmxvdydzIHNpemUsIGJ1dCB0aGUgc3RyYXRlZ2ljIGxvZ2ljIGlzIGFib3V0IG93bmluZyB0aGUgcGlwZWxpbmUgbGF5ZXIgYmVmb3JlIGEgY29tcGV0aXRvciBkb2VzLiBUaGlzIGlzIHRoZSBhZ2dyZWdhdGlvbiBwYXR0ZXJuIHBsYXlpbmcgb3V0IGFnYWluLCBvbmUgbGF5ZXIgZG93biB0aGUgc3RhY2suIFRlY2hDb3JwIGhhcyBib3VnaHQgZGlzdHJpYnV0aW9uIGJlZm9yZTsgd2hhdCBtYWtlcyB0aGUgRGF0YUZsb3cgZGVhbCBkaWZmZXJlbnQgaXMgdGhhdCB0aGUgcGlwZWxpbmUgbGF5ZXIgaXMgd2hlcmUgc3dpdGNoaW5nIGNvc3RzIGFjdHVhbGx5IGxpdmUgZm9yIGFuIGVudGVycHJpc2UgYnV5ZXIu"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "msg_evans_001",
+   "threadId": "thread_msg_evans_001",
+   "labelIds": [
+    "INBOX"
+   ],
+   "snippet": "A quick note on TechCorp buying DataFlow for $2.3 billion. The interesting quest",
+   "payload": {
+    "mimeType": "multipart/alternative",
+    "headers": [
+     {
+      "name": "From",
+      "value": "Benedict Evans <ben@ben-evans.com>"
+     },
+     {
+      "name": "To",
+      "value": "udujoel@gmail.com"
+     },
+     {
+      "name": "Subject",
+      "value": "TechCorp buys DataFlow: notes on distribution"
+     },
+     {
+      "name": "Date",
+      "value": "Thu, 20 Aug 2026 07:15:00 -0000"
+     },
+     {
+      "name": "List-Unsubscribe",
+      "value": "<https://example.com/unsub>"
+     },
+     {
+      "name": "Precedence",
+      "value": "bulk"
+     }
+    ],
+    "parts": [
+     {
+      "mimeType": "text/plain",
+      "headers": [
+       {
+        "name": "Content-Type",
+        "value": "text/plain; charset=UTF-8"
+       }
+      ],
+      "body": {
+       "size": 391,
+       "data": "QSBxdWljayBub3RlIG9uIFRlY2hDb3JwIGJ1eWluZyBEYXRhRmxvdyBmb3IgJDIuMyBiaWxsaW9uLiBUaGUgaW50ZXJlc3RpbmcgcXVlc3Rpb24gaXNuJ3QgdGhlIHByaWNlLCBpdCdzIGRpc3RyaWJ1dGlvbjogRGF0YUZsb3cncyBwaXBlbGluZXMgYXJlIGFscmVhZHkgZW1iZWRkZWQgaW4gdGhvdXNhbmRzIG9mIGVudGVycHJpc2UgZGF0YSBzdGFja3MsIGFuZCB0aGF0IGluc3RhbGwgYmFzZSBpcyB3aGF0IFRlY2hDb3JwIGlzIHJlYWxseSBwYXlpbmcgZm9yLCBub3QgdGhlIHRlY2hub2xvZ3kgaXRzZWxmLiBDb21wYXJlIHRoZSBBSSBpbmZyYXN0cnVjdHVyZSBkZWFscyBvZiB0aGUgbGFzdCB0d28geWVhcnMgYW5kIHRoZSBwYXR0ZXJuIGlzIHRoZSBzYW1lIG9uZSBldmVyeSB0aW1lLg=="
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "msg_expview_001",
+   "threadId": "thread_msg_expview_001",
+   "labelIds": [
+    "INBOX"
+   ],
+   "snippet": "The DataFlow deal is the third pipeline acquisition this year and by some distan",
+   "payload": {
+    "mimeType": "multipart/alternative",
+    "headers": [
+     {
+      "name": "From",
+      "value": "Exponential View <azeem@exponentialview.co>"
+     },
+     {
+      "name": "To",
+      "value": "udujoel@gmail.com"
+     },
+     {
+      "name": "Subject",
+      "value": "The DataFlow deal and where the scarcity really is"
+     },
+     {
+      "name": "Date",
+      "value": "Thu, 20 Aug 2026 09:05:00 +0000"
+     },
+     {
+      "name": "List-Unsubscribe",
+      "value": "<https://example.com/unsub>"
+     },
+     {
+      "name": "Precedence",
+      "value": "bulk"
+     }
+    ],
+    "parts": [
+     {
+      "mimeType": "text/plain",
+      "headers": [
+       {
+        "name": "Content-Type",
+        "value": "text/plain; charset=UTF-8"
+       }
+      ],
+      "body": {
+       "size": 405,
+       "data": "VGhlIERhdGFGbG93IGRlYWwgaXMgdGhlIHRoaXJkIHBpcGVsaW5lIGFjcXVpc2l0aW9uIHRoaXMgeWVhciBhbmQgYnkgc29tZSBkaXN0YW5jZSB0aGUgbGFyZ2VzdC4gVGVjaENvcnAgcGF5aW5nICQyLjMgYmlsbGlvbiBmb3IgRGF0YUZsb3cgdGVsbHMgeW91IHdoZXJlIHRoZSBzY2FyY2l0eSBpcyBpbiBBSSBpbmZyYXN0cnVjdHVyZSByaWdodCBub3c6IG5vdCBpbiBtb2RlbHMsIHdoaWNoIGFyZSBjb21tb2RpdGlzaW5nIGZhc3QsIGJ1dCBpbiB0aGUgcGx1bWJpbmcgdGhhdCBtb3ZlcyBlbnRlcnByaXNlIGRhdGEgdG8gdGhlbS4gV29ydGggd2F0Y2hpbmcgd2hldGhlciB0aGUgcmVndWxhdG9ycyB3aG8gd2F2ZWQgdGhpcyB0aHJvdWdoIGFwcGx5IHRoZSBzYW1lIHJlYXNvbmluZyB0byB0aGUgbmV4dCBvbmUu"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "msg_maria_001",
+   "threadId": "thread_msg_maria_001",
+   "labelIds": [
+    "INBOX"
+   ],
+   "snippet": "Hi Joel, can you look over the Q3 budget numbers before Friday's review? I have ",
+   "payload": {
+    "mimeType": "multipart/alternative",
+    "headers": [
+     {
+      "name": "From",
+      "value": "Maria Chen <maria.chen@acmecorp.com>"
+     },
+     {
+      "name": "To",
+      "value": "udujoel@gmail.com"
+     },
+     {
+      "name": "Subject",
+      "value": "Q3 budget review before Friday"
+     },
+     {
+      "name": "Date",
+      "value": "Thu, 20 Aug 2026 14:12:00 +0000"
+     }
+    ],
+    "parts": [
+     {
+      "mimeType": "text/plain",
+      "headers": [
+       {
+        "name": "Content-Type",
+        "value": "text/plain; charset=UTF-8"
+       }
+      ],
+      "body": {
+       "size": 256,
+       "data": "SGkgSm9lbCwgY2FuIHlvdSBsb29rIG92ZXIgdGhlIFEzIGJ1ZGdldCBudW1iZXJzIGJlZm9yZSBGcmlkYXkncyByZXZpZXc_IEkgaGF2ZSBmbGFnZ2VkIHRoZSB0d28gbGluZXMgdGhhdCBjaGFuZ2VkIHNpbmNlIHRoZSBsYXN0IGRyYWZ0IGFuZCBsZWZ0IGNvbW1lbnRzIG9uIHRoZSByZXN0LiBOb3RoaW5nIGNvbnRyb3ZlcnNpYWwsIGJ1dCBJIHdvdWxkIHJhdGhlciB5b3Ugc2F3IHRoZW0gYmVmb3JlIHRoZSBtZWV0aW5nIHRoYW4gZHVyaW5nIGl0Lg=="
+      }
+     }
+    ]
+   }
+  }
+ ]
+}

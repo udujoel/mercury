@@ -138,3 +138,107 @@ def test_no_warning_when_there_was_nothing_to_match():
     """An empty inbox and empty calendar legitimately produce no refs."""
     with_no_sources = _build_source_refs([_turn("Quiet morning.")], [], [])
     assert with_no_sources == []
+
+
+# ── sender-name matching discipline ───────────────────────────
+
+
+def test_a_stop_word_in_a_sender_name_does_not_match_everything():
+    """"The Verge" splits into {"the", "verge"}, and the sender loop accepted
+    any part longer than two characters — so "the" matched nearly every turn
+    in the briefing. The Verge collected a SourceRef on cold_open, weather
+    and sign_off: show notes filled with junk, and the grounding audit trail
+    credited a publication for claims it had nothing to do with.
+    """
+    assert not _mentions(
+        "Good morning Joel. It's Friday, and the day ahead looks quiet.",
+        "Apple pushes back foldable iPhone to 2028",
+        "The Verge",
+    )
+
+
+def test_a_distinctive_part_of_the_sender_name_still_matches():
+    """The discipline must not cost the signal it was protecting. "Verge" on
+    its own is still a strong, low-noise match, and hosts do say "Priya"
+    rather than "Priya Raman"."""
+    assert _mentions(
+        "Verge is reporting the foldable slipped again.",
+        "Apple pushes back foldable iPhone to 2028",
+        "The Verge",
+    )
+
+
+def test_a_two_letter_sender_part_does_not_match():
+    """Length discipline, same as `_distinctive_tokens`: an initial is not
+    evidence of anything."""
+    assert not _mentions(
+        "So that's the shape of the morning.",
+        "Quarterly numbers",
+        "A B Consulting",
+    )
+
+
+def test_a_sender_made_entirely_of_stop_words_falls_through_to_the_title():
+    """Nothing usable in the sender is not the same as a match. The matcher
+    falls back to title tokens rather than matching on filler."""
+    assert not _mentions(
+        "And that's your weather for the day.",
+        "Quarterly numbers from the finance team",
+        "The Update",
+    )
+
+
+def test_full_sender_name_still_matches_verbatim():
+    """The whole name is unambiguous however common its parts are, so the
+    verbatim check ahead of the per-part loop is untouched."""
+    assert _mentions(
+        "The Verge has more on that.",
+        "Unrelated subject",
+        "The Verge",
+    )
+
+
+def test_a_junk_ref_does_not_reach_the_manifest():
+    """The same bug at the level the user sees it: a publication credited on
+    the weather and the sign-off."""
+    turns = [
+        Turn(speaker="A", segment=Segment.COLD_OPEN,
+             text="Good morning Joel, and welcome to the briefing."),
+        Turn(speaker="B", segment=Segment.WEATHER,
+             text="Clear all day, with a high of twenty-four."),
+        Turn(speaker="A", segment=Segment.SIGN_OFF,
+             text="That's the morning. Have a good one."),
+    ]
+    emails = [_email("Apple pushes back foldable iPhone to 2028", "The Verge")]
+    assert _build_source_refs(turns, emails, []) == []
+
+
+def test_an_accented_sender_name_is_still_matched_on_its_own():
+    """`[a-z0-9]+` did not just skip the accent, it split the word around it.
+
+    "Élodie" tokenised to "lodie", and `\\blodie\\b` cannot match inside
+    "élodie" because the é on its left is itself a word character — so the
+    one host who names the sender produced no SourceRef and her email had no
+    tappable show-notes entry (PRD F-19). Silent, and only for people whose
+    names carry a diacritic.
+
+    The title here is deliberately unmatchable, so this measures the sender
+    loop rather than falling through to the title tokens.
+    """
+    assert _mentions(
+        "Élodie says it is ready to go out.",
+        "Quarterly numbers",
+        "Élodie Durand",
+    )
+
+
+def test_an_accented_title_word_does_not_match_its_ascii_fragment():
+    """The same regex invented tokens that were never in the text: "Réunion"
+    became "union", so a turn about a trade union scored a full match against
+    an email about a budget meeting and credited it in the show notes.
+    """
+    assert not _mentions(
+        "The union agreed the budget, so that fight is over.",
+        "Réunion budget",
+        "Someone Else",
+    )

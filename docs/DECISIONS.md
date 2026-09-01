@@ -37,6 +37,15 @@ At personal scale (hundreds of items per day) scikit-learn agglomerative
 clustering over an in-memory matrix is sufficient. No vector database until
 the app serves more than one user.
 
+**Status note, 2026-08-31.** The decision has not changed. What changed is
+that it now runs: from Phase 2 until this date the clustering code had no
+caller outside its own tests, so nothing in a generated briefing had ever
+been deduplicated. Newsletters and articles are clustered in a single pass
+(one `build_stories` call over `emails + articles`) rather than separately,
+which is the whole reason both normalise into `Item` first. Still untested
+against live feeds: the 0.78 threshold is tuned for Gemini embeddings and
+has only ever been exercised offline.
+
 ## ADR-004 — Every AI provider behind a protocol
 
 **Status:** accepted

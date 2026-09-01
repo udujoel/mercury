@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 async def build_stories(
     items: list[Item],
     *,
-    embeddings: EmbeddingProvider,
+    embeddings: EmbeddingProvider | None,
     threshold: float | None = None,
 ) -> list[Story]:
     """Embed every item, populate `Item.embedding`, and cluster into stories.
@@ -46,6 +46,18 @@ async def build_stories(
     """
     if not items:
         return []
+
+    if embeddings is None:
+        # "No provider configured" is the same outcome as "the provider
+        # failed", so it degrades the same way rather than raising. A run
+        # with no GEMINI_API_KEY still ships a briefing; it just ships one
+        # where nothing merged.
+        log.warning(
+            "no embedding provider available; shipping %d unclustered "
+            "singletons (no cross-source dedup this run)",
+            len(items),
+        )
+        return [_singleton(item) for item in items]
 
     resolved_threshold = (
         threshold

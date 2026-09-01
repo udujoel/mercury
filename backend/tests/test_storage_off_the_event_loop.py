@@ -148,6 +148,7 @@ async def test_the_pipeline_save_keeps_the_loop_free(blocking_storage):
     from app.providers.fake_tts import FakeTTSProvider
     from tests.test_generate_e2e import (
         FIXTURES_DIR,
+        _fake_fetch_articles,
         _fake_fetch_events,
         _fake_fetch_weather,
         _fake_generate_script,
@@ -163,6 +164,7 @@ async def test_the_pipeline_save_keeps_the_loop_free(blocking_storage):
             tts=FakeTTSProvider(),
             fetch_events=_fake_fetch_events,
             fetch_weather=_fake_fetch_weather,
+            fetch_articles=_fake_fetch_articles,
             score_emails=_fake_score_emails,
             select_for_briefing=_fake_select_for_briefing,
             generate_script=_fake_generate_script,
