@@ -14,9 +14,24 @@ struct AdaptiveColor {
     let light: RGB
     let dark: RGB
 
+    /// Built once, not per read.
+    ///
+    /// This was a computed property, so every access allocated a fresh
+    /// closure-backed `UIColor` and `Color` — and every deprecated alias
+    /// below is itself a computed `static var` forwarding to it, so each of
+    /// those allocated too. `PlayerView` re-renders on `positionMs`, which
+    /// the display link updates twenty times a second, and reads several
+    /// tokens per body evaluation. `light` and `dark` are immutable, so
+    /// there is nothing to recompute; the cost only scales with adoption,
+    /// which makes the foundation the wrong place to leave it.
+    let color: Color
+
     init(light: RGB, dark: RGB) {
         self.light = light
         self.dark = dark
+        self.color = Color(UIColor { traits in
+            UIColor(traits.userInterfaceStyle == .dark ? dark.color : light.color)
+        })
     }
 
     init(light: String, dark: String) {
@@ -28,12 +43,6 @@ struct AdaptiveColor {
     init(fixed: String) {
         let c = RGB(hex: fixed)
         self.init(light: c, dark: c)
-    }
-
-    var color: Color {
-        Color(UIColor { traits in
-            UIColor(traits.userInterfaceStyle == .dark ? dark.color : light.color)
-        })
     }
 
     func resolved(dark isDark: Bool) -> RGB { isDark ? dark : light }

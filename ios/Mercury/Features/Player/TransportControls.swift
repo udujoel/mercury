@@ -19,16 +19,17 @@ struct TransportControls: View {
                 Button(action: onCycleRate) {
                     Text(rateLabel)
                         .font(MercuryType.chapterTab)
-                        .foregroundStyle(MercuryColor.textPrimary)
+                        .foregroundStyle(MercuryColor.ink.color)
                         .frame(width: 52, height: 52)
-                        .background(Circle().fill(Color.white.opacity(0.12)))
+                        .background(Circle().fill(MercuryColor.hairline.color))
                 }
 
                 Button(action: onTogglePlay) {
                     Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                        .foregroundStyle(.black)
+                        // Fill, not text — see the note in ChapterTabs.
+                        .foregroundStyle(MercuryColor.inkOnAccent.color)
                         .frame(width: 72, height: 72)
-                        .background(Circle().fill(MercuryColor.textPrimary))
+                        .background(Circle().fill(MercuryColor.accent.color))
                 }
                 Spacer()
             }

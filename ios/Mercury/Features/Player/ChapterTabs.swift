@@ -15,13 +15,25 @@ struct ChapterTabs: View {
                     let isActive = segment.id == activeSegmentID
                     Text(segment.label)
                         .font(MercuryType.chapterTab)
-                        .foregroundStyle(isActive ? .black : MercuryColor.textPrimary)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(
-                            Capsule().fill(isActive ? MercuryColor.textPrimary : Color.white.opacity(0.12))
+                        // The active pill is a FILL with text drawn on it, so
+                        // it takes `accent`/`inkOnAccent` rather than an ink
+                        // token. Renaming it to `ink` alongside the other
+                        // textPrimary call sites would have made it near-black
+                        // on near-black — the deprecation alias preserves the
+                        // name, not the role, and this is one of the two places
+                        // where the role is the thing that matters.
+                        .foregroundStyle(
+                            isActive ? MercuryColor.inkOnAccent.color : MercuryColor.inkMuted.color
                         )
-                        .opacity(isActive ? 1.0 : 0.45)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 14)   // 44pt minimum touch target
+                        .background(
+                            Capsule().fill(
+                                isActive
+                                    ? MercuryColor.accent.color
+                                    : MercuryColor.hairline.color
+                            )
+                        )
                         .onTapGesture { onSelect(segment) }
                 }
             }

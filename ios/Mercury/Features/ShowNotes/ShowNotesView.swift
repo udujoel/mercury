@@ -74,7 +74,7 @@ private struct ShowNotesRow: View {
         }
         .contentShape(Rectangle())
         .onTapGesture(perform: onTapToSeek)
-        .listRowBackground(Color.white.opacity(0.04))
+        .listRowBackground(MercuryColor.surfaceRaised.color)
     }
 }
 
