@@ -239,6 +239,24 @@ def _load_fixture(fixture: Path) -> dict[str, Any]:
     return json.loads(fixture.read_text())
 
 
+def _fixture_snapshot_time(fixture: Path) -> datetime:
+    """The moment a fixture represents: its newest entry.
+
+    Anchoring the recency window here rather than on the wall clock is what
+    lets `hours=` keep meaning "the last N hours of this snapshot". Falls
+    back to wall-clock now for a fixture with no datable entry, which the
+    recency filter then empties — the same answer it gives today, reached
+    without pretending the file said something it did not.
+    """
+    stamps = [
+        ts
+        for parsed in _load_fixture(fixture).values()
+        for entry in parsed.get("entries", [])
+        if (ts := entry_timestamp(entry)) is not None
+    ]
+    return max(stamps) if stamps else datetime.now(UTC)
+
+
 def _feed_source_name(url: str, parsed: dict[str, Any]) -> str:
     """The name a host will say out loud.
 
@@ -357,11 +375,26 @@ async def fetch_articles(
     can pin "now" against a fixture's fixed dates without the assertions
     rotting as wall-clock time moves on. Callers following the pipeline
     contract never need to pass it.
+
+    With a fixture and neither `feeds` nor `now`, both are taken FROM the
+    fixture — a snapshot is self-contained. Without that, `fixture=<path>`
+    on its own returned nothing at all, twice over: `feeds` fell back to the
+    real DEFAULT_FEEDS, none of which are keys in a fixture, so every feed
+    was skipped as "no fixture entry"; and the recency window was measured
+    against wall-clock now, which any dated snapshot falls out of the day
+    after it is written. The offline API path called it exactly that way and
+    shipped an empty world segment behind a fixture that looked wired up.
     """
     if feeds is None:
-        feeds = [url for urls in DEFAULT_FEEDS.values() for url in urls]
+        feeds = (
+            list(_load_fixture(fixture))
+            if fixture is not None
+            else [url for urls in DEFAULT_FEEDS.values() for url in urls]
+        )
 
-    now = now or datetime.now(UTC)
+    now = now or (
+        _fixture_snapshot_time(fixture) if fixture is not None else datetime.now(UTC)
+    )
     semaphore = asyncio.Semaphore(EXTRACTION_CONCURRENCY)
 
     async with httpx.AsyncClient() as client:

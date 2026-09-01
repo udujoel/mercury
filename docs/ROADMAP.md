@@ -82,7 +82,36 @@ Observed while testing the MVP on the simulator, none of it blocking:
 - [x] Week 11 — server cron, APNs silent push, BGProcessingTask prefetch,
       wake notification, show notes
 
+Weeks 8 and 9 were ticked here for about a fortnight while being false in the
+way that is hardest to notice: the code existed, was tested, and had no
+caller. `fetch_articles`, `build_stories`, `cluster_items` and `score_stories`
+were reachable only from the test suite — `score_stories` not even from
+there — and `script_chain.py` passed `n_stories=0` with the literal string
+"(none — Phase 1 has no news clustering)" into every outline prompt. A green
+suite said week 9 was done; the product had never clustered anything. Wired
+in `feat/wire-news-pipeline`.
+
 **Gate: you stop opening the app to generate, and no story appears twice.**
+
+Second half: **met**. `backend/tests/test_news_pipeline_e2e.py` drives the
+PRD's own acceptance case — a story covered by three newsletters and two news
+sources — from real Gmail and RSS normalisation through embedding,
+clustering, ranking, selection and prompt assembly, and asserts it reaches
+the briefing exactly once, in one segment, with all five sources attributed.
+
+Two things that test does NOT establish, and neither should be claimed until
+a live run says otherwise:
+
+- The threshold. 0.78 is tuned for Gemini embeddings and has still never run
+  against real feeds; the offline test uses 0.60, the value calibrated for
+  `FakeEmbeddingProvider`, and sweeps 0.50-0.70 to show the merge is not
+  balanced on one number. What holds is the wiring, not the tuning.
+- Whether real newsletters covering the same event actually cluster. The
+  fixture is written to be a duplicate. Real ones may sit either side of the
+  threshold, and finding out needs a morning of live data.
+
+First half (you stop opening the app) is ADR-010/ADR-011 territory and is
+not affected by this branch.
 
 ## Phase 3 — Voice interaction — DROPPED (see ADR-009)
 

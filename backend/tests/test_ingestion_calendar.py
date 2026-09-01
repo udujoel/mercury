@@ -127,3 +127,59 @@ async def test_fetch_events_live_without_fixture_raises_clear_error():
         await calendar.fetch_events(fixture=None)
     message = str(exc_info.value)
     assert "credentials" in message.lower() or "google" in message.lower()
+
+
+# ──────────────────────────────────────────────────────────────
+# All-day events: Google's end.date is EXCLUSIVE
+# ──────────────────────────────────────────────────────────────
+
+
+async def test_one_day_all_day_event_does_not_run_into_the_next_day():
+    """Google reports an all-day event's `end.date` as the day AFTER it
+    finishes. Stored verbatim, the fixture's one-day offsite on the 22nd
+    came out as 2026-08-22T00:00 to 2026-08-23T00:00 — and
+    `script_chain._format_calendar` hands exactly those two isoformat
+    strings to the model, so the hosts described a one-day offsite as
+    running into Sunday.
+    """
+    events = await calendar.fetch_events(fixture=FIXTURE)
+    offsite = next(e for e in events if e.id == "evt_allday_001")
+
+    assert offsite.all_day is True
+    assert offsite.start.date().isoformat() == "2026-08-22"
+    assert offsite.end.date().isoformat() == "2026-08-22"
+    assert offsite.end > offsite.start
+
+
+def test_multi_day_all_day_event_keeps_every_day_it_covers():
+    """The correction is one day off the exclusive end, not a collapse onto
+    the start date — a Thursday-to-Saturday conference still ends Saturday.
+    """
+    event = calendar.event_to_calendar_event(
+        {
+            "id": "conf",
+            "summary": "Conference",
+            "start": {"date": "2026-08-20"},
+            "end": {"date": "2026-08-23"},
+        },
+        TZ,
+    )
+    assert event.start.date().isoformat() == "2026-08-20"
+    assert event.end.date().isoformat() == "2026-08-22"
+
+
+def test_timed_event_end_is_untouched():
+    """Only `end.date` is exclusive. `end.dateTime` is the real end instant
+    and must not have a second shaved off it."""
+    event = calendar.event_to_calendar_event(
+        {
+            "id": "timed",
+            "summary": "Standup",
+            "start": {"dateTime": "2026-08-21T09:30:00+01:00"},
+            "end": {"dateTime": "2026-08-21T09:45:00+01:00"},
+        },
+        TZ,
+    )
+    assert event.end.hour == 9
+    assert event.end.minute == 45
+    assert event.end.second == 0

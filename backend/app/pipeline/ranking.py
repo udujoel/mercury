@@ -57,8 +57,14 @@ def score_stories(
         else:
             interest = 0.5
 
-        # How many independent sources carried it
-        cluster = math.log1p(story.cluster_size) / math.log(6)
+        # How many independent sources carried it. Distinct source names,
+        # not member count: a publication running a follow-up on its own
+        # story scored as though the wider press had picked it up — the fake
+        # popularity boost app/ingestion/rss.py describes for duplicate urls,
+        # one level up and still reachable now that newsletters and feeds
+        # cluster together and a publication's own newsletter can sit beside
+        # its article.
+        cluster = math.log1p(len(story.source_names)) / math.log(6)
 
         # Recency decay
         hours = max((now - _aware(item.timestamp)).total_seconds() / 3600, 0)

@@ -39,6 +39,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from app.core.config import get_settings
+from app.core.providers import build_embedding_provider
 from app.core.schemas import BriefingLength
 
 log = logging.getLogger("mercury.cli")
@@ -299,9 +300,22 @@ async def _generate(
         log.error("credentials are not configured: %s", exc)
         return 2
 
+    # Embeddings are what make cross-source dedup work (ADR-003), and they
+    # are the only provider whose absence is survivable: build_stories
+    # degrades to unclustered singletons, so the briefing still ships, it
+    # just ships with the same story told twice. Not a reason to exit 2
+    # alongside the LLM and TTS credentials, and not a reason to be quiet
+    # about it either.
+    embeddings = build_embedding_provider()
+
     try:
         manifest = await generate_briefing(
-            briefing_id=briefing_id, length=length, llm=llm, tts=tts, storage=storage
+            briefing_id=briefing_id,
+            length=length,
+            llm=llm,
+            tts=tts,
+            embeddings=embeddings,
+            storage=storage,
         )
     except EmptyBriefingError as exc:
         # Named separately from a generic failure because the operator action

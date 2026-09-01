@@ -13,6 +13,7 @@ never creates, modifies or deletes calendar entries.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sys
 from datetime import date, datetime, timedelta
@@ -22,6 +23,9 @@ from zoneinfo import ZoneInfo
 
 from app.core.config import get_settings
 from app.core.schemas import CalendarEvent
+from app.ingestion.drops import drop_id, log_drop, report_drops
+
+log = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────────────────────
 # Video-conference boilerplate stripping
@@ -123,7 +127,21 @@ def event_to_calendar_event(
         raise ValueError(f"event {raw.get('id')} missing start/end")
 
     start, start_all_day = parse_event_time(start_raw, tz)
-    end, _ = parse_event_time(end_raw, tz)
+    end, end_all_day = parse_event_time(end_raw, tz)
+    if end_all_day:
+        # Google reports an all-day event's `end.date` as the day AFTER the
+        # last day it covers — the range is half-open. Stored verbatim, the
+        # one-day offsite in tests/fixtures/calendar_events.json came out as
+        # "2026-08-22T00:00 to 2026-08-23T00:00", and
+        # script_chain._format_calendar hands both isoformat strings
+        # straight to the model, so the hosts said a one-day offsite ran
+        # into Sunday.
+        #
+        # A second before the exclusive end, not the previous midnight: that
+        # keeps `end > start` for a single-day event (a zero-length event
+        # reads as a data error to everything downstream) and keeps the
+        # duration honest — the whole of the 22nd, not none of it.
+        end -= timedelta(seconds=1)
 
     description = raw.get("description", "") or ""
     conference_data = raw.get("conferenceData")
@@ -240,6 +258,8 @@ async def fetch_events(
         calendars, events_by_cal = _fetch_live(now, window_end)
 
     all_events: list[CalendarEvent] = []
+    considered = 0
+    dropped = 0
     for cal in calendars:
         cal_id = cal["id"]
         # Google reports accessRole per calendar. Subscribed holiday, week
@@ -249,16 +269,26 @@ async def fetch_events(
         # ambient entries be ranked down instead of walked chronologically.
         owned = cal.get("accessRole") in ("owner", "writer")
         for raw_event in events_by_cal.get(cal_id, []):
+            considered += 1
             try:
                 event = event_to_calendar_event(
                     raw_event, tz, calendar_id=cal_id, owned=owned
                 )
             except Exception:
                 # A malformed event must never take down the whole run
-                # (CLAUDE.md rule 7 — graceful degradation).
+                # (CLAUDE.md rule 7 — graceful degradation) — but it must be
+                # SEEN. See app/ingestion/drops.py.
+                dropped += 1
+                log_drop(log, "calendar", drop_id(raw_event))
                 continue
+            # A None here is a deliberate filter, not a failure: cancelled
+            # events and ones the user declined are supposed to disappear.
+            # Counting them as drops would fire the escalation on a healthy
+            # calendar that simply had a cancelled standup on it.
             if event is not None:
                 all_events.append(event)
+
+    report_drops(log, "calendar", total=considered, dropped=dropped)
 
     all_events.sort(key=lambda e: e.start)
     return all_events
