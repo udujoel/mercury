@@ -142,6 +142,14 @@ enum DawnPalette {
     /// prove a floor holds across the whole band rather than at one sample.
     static func hueBandSamples(weekday: Int, steps: Int = 61) -> [Double] {
         let base = anchor(weekday: weekday).hue
+        // One sample is not a degenerate case of the loop below — it is a
+        // division by zero. `Double(0) / Double(0)` is NaN, and a NaN hue does
+        // not produce a wrong colour: `ColorMath.rgb` reaches
+        // `Int(floor(hue * 6))`, and converting NaN to `Int` traps. Verified
+        // standalone: "Fatal error: Double value cannot be converted to Int
+        // because it is either infinite or NaN". A negative `steps` traps too,
+        // on `0..<steps` itself. Both are answered here.
+        guard steps > 1 else { return steps == 1 ? [base] : [] }
         return (0..<steps).map { i in
             base - hueBand + 2 * hueBand * Double(i) / Double(steps - 1)
         }

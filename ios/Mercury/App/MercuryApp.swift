@@ -73,7 +73,18 @@ struct MercuryApp: App {
         WindowGroup {
             RootView()
                 .environment(appState)
-                .preferredColorScheme(.dark)
+                // No .preferredColorScheme here. ADR-012 makes light the
+                // primary design target and dark a first-class second, and
+                // the whole semantic token layer resolves through
+                // `traits.userInterfaceStyle` — which this line pinned to
+                // .dark, making light unreachable in the running app.
+                //
+                // Nothing caught it: every contrast test calls
+                // `resolved(dark:)` directly, so the maths was verified
+                // while the resolution it depends on never ran. It took
+                // launching the app and flipping the simulator's appearance.
+                //
+                // The app follows the system now.
                 .task {
                     // Before anything is fetched: last night's briefing is
                     // already on disk, and showing it beats showing a
