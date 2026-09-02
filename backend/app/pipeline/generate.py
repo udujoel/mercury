@@ -213,6 +213,9 @@ async def generate_briefing(
         briefing_id=briefing_id,
         audio_url_for=lambda _fmt: storage.audio_path_for(briefing_id),
         sources=sources,
+        # Carried into the manifest so the existence check can tell a
+        # healthy briefing from one missing its whole personal half.
+        degraded_sources=failed_personal_sources(),
     )
 
     # to_thread, because BriefingStorage is synchronous and R2Storage is boto3.

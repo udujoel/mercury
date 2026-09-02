@@ -267,7 +267,27 @@ async def _generate(
     # not block its own replacement. Generation is idempotent, so the one state
     # that most needs regenerating would otherwise be the one state that never
     # can be.
-    if not force and existing_manifest(storage, briefing_id) is not None:
+    existing = None if force else existing_manifest(storage, briefing_id)
+    if existing is not None and existing.degraded_sources:
+        # A briefing that shipped without its whole personal half is exactly
+        # the one worth retrying, and idempotency made it the one that never
+        # could be. Observed three days running: the first checkpoint exits 3
+        # and goes red having stored a weather-and-news briefing, and every
+        # later checkpoint reports success because that briefing is already
+        # there. The retry existed and could not reach the thing it was for.
+        #
+        # Same shape as the empty-TTS guard in stitch.py (ADR-010's commit):
+        # a bad artifact that blocks its own replacement is worse than no
+        # artifact, because it looks like success from the outside.
+        log.warning(
+            "briefing %s exists but shipped without %s — regenerating rather "
+            "than reporting success, since that is the state most worth "
+            "replacing",
+            briefing_id, ", ".join(existing.degraded_sources),
+        )
+        existing = None
+
+    if existing is not None:
         log.info(
             "briefing %s already exists; nothing to do (pass --force to "
             "regenerate, e.g. after fixing a run that shipped degraded)",

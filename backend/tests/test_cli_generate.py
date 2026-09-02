@@ -224,3 +224,78 @@ def test_a_transient_failure_is_not_reported_as_an_expired_token(
 
     assert main(["generate", "--briefing-id", "2026-08-27"]) == 3
     assert "Testing mode" not in capsys.readouterr().out
+
+
+# ──────────────────────────────────────────────────────────────
+# A degraded briefing must not block its own replacement.
+#
+# Observed on production for three consecutive days (runs 33383999697,
+# 33491842708, 33610322516): the Google refresh token expired, the first
+# checkpoint each morning stored a briefing with no inbox and no calendar
+# and exited 3, and every later checkpoint that day reported SUCCESS —
+# because the degraded briefing was already there. The retry existed and
+# could not reach the one state it was for. From the outside the day looked
+# like a failure followed by a recovery; nothing had recovered.
+# ──────────────────────────────────────────────────────────────
+
+
+def _degraded_manifest(briefing_id: str = "2026-08-27") -> BriefingManifest:
+    m = _manifest(briefing_id)
+    return m.model_copy(update={"degraded_sources": ["email", "calendar"]})
+
+
+def test_a_degraded_briefing_is_regenerated_rather_than_reported_as_done(
+    cli, monkeypatch, caplog
+):
+    cli.save("2026-08-27", b"OLD AUDIO", "wav", _degraded_manifest())
+    generated: list[str] = []
+
+    async def _records(**kwargs):
+        generated.append(kwargs["briefing_id"])
+        # The replacement run is the healthy one — the token came back. The
+        # stub bypasses generate_briefing, so its module-level record of
+        # which sources failed has to be cleared explicitly or the CLI
+        # reports the PREVIOUS run's degradation and exits 3.
+        monkeypatch.setattr(
+            "app.pipeline.generate._failed_personal_sources", [], raising=True
+        )
+        return _manifest()
+
+    monkeypatch.setattr(
+        "app.pipeline.generate.generate_briefing", _records, raising=True
+    )
+    with caplog.at_level("WARNING"):
+        code = main(["generate", "--briefing-id", "2026-08-27"])
+
+    assert code == 0
+    assert generated == ["2026-08-27"], (
+        "a briefing missing its whole personal half is the one most worth "
+        "replacing, and idempotency made it the one that never could be"
+    )
+    assert any("shipped without email, calendar" in r.getMessage()
+               for r in caplog.records)
+
+
+def test_a_healthy_briefing_is_still_left_alone(cli, monkeypatch):
+    """The control, and the reason this cannot simply always regenerate:
+    the daily schedule fires several checkpoints and each costs real Gemini
+    and TTS spend. Only a degraded briefing is worth the second run."""
+    cli.save("2026-08-27", b"GOOD AUDIO", "wav", _manifest())
+
+    def _never(**_kwargs):
+        raise AssertionError("a healthy briefing must stay a no-op")
+
+    monkeypatch.setattr(
+        "app.pipeline.generate.generate_briefing", _never, raising=True
+    )
+
+    assert main(["generate", "--briefing-id", "2026-08-27"]) == 0
+
+
+def test_the_manifest_records_which_sources_were_missing():
+    """The signal has to survive the round trip through storage, or the
+    existence check on the next run cannot see it."""
+    m = _degraded_manifest()
+    restored = BriefingManifest.model_validate_json(m.model_dump_json())
+    assert restored.degraded_sources == ["email", "calendar"]
+    assert _manifest().degraded_sources == []

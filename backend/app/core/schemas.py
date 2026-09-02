@@ -194,6 +194,18 @@ class BriefingManifest(BaseModel):
     turns: list[Turn]
     sources: list[SourceRef]
 
+    # Which personal sources were missing when this was generated, e.g.
+    # ["email", "calendar"]. Empty on a healthy run.
+    #
+    # Persisted because generation is idempotent and the existence check is
+    # what makes the daily retry a no-op. Without it a briefing that shipped
+    # with no inbox and no calendar — most of the point of Mercury — became
+    # the one thing the retry could never replace, so a token that came back
+    # to life at 06:00 healed nothing until the next day. Observed for three
+    # consecutive days: the first run exits 3 and goes red, the next run
+    # reports success because the degraded briefing is already there.
+    degraded_sources: list[str] = Field(default_factory=list)
+
 
 class BriefingLength(str, Enum):
     EXPRESS = "express"
