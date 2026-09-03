@@ -76,8 +76,13 @@ extension EnvironmentValues {
 }
 
 extension View {
-    /// Bridges the system setting into `\.mercuryMotion`. Apply once, at the
-    /// root — `MercuryApp`'s `WindowGroup` — so every screen below inherits it.
+    /// Bridges the system setting into `\.mercuryMotion`. Applied once, at the
+    /// root — `RootView` — so every screen below inherits it.
+    ///
+    /// It has to be read inside a `View`: `accessibilityReduceMotion` is a
+    /// trait-derived environment value, and `App` is not in the trait
+    /// hierarchy. That is why the bridge lives in `RootView` rather than in
+    /// `MercuryApp`'s `WindowGroup`, where this doc comment used to point.
     func mercuryMotionEnvironment(reduceMotion: Bool) -> some View {
         environment(\.mercuryMotion, MercuryMotionContext(reduceMotion: reduceMotion))
     }

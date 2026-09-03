@@ -222,11 +222,23 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 struct RootView: View {
     @Environment(AppState.self) private var appState
 
+    /// The one place the app asks the system about Reduce Motion.
+    ///
+    /// `MercuryMotionContext` shipped with a `false` default and no caller
+    /// anywhere, so `\.mercuryMotion` was a constant: the resolve/substitute
+    /// logic was fully tested and could never run. Read here rather than in
+    /// `MercuryApp` because this value comes from the trait environment, which
+    /// an `App` is not part of.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
-        if appState.hasCompletedOnboarding {
-            HomeView()
-        } else {
-            WelcomeView()
+        Group {
+            if appState.hasCompletedOnboarding {
+                HomeView()
+            } else {
+                WelcomeView()
+            }
         }
+        .mercuryMotionEnvironment(reduceMotion: reduceMotion)
     }
 }

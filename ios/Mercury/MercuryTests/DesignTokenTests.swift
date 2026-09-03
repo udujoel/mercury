@@ -125,6 +125,29 @@ final class DesignTokenTests: XCTestCase {
         XCTAssertNotNil(MercuryMotion.resolved(MercuryMotion.ambient, reduceMotion: false))
     }
 
+    func testTheMotionEnvironmentCarriesTheContextItIsGiven() {
+        // `MercuryMotionContext` had no reader anywhere in the app — nothing
+        // read `\.accessibilityReduceMotion` — so `\.mercuryMotion` was a
+        // constant `false` and every reduce-motion test below passed while the
+        // setting reached nothing. `RootView` now bridges it.
+        //
+        // The bridge itself stops here for unit testing: SwiftUI declares
+        // `EnvironmentValues.accessibilityReduceMotion` get-only, so the system
+        // value cannot be injected and the read in `RootView` cannot be
+        // exercised without a host app. It was verified by running with the
+        // setting on instead — see the PR. What is assertable is that the key
+        // transports a context faithfully, and that the default is the
+        // unreduced one so a preview outside the bridge still animates.
+        XCTAssertFalse(EnvironmentValues().mercuryMotion.reduceMotion)
+        XCTAssertTrue(EnvironmentValues().mercuryMotion.allowsAmbientMotion)
+
+        var values = EnvironmentValues()
+        values.mercuryMotion = MercuryMotionContext(reduceMotion: true)
+        XCTAssertTrue(values.mercuryMotion.reduceMotion)
+        XCTAssertFalse(values.mercuryMotion.allowsAmbientMotion)
+        XCTAssertNil(values.mercuryMotion.resolve(MercuryMotion.ambient))
+    }
+
     func testMotionContextExposesBothDecisions() {
         let on = MercuryMotionContext(reduceMotion: true)
         XCTAssertFalse(on.allowsAmbientMotion)

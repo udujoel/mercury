@@ -37,8 +37,13 @@ struct BriefingCard: View {
 }
 
 /// Small animating waveform pill that signals audio is ready. Animates
-/// only while playing.
+/// only while playing, and only if the user has not asked for less motion.
 struct WaveformPill: View {
+    /// The bars loop forever with no user intent behind them, which is the
+    /// exact case Reduce Motion exists to switch off. This was the app's only
+    /// `repeatForever`, and it ran unconditionally: `MercuryMotionContext` had
+    /// no reader anywhere, so the setting reached nothing.
+    @Environment(\.mercuryMotion) private var motion
     @State private var animate = false
 
     var body: some View {
@@ -48,9 +53,7 @@ struct WaveformPill: View {
                     .fill(MercuryColor.textPrimary)
                     .frame(width: 3, height: animate ? CGFloat.random(in: 6...16) : 6)
                     .animation(
-                        .easeInOut(duration: 0.4)
-                        .repeatForever(autoreverses: true)
-                        .delay(Double(i) * 0.1),
+                        motion.resolve(MercuryMotion.ambient)?.delay(Double(i) * 0.1),
                         value: animate
                     )
             }
@@ -59,7 +62,9 @@ struct WaveformPill: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(.ultraThinMaterial, in: Capsule())
-        .onAppear { animate = true }
+        // Left flat rather than frozen mid-bounce when motion is reduced: the
+        // pill still says "playing" by being on screen at all.
+        .onAppear { animate = motion.allowsAmbientMotion }
     }
 }
 
