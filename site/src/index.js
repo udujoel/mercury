@@ -104,7 +104,8 @@ const PRIVACY = page(
 <p>Beyond that, nothing. There is no analytics, no advertising, no tracking, and no third party receives your data. This page itself loads no external fonts, scripts, or images, and sets no cookies.</p>
 
 <h2>Where it runs</h2>
-<p>Generation runs as a scheduled job on GitHub Actions. Storage and delivery are Cloudflare R2 and Cloudflare Workers. Access to the finished briefing requires a token held only on the author's own phone.</p>
+<p>Generation runs as a scheduled job on GitHub Actions. Storage and delivery are Cloudflare R2 and Cloudflare Workers.</p>
+<p>Reading a finished briefing requires a bearer token. That token is held in three places, all controlled by the author: the app on their phone, an encrypted GitHub Actions secret used by the nightly job, and an encrypted Cloudflare Worker secret used to check incoming requests. Nobody else holds it, and without it the stored briefings cannot be read — the R2 bucket is not publicly reachable.</p>
 
 <h2>Google API Services user data</h2>
 <p>Mercury's use of information received from Google APIs adheres to the <a href="https://developers.google.com/terms/api-services-user-data-policy" rel="noopener">Google API Services User Data Policy</a>, including its Limited Use requirements. Specifically: data from Google APIs is used only to generate the user's own briefing, is never transferred to others except as required to provide that feature, is never used for advertising, and is never read by a human other than the account owner.</p>
