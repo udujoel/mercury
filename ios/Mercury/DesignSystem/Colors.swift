@@ -207,20 +207,31 @@ enum MercuryColor {
     // `CardDeck.swift` carries `.shadow(color: .black.opacity(0.5))` on a black
     // canvas, which never rendered. ADR-012 deletes the file.
 
-    @available(*, deprecated, renamed: "surface",
-               message: "ADR-012: the canvas is no longer true black. Use MercuryColor.surface.")
+    // None of these carry `renamed:`, deliberately. `renamed:` makes Xcode
+    // offer a fix-it that rewrites the call site, and every replacement here is
+    // an `AdaptiveColor` while every deprecated name is a `Color` — so applying
+    // the fix-it produced code that does not build. Verified rather than
+    // assumed: rewriting `MercuryColor.canvas` to `MercuryColor.surface` in
+    // WelcomeView, which is exactly what the fix-it did, fails with
+    // "value of type 'AdaptiveColor' has no member 'ignoresSafeArea'".
+    // A migration this layer exists to make safe should not ship an
+    // automated one-click way to break the build, so the replacement is
+    // spelled out in the message — including the `.color` — instead.
+
+    @available(*, deprecated,
+               message: "ADR-012: the canvas is no longer true black. Use MercuryColor.surface.color.")
     static var canvas: Color { surface.color }
 
-    @available(*, deprecated, renamed: "ink",
-               message: "ADR-012: use MercuryColor.ink.")
+    @available(*, deprecated,
+               message: "ADR-012: use MercuryColor.ink.color.")
     static var textPrimary: Color { ink.color }
 
-    @available(*, deprecated, renamed: "inkMuted",
-               message: "ADR-012: use MercuryColor.inkMuted.")
+    @available(*, deprecated,
+               message: "ADR-012: use MercuryColor.inkMuted.color.")
     static var textSecondary: Color { inkMuted.color }
 
-    @available(*, deprecated, renamed: "inkFaint",
-               message: "ADR-012: use MercuryColor.inkFaint.")
+    @available(*, deprecated,
+               message: "ADR-012: use MercuryColor.inkFaint.color.")
     static var textTertiary: Color { inkFaint.color }
 
     // The four per-family accents are gone: one edition has one colour, and a
@@ -228,19 +239,19 @@ enum MercuryColor {
     // hue of its own. All four resolve to today's accent, which is correct but
     // makes the four cards identical — task 2 should drop the distinction
     // rather than keep four names for one value.
-    @available(*, deprecated, renamed: "accent",
-               message: "ADR-012: one edition, one colour. Use MercuryColor.accent.")
+    @available(*, deprecated,
+               message: "ADR-012: one edition, one colour. Use MercuryColor.accent.color.")
     static var calendarAccent: Color { accent.color }
 
-    @available(*, deprecated, renamed: "accent",
-               message: "ADR-012: one edition, one colour. Use MercuryColor.accent.")
+    @available(*, deprecated,
+               message: "ADR-012: one edition, one colour. Use MercuryColor.accent.color.")
     static var inboxAccent: Color { accent.color }
 
-    @available(*, deprecated, renamed: "accent",
-               message: "ADR-012: one edition, one colour. Use MercuryColor.accent.")
+    @available(*, deprecated,
+               message: "ADR-012: one edition, one colour. Use MercuryColor.accent.color.")
     static var weatherAccent: Color { accent.color }
 
-    @available(*, deprecated, renamed: "accent",
-               message: "ADR-012: one edition, one colour. Use MercuryColor.accent.")
+    @available(*, deprecated,
+               message: "ADR-012: one edition, one colour. Use MercuryColor.accent.color.")
     static var greetingAccent: Color { accent.color }
 }
