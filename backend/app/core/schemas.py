@@ -205,6 +205,31 @@ class BriefingManifest(BaseModel):
     turns: list[Turn]
     sources: list[SourceRef]
 
+    # Which personal sources were missing when this was generated, e.g.
+    # ["email", "calendar"]. Empty on a healthy run.
+    #
+    # Persisted because generation is idempotent and the existence check is
+    # what makes the daily retry a no-op. Without it a briefing that shipped
+    # with no inbox and no calendar — most of the point of Mercury — became
+    # the one thing the retry could never replace, so a token that came back
+    # to life at 06:00 healed nothing until the next day. Observed for three
+    # consecutive days: the first run exits 3 and goes red, the next run
+    # reports success because the degraded briefing is already there.
+    degraded_sources: list[str] = Field(default_factory=list)
+
+    # How many times this briefing has already been regenerated *because* it
+    # shipped degraded. Zero on a healthy run, and reset to zero the moment
+    # one succeeds.
+    #
+    # Without it the retry is unbounded, and the failure it retries — a dead
+    # OAuth token — stays dead until a human intervenes. Eight checkpoints
+    # fire on a broken day, so every one of them would run a full
+    # generation: 8x the Gemini and TTS spend, daily, for a briefing that
+    # cannot improve until someone re-mints a token. Google TTS's free tier
+    # is a million characters a month and a briefing is roughly six
+    # thousand, so that is not a rounding error.
+    degraded_attempts: int = 0
+
 
 class BriefingLength(str, Enum):
     EXPRESS = "express"

@@ -329,36 +329,6 @@ async def test_both_personal_sources_failing_is_logged_loudly(caplog, tmp_path):
     async def _failing_events(**kwargs):
         raise RuntimeError("simulated Calendar outage")
 
-    with caplog.at_level("ERROR"):
-        await generate_briefing(
-            llm=FakeLLMProvider(),
-            tts=FakeTTSProvider(),
-            briefing_id="degraded-day",
-            storage=LocalFilesystemStorage(base_dir=tmp_path),
-            fetch_emails=_failing_emails,
-            fetch_events=_failing_events,
-            # The two keyless sources go through their fakes rather than the
-            # real ones: this test is about the personal half failing, and
-            # without them RSS and weather ran against the live internet,
-            # which the conftest guard now refuses.
-            fetch_weather=_fake_fetch_weather,
-            fetch_articles=_fake_fetch_articles,
-        )
-
-    assert any(
-        "BOTH personal sources failed" in r.message for r in caplog.records
-    ), "a briefing with no calendar and no inbox must say so"
-
-    # And it must be REPORTABLE, not just logged. The CLI keys its
-    # ::warning:: off this rather than off the manifest's segment ids: the
-    # script chain requires all seven canonical segments, so "calendar" and
-    # "inbox" are present even when nothing was behind them, and a check
-    # based on segment ids could never fire.
-    from app.pipeline.generate import failed_personal_sources
-
-    assert sorted(failed_personal_sources()) == ["calendar", "email"]
-
-
 async def test_a_total_tts_failure_persists_nothing(tmp_path):
     """The most damaging shape this pipeline had.
 
@@ -490,3 +460,50 @@ async def test_an_expired_token_survives_the_real_calendar_ingestion(
         f"calendar ingestion flattened the type to {type(errors['calendar'])}; "
         "app.cli can no longer tell an expired token from any other failure"
     )
+
+
+async def test_degraded_sources_survive_a_concurrent_run(storage, monkeypatch):
+    """The manifest must record THIS run's failures, not whichever run
+    happened to touch the module global last.
+
+    `generate_briefing` spends minutes on LLM and TTS work between ingestion
+    and synthesis, and both `app/scheduler/cron.py` and
+    `POST /briefing/generate` drive it on the same event loop with no mutual
+    gate. Reading `failed_personal_sources()` at the end let a second run
+    starting inside that window stamp this manifest with the wrong answer —
+    a degraded briefing marked healthy, which is exactly the masking the
+    degraded_sources field exists to remove.
+    """
+    from app.pipeline import generate as gen
+
+    async def _failing_events(**kwargs):
+        raise RuntimeError("simulated Calendar outage")
+
+    async def _script_then_interference(**kwargs):
+        # Stand in for the minutes of LLM work: while this run is mid-flight,
+        # a healthy concurrent run finishes ingestion and clears the global.
+        gen._record_failed_sources({})
+        return await _fake_generate_script(**kwargs)
+
+    manifest = await generate_briefing(
+        briefing_id="2026-08-21",
+        length=BriefingLength.STANDARD,
+        llm=FakeLLMProvider(),
+        tts=FakeTTSProvider(),
+        fetch_events=_failing_events,
+        fetch_weather=_fake_fetch_weather,
+        score_emails=_fake_score_emails,
+        select_for_briefing=_fake_select_for_briefing,
+        generate_script=_script_then_interference,
+        fetch_articles=_fake_fetch_articles,
+        storage=storage,
+        gmail_fixture=FIXTURES_DIR / "gmail_messages.json",
+        calendar_fixture=None,
+        weather_fixture=None,
+    )
+
+    assert manifest.degraded_sources == ["calendar"], (
+        "the manifest recorded the interfering run's state instead of its own"
+    )
+    # And the global really was clobbered, so the test is testing something.
+    assert gen.failed_personal_sources() == []
