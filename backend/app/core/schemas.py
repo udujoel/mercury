@@ -175,6 +175,17 @@ class SourceRef(BaseModel):
     source_name: str
     source_type: SourceType
     cluster_size: int = 1
+    # Which `Story` this ref came from, so the digest can join a browsable
+    # story back onto the turn the hosts discussed it in.
+    #
+    # Nullable and cheap (one short string per ref) rather than a separate
+    # index, because the alternative was matching on (title, source_name).
+    # Two items can share both — a feed that publishes "Morning Briefing"
+    # every day, carried in a 24-hour window that spans two of them — and
+    # those land in different clusters, so a title join silently deep-links
+    # a story into the wrong story's turn. None for calendar refs, which
+    # belong to no cluster.
+    cluster_id: str | None = None
 
 
 class BriefingManifest(BaseModel):
