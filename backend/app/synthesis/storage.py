@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Protocol
 
 from app.core.config import get_settings
-from app.core.schemas import BriefingManifest
+from app.core.schemas import BriefingDigest, BriefingManifest
 
 log = logging.getLogger(__name__)
 
@@ -132,7 +132,21 @@ class BriefingStorage(Protocol):
         audio_bytes: bytes,
         audio_format: str,
         manifest: BriefingManifest,
+        digest: BriefingDigest | None = None,
     ) -> None:
+        ...
+
+    def load_digest(self, briefing_id: str) -> BriefingDigest | None:
+        """The stored digest, or None if this briefing has none.
+
+        None is an ORDINARY answer, not an error. Every briefing generated
+        before the digest existed has no digest object, and a run whose
+        enrichment failed still ships one — so the read surface degrades to
+        an empty state rather than a failure. Unlike `load_manifest` an
+        unparseable digest also returns None: nothing depends on it to play
+        audio, so there is no operator decision riding on telling "corrupt"
+        apart from "absent".
+        """
         ...
 
     def load_manifest(self, briefing_id: str) -> BriefingManifest | None:
@@ -200,6 +214,9 @@ class LocalFilesystemStorage:
     def _manifest_path(self, briefing_id: str) -> Path:
         return self._base_dir / f"{briefing_id}.manifest.json"
 
+    def _digest_path(self, briefing_id: str) -> Path:
+        return self._base_dir / f"{briefing_id}.digest.json"
+
     def _audio_path(self, briefing_id: str, audio_format: str) -> Path:
         return self._base_dir / f"{briefing_id}.{audio_format}"
 
@@ -214,6 +231,7 @@ class LocalFilesystemStorage:
         audio_bytes: bytes,
         audio_format: str,
         manifest: BriefingManifest,
+        digest: BriefingDigest | None = None,
     ) -> None:
         audio_path = self._audio_path(briefing_id, audio_format)
         audio_path.write_bytes(audio_bytes)
@@ -234,6 +252,15 @@ class LocalFilesystemStorage:
             stale = self._audio_path(briefing_id, fmt)
             if fmt != audio_format and stale.exists():
                 stale.unlink()
+
+        # BEFORE the manifest, for the same reason the audio is: the manifest
+        # is what every reader polls to decide a briefing exists, so anything
+        # written after it is briefly visible as a 404 on a briefing that
+        # already reads as ready.
+        if digest is not None:
+            self._digest_path(briefing_id).write_text(
+                digest.model_dump_json(indent=2)
+            )
 
         manifest_path = self._manifest_path(briefing_id)
         manifest_path.write_text(manifest.model_dump_json(indent=2))
@@ -262,6 +289,19 @@ class LocalFilesystemStorage:
             raise UnreadableManifestError(
                 f"the manifest at {path} is not a readable BriefingManifest"
             ) from exc
+
+    def load_digest(self, briefing_id: str) -> BriefingDigest | None:
+        path = self._digest_path(briefing_id)
+        if not path.exists():
+            return None
+        try:
+            return BriefingDigest.model_validate_json(path.read_text())
+        except Exception:
+            log.warning(
+                "the digest at %s is unreadable; serving no digest for %s",
+                path, briefing_id, exc_info=True,
+            )
+            return None
 
     def load_audio(self, briefing_id: str) -> tuple[bytes, str] | None:
         for fmt in KNOWN_AUDIO_FORMATS:

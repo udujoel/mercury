@@ -231,6 +231,91 @@ class BriefingManifest(BaseModel):
     degraded_attempts: int = 0
 
 
+# ──────────────────────────────────────────────────────────────
+# The digest artifact
+#
+# A SIBLING of the manifest, not an extension of it. The manifest is what the
+# player downloads to start playing audio; the digest is the browse surface —
+# every newsletter that arrived and every story that clustered, including the
+# many the ranker never gave to the hosts. Folding one into the other would
+# make every player launch download a screen the user may never open.
+#
+# The shapes live here, beside BriefingManifest, because they are persisted
+# artifacts. `app/pipeline/digest.py` builds them and `app/synthesis/storage.py`
+# writes them, and neither should have to import the other.
+# ──────────────────────────────────────────────────────────────
+
+# Bumped when the SHAPE changes incompatibly, so an older iOS build can
+# refuse a digest it would otherwise render as an empty list — a screen that
+# says nothing and looks like "no newsletters today". Present from day one
+# because the version you wish you had is always the one before the change.
+DIGEST_SCHEMA_VERSION = 1
+
+
+
+class DigestSource(BaseModel):
+    """One publication's coverage of a story.
+
+    Exactly the fields `SourceRef` already persists. If a field here needs
+    the body to fill it, the field is wrong — see the module docstring.
+    """
+
+    source_name: str
+    title: str
+    url: str | None = None
+    published_at: datetime
+    source_type: SourceType
+
+
+class DigestStory(BaseModel):
+    id: str
+    headline: str
+    # Nullable, and null is a normal answer. The alternative for an
+    # unenriched story would be an extractive snippet of the source text,
+    # which is the one thing rule 5 forbids — an extract is the raw body with
+    # a smaller word count.
+    summary: str | None = None
+    why_it_matters: str | None = None
+    topics: list[str] = Field(default_factory=list)
+    # == len(sources). Denormalised so a list row can render "5 sources"
+    # without the client walking the array for every row it scrolls past.
+    source_count: int
+    sources: list[DigestSource]
+
+    covered_in_audio: bool = False
+    # Indexes manifest.turns AFTER compaction. Null unless covered.
+    turn_index: int | None = None
+    segment: str | None = None
+
+
+class DigestNewsletter(BaseModel):
+    id: str
+    source_name: str
+    sender: str | None = None
+    subject: str
+    received_at: datetime
+    # Always null today: `app/ingestion/gmail.py` builds every email Item with
+    # `url=None`, because there is no public URL for a message in your inbox
+    # and the "view in browser" link would have to be dug out of a body that
+    # rule 5 discards. Kept in the shape so the client does not need a schema
+    # bump the day a web view exists, and documented so nobody builds a
+    # tappable row expecting one.
+    url: str | None = None
+    story_ids: list[str] = Field(default_factory=list)
+    in_briefing: bool = False
+
+
+class BriefingDigest(BaseModel):
+    briefing_id: str
+    generated_at: datetime
+    schema_version: int = DIGEST_SCHEMA_VERSION
+    # EVERY newsletter that arrived in the window, including the ones the
+    # ranker dropped. "View all the newsletters that dropped" means all of
+    # them; a list of only the ones that reached the audio is the manifest's
+    # source list under a different name.
+    newsletters: list[DigestNewsletter] = Field(default_factory=list)
+    stories: list[DigestStory] = Field(default_factory=list)
+
 class BriefingLength(str, Enum):
     EXPRESS = "express"
     STANDARD = "standard"

@@ -903,6 +903,7 @@ async def _complete_json(
     what: str,
     validate: Any = None,
     repair_check: Any = None,
+    system: str = HOST_SYSTEM,
 ) -> Any:
     """Run one pass and parse it, retrying on anything the parser or the
     shape check rejects.
@@ -924,7 +925,7 @@ async def _complete_json(
 
     for attempt in range(1, _JSON_ATTEMPTS + 1):
         raw = await llm.complete(
-            HOST_SYSTEM,
+            system,
             attempt_prompt,
             temperature=attempt_temperature,
             json_mode=True,
