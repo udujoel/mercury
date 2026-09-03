@@ -42,6 +42,16 @@ from app.core.config import get_settings
 from app.core.providers import build_embedding_provider
 from app.core.schemas import BriefingLength
 
+# How many times a briefing that shipped degraded will be regenerated before
+# the schedule gives up for the day. Three total attempts: the original plus
+# two retries.
+#
+# Not unbounded, because what degrades a briefing is almost always a
+# credential a human has to replace, and eight checkpoints fire on a broken
+# day. Not one, because the whole point is that a source which recovers at
+# 06:00 heals the same morning rather than the next.
+MAX_DEGRADED_RETRIES = 2
+
 log = logging.getLogger("mercury.cli")
 
 
@@ -267,7 +277,32 @@ async def _generate(
     # not block its own replacement. Generation is idempotent, so the one state
     # that most needs regenerating would otherwise be the one state that never
     # can be.
+    previous_degraded_attempts = 0
     existing = None if force else existing_manifest(storage, briefing_id)
+    if (
+        existing is not None
+        and existing.degraded_sources
+        and existing.degraded_attempts >= MAX_DEGRADED_RETRIES
+    ):
+        # Stop retrying. The thing that degrades a briefing is almost always
+        # a credential a human has to replace, and it stays broken until
+        # they do — so an unbounded retry means every one of the day's eight
+        # checkpoints runs a full generation, for a briefing that cannot
+        # improve. Google TTS's free tier is a million characters a month
+        # and a briefing is about six thousand.
+        #
+        # Loud rather than silent: the run still exits 3 further down, and
+        # this says why the self-healing stopped instead of leaving someone
+        # to wonder why the retry gave up.
+        log.error(
+            "briefing %s has shipped without %s on %d attempts — not "
+            "regenerating again today. This needs a person: check the "
+            "credentials for that source. --force overrides.",
+            briefing_id, ", ".join(existing.degraded_sources),
+            existing.degraded_attempts,
+        )
+        return 3
+
     if existing is not None and existing.degraded_sources:
         # A briefing that shipped without its whole personal half is exactly
         # the one worth retrying, and idempotency made it the one that never
@@ -285,6 +320,7 @@ async def _generate(
             "replacing",
             briefing_id, ", ".join(existing.degraded_sources),
         )
+        previous_degraded_attempts = existing.degraded_attempts
         existing = None
 
     if existing is not None:
@@ -336,6 +372,7 @@ async def _generate(
             tts=tts,
             embeddings=embeddings,
             storage=storage,
+            previous_degraded_attempts=previous_degraded_attempts,
         )
     except EmptyBriefingError as exc:
         # Named separately from a generic failure because the operator action

@@ -94,6 +94,7 @@ async def generate_briefing(
     briefing_id: str | None = None,
     length: BriefingLength = BriefingLength.STANDARD,
     embeddings: EmbeddingProvider | None = None,
+    previous_degraded_attempts: int = 0,
     fetch_emails: Any = _real_fetch_emails,
     fetch_events: Any = _real_fetch_events,
     fetch_weather: Any = _real_fetch_weather,
@@ -217,6 +218,9 @@ async def generate_briefing(
         # re-read from the module global at the end — see
         # _ingest_concurrently for why the global cannot answer honestly.
         degraded_sources=degraded,
+        # How many times this briefing has already been regenerated because
+        # it shipped degraded. Bounds the retry — see MAX_DEGRADED_RETRIES.
+        degraded_attempts=(previous_degraded_attempts + 1) if degraded else 0,
     )
 
     # to_thread, because BriefingStorage is synchronous and R2Storage is boto3.
@@ -255,9 +259,11 @@ async def _ingest_concurrently(
     mutual gate. A second run starting in that window overwrites the global,
     and the manifest is then stamped with the wrong run's failures — a
     degraded briefing marked healthy, which is precisely the masking this
-    was written to remove. Any source that fails (missing
-    module, network error, malformed fixture, anything) is logged and
-    replaced with an empty/None default — CLAUDE.md rule 7."""
+    was written to remove.
+
+    Any source that fails (missing module, network error, malformed
+    fixture, anything) is logged and replaced with an empty/None default —
+    CLAUDE.md rule 7."""
 
     async def _emails() -> list[Item]:
         if fetch_emails is None:
