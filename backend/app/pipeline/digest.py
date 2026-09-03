@@ -59,6 +59,7 @@ from app.pipeline.clustering import authority_sorted
 from app.pipeline.prompts import DIGEST_PROMPT, DIGEST_SYSTEM
 from app.pipeline.script_chain import (
     _STORY_BODY_CHARS,
+    JSONParseError,
     _complete_json,
     _fence_untrusted,
 )
@@ -211,8 +212,17 @@ class StoryCard(BaseModel):
 
 
 def _validate_cards(raw: Any) -> list[dict]:
+    """The array shape, checked locally rather than trusted to the schema.
+
+    `JSONParseError` rather than a plain TypeError because that is the
+    exception `_complete_json` routes into its repair loop — valid JSON of
+    the wrong shape is a mistake the model can fix when it is shown, and
+    raising anything else turns one bad response into no summaries at all.
+    """
     if not isinstance(raw, list):
-        raise TypeError(f"digest cards must be a JSON array, got {type(raw)}")
+        raise JSONParseError(
+            f"digest cards must be a JSON array, got {type(raw)}", ""
+        )
     return [card for card in raw if isinstance(card, dict) and card.get("id")]
 
 

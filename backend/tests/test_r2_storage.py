@@ -13,7 +13,11 @@ from datetime import UTC, datetime
 import pytest
 
 from app.core.config import get_settings
-from app.core.schemas import BriefingManifest
+from app.core.schemas import (
+    BriefingDigest,
+    BriefingManifest,
+    DigestNewsletter,
+)
 from app.synthesis.r2_storage import R2ConfigurationError, R2Storage
 from app.synthesis.storage import LocalFilesystemStorage, build_storage
 
@@ -413,6 +417,94 @@ def test_delete_briefing_removes_objects_in_unknown_formats(monkeypatch):
 
     assert client.objects == {}
 
+
+def _digest(briefing_id: str = "2026-08-22") -> BriefingDigest:
+    return BriefingDigest(
+        briefing_id=briefing_id,
+        generated_at=datetime.now(UTC),
+        newsletters=[
+            DigestNewsletter(
+                id="nl_1",
+                source_name="Stratechery",
+                sender="ben@stratechery.com",
+                subject="The Gemini Moat",
+                received_at=datetime.now(UTC),
+            )
+        ],
+    )
+
+
+def test_the_digest_is_written_before_the_manifest(monkeypatch):
+    """Same ordering rule as the audio, for the same reason: the manifest is
+    what every reader polls to decide a briefing exists, so anything written
+    after it is briefly a 404 on a briefing that already reads as ready."""
+    storage = _configured(monkeypatch)
+    client = storage.__dict__["_client"]
+
+    storage.save("2026-08-22", b"AUDIO", "m4a", _manifest(), _digest())
+
+    puts = [key for verb, key in client.calls if verb == "put"]
+    assert puts.index("2026-08-22.digest.json") < puts.index(
+        "2026-08-22.manifest.json"
+    )
+    assert storage.load_digest("2026-08-22").newsletters[0].subject == (
+        "The Gemini Moat"
+    )
+
+
+def test_a_digest_that_will_not_upload_does_not_lose_the_briefing(monkeypatch):
+    """Rule 7. The digest is the browse surface; the manifest plus the audio
+    is the briefing. Refusing to publish a working briefing because a
+    secondary object would not upload trades the product for one of its
+    screens."""
+    storage = _configured(monkeypatch)
+    client = storage.__dict__["_client"]
+    real_put = client.put_object
+
+    def _fail_on_digest(*, Bucket, Key, Body, ContentType):  # noqa: N803
+        if Key.endswith(".digest.json"):
+            raise _ClientError(500, "InternalError")
+        return real_put(Bucket=Bucket, Key=Key, Body=Body, ContentType=ContentType)
+
+    client.put_object = _fail_on_digest
+
+    storage.save("2026-08-22", b"AUDIO", "m4a", _manifest(), _digest())
+
+    assert storage.load_manifest("2026-08-22") is not None
+    assert storage.load_audio("2026-08-22") is not None
+    assert storage.load_digest("2026-08-22") is None
+
+
+def test_an_unreadable_digest_reads_as_absent(monkeypatch):
+    """Unlike the manifest, which raises. No operator decision rides on
+    telling corrupt apart from absent here, and the client already has to
+    render an empty state for every briefing generated before the digest
+    existed."""
+    storage = _configured(monkeypatch)
+    client = storage.__dict__["_client"]
+    client.objects["2026-08-22.digest.json"] = (b"{not json", "application/json")
+
+    assert storage.load_digest("2026-08-22") is None
+
+
+def test_retention_removes_the_digest_from_the_bucket(monkeypatch):
+    """A digest left behind is an orphaned record of someone's inbox — every
+    newsletter that arrived, who sent it and when — sitting in R2 after the
+    briefing it belonged to is gone.
+
+    `delete_briefing` needed no change; it already sweeps every key under the
+    briefing id. This exists so a refactor back to an explicit key list
+    cannot quietly reintroduce it.
+    """
+    storage = _configured(monkeypatch)
+    client = storage.__dict__["_client"]
+    storage.save("2026-01-01", b"A", "m4a", _manifest("2026-01-01"),
+                 _digest("2026-01-01"))
+    assert "2026-01-01.digest.json" in client.objects
+
+    storage.delete_briefing("2026-01-01")
+
+    assert client.objects == {}
 
 def test_a_delete_that_r2_rejects_is_not_reported_as_a_deletion(monkeypatch):
     """`prune_briefings` names what it deleted and the workflow log prints

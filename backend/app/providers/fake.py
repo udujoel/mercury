@@ -22,6 +22,7 @@ revision passes, and the tests, have something real to catch:
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import AsyncIterator
 
 # ──────────────────────────────────────────────────────────────
@@ -366,6 +367,34 @@ def _voice_answer_json(prompt: str) -> str:
     return json.dumps({"answer": answer, "bridge": "Anyway, back to the briefing."})
 
 
+def _digest_json(prompt: str) -> str:
+    """One digest card per story id found in the prompt.
+
+    Driven by its input rather than canned, because the thing worth testing
+    offline is that cards come BACK matched to the right cluster — a fixed
+    response would pass whatever ids the pipeline sent and prove nothing
+    about the join. Same approach as `_voice_answer_json`.
+
+    The summary text is deliberately generic. A fake that echoed the source
+    text back would defeat the one test that matters most here: that no raw
+    body reaches the stored digest.
+    """
+    ids = re.findall(r"^\s*- id: (\S+)\s*$", prompt, flags=re.MULTILINE)
+    return json.dumps(
+        [
+            {
+                "id": cluster_id,
+                "headline": f"Fake headline for {cluster_id}",
+                "summary": f"A fake two-sentence summary for {cluster_id}. "
+                           "It says nothing about the source text.",
+                "why_it_matters": None,
+                "topics": ["fake"],
+            }
+            for cluster_id in ids
+        ]
+    )
+
+
 class FakeLLMProvider:
     """Deterministic LLMProvider for offline development and tests.
 
@@ -389,6 +418,8 @@ class FakeLLMProvider:
             kind, body = "critique", _critique_json()
         elif "Apply these fixes to the script" in prompt:
             kind, body = "revise", _revised_json()
+        elif "Write one card for each story below" in prompt:
+            kind, body = "digest", _digest_json(prompt)
         elif "just interrupted the briefing" in prompt:
             kind, body = "voice_answer", _voice_answer_json(prompt)
         else:
