@@ -1,0 +1,25 @@
+# The public face of Mercury, and the only reason it exists.
+#
+# Google will not let an OAuth consent screen leave Testing mode without an
+# application home page and a privacy policy on a domain you have verified.
+# Testing mode expires refresh tokens after seven days, which silently broke
+# the morning run three days running (see ADR-010 and PR #15) — so these two
+# pages are what stands between the product and a token that dies every week.
+#
+# Deliberately a SEPARATE Worker from mercury-briefings:
+#   - that one is auth-gated and serves a private inbox; this one is public
+#   - that one holds an R2 binding and a GitHub dispatch token; this holds none
+#
+# Routed on a path rather than a subdomain because the account's Cloudflare
+# token has `zone (read)` and no DNS write, so a Workers Custom Domain cannot
+# be created from here. A route needs no DNS record. It is also the smaller
+# blast radius: it intercepts /mercury* and nothing else on a live personal
+# site, and deleting the route restores the previous 404 exactly.
+name = "mercury-site"
+main = "src/index.js"
+compatibility_date = "2026-08-01"
+
+routes = [
+  { pattern = "joeludu.com/mercury*", zone_name = "joeludu.com" },
+  { pattern = "www.joeludu.com/mercury*", zone_name = "joeludu.com" },
+]
