@@ -47,3 +47,6 @@ ios/Mercury/Secrets.xcconfig
 
 # Wrangler local state
 worker/.wrangler/
+
+# Wrangler local state (site Worker)
+site/.wrangler/
