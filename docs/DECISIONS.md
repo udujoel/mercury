@@ -509,10 +509,18 @@ serif instead of centred in SF.
 
 CLAUDE.md's first paragraph cited `docs/PRD.md`. That file does not exist and
 appears never to have. The real specification is
-`docs/mercury_ios_prd_blueprint.docx`. Source and test files carry 47 explicit
+`docs/mercury_ios_prd_blueprint.docx`. Source and test files carry 53 explicit
 `PRD <section>` citations across 12 distinct sections — count them with
 `grep -rhoE "PRD [0-9]+\.[0-9]+|PRD F-[0-9]+" ios/ backend/app scripts worker/src`
 — every one of which points a reader at a path that is not there.
+
+That number was 47 when this ADR was written and is 53 now: merging #13 into
+this branch brought six more citations in with the news pipeline. A count in
+prose goes stale on someone else's commit, which is worth stating in an ADR
+whose whole complaint is documentation that reads as authoritative and is not
+checkable. The command is the durable part; the number is a snapshot, and if it
+disagrees with the command the command wins. (`worker/src` is in the path list
+for completeness and currently contributes none of them.)
 
 Every section number in those citations was checked against the docx and every
 one is real — PRD 3.3, 3.4, 3.6 and 3.7 all say what the code claims they say.
