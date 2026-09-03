@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from app.cli import MAX_DEGRADED_RETRIES, main
+from app.cli import MAX_DEGRADED_ATTEMPTS, main
 from app.core.schemas import BriefingManifest, Turn
 from app.synthesis.stitch import EmptyBriefingError
 from app.synthesis.storage import LocalFilesystemStorage
@@ -318,7 +318,7 @@ def test_the_retry_gives_up_after_the_cap(cli, monkeypatch, caplog):
     briefing that cannot improve — against a TTS free tier of a million
     characters a month, and a briefing of roughly six thousand.
     """
-    cli.save("2026-08-27", b"OLD", "wav", _degraded_manifest_at(MAX_DEGRADED_RETRIES))
+    cli.save("2026-08-27", b"OLD", "wav", _degraded_manifest_at(MAX_DEGRADED_ATTEMPTS))
 
     def _never(**_kwargs):
         raise AssertionError("the cap must stop regeneration")
@@ -336,11 +336,28 @@ def test_the_retry_gives_up_after_the_cap(cli, monkeypatch, caplog):
     assert any("needs a person" in r.getMessage() for r in caplog.records)
 
 
+def test_the_cap_allows_three_generations_in_total(cli, monkeypatch):
+    """The arithmetic, spelled out, because the first version of this cap
+    said 'two retries' and delivered one — the stored count includes the
+    initial run, so `MAX = 2` blocked the third generation rather than the
+    fourth. A constant named for what it permits rather than what it counts
+    is how that hid."""
+    attempts_that_regenerate = []
+    for stored in range(0, MAX_DEGRADED_ATTEMPTS + 2):
+        blocked = stored >= MAX_DEGRADED_ATTEMPTS
+        if not blocked:
+            attempts_that_regenerate.append(stored)
+    assert MAX_DEGRADED_ATTEMPTS == 3
+    assert attempts_that_regenerate == [0, 1, 2], (
+        "three generations in total: the first, plus two retries"
+    )
+
+
 def test_below_the_cap_it_still_retries(cli, monkeypatch):
     """The control. Giving up too early is the failure this whole PR is
     about — a source that recovers at 06:00 must heal the same morning."""
     cli.save("2026-08-27", b"OLD", "wav",
-             _degraded_manifest_at(MAX_DEGRADED_RETRIES - 1))
+             _degraded_manifest_at(MAX_DEGRADED_ATTEMPTS - 1))
     generated: list[int] = []
 
     async def _records(**kwargs):
@@ -355,7 +372,7 @@ def test_below_the_cap_it_still_retries(cli, monkeypatch):
     )
 
     assert main(["generate", "--briefing-id", "2026-08-27"]) == 0
-    assert generated == [MAX_DEGRADED_RETRIES - 1], (
+    assert generated == [MAX_DEGRADED_ATTEMPTS - 1], (
         "the attempt count must be carried into the run, or the next "
         "manifest resets it and the cap never binds"
     )

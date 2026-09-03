@@ -42,15 +42,21 @@ from app.core.config import get_settings
 from app.core.providers import build_embedding_provider
 from app.core.schemas import BriefingLength
 
-# How many times a briefing that shipped degraded will be regenerated before
-# the schedule gives up for the day. Three total attempts: the original plus
-# two retries.
+# How many times a briefing may be generated in a day while it keeps
+# shipping degraded, counting the first one. Three: the original plus two
+# retries.
+#
+# Named for what it counts. As MAX_DEGRADED_RETRIES = 2 it read as "two
+# retries" and delivered one, because the stored count includes the initial
+# run: that run stores 1, its retry stores 2, and `>= 2` then blocks the
+# third. An off-by-one nobody would see from production, since the symptom
+# is a briefing that heals slightly less often than intended.
 #
 # Not unbounded, because what degrades a briefing is almost always a
 # credential a human has to replace, and eight checkpoints fire on a broken
 # day. Not one, because the whole point is that a source which recovers at
 # 06:00 heals the same morning rather than the next.
-MAX_DEGRADED_RETRIES = 2
+MAX_DEGRADED_ATTEMPTS = 3
 
 log = logging.getLogger("mercury.cli")
 
@@ -282,7 +288,7 @@ async def _generate(
     if (
         existing is not None
         and existing.degraded_sources
-        and existing.degraded_attempts >= MAX_DEGRADED_RETRIES
+        and existing.degraded_attempts >= MAX_DEGRADED_ATTEMPTS
     ):
         # Stop retrying. The thing that degrades a briefing is almost always
         # a credential a human has to replace, and it stays broken until
