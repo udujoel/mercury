@@ -18,6 +18,19 @@ struct AmbientBackground: View {
     var date: Date = Date()
     var family: Family = .derived
 
+    /// The ground the wash is drawn over.
+    ///
+    /// It is a parameter rather than an unconditional `MercuryColor.surface`
+    /// because `mercuryCard(tintSeed:)` draws this component *over*
+    /// `surfaceRaised`. Painting the page surface here erased the card's
+    /// elevation step: a tinted card rendered on page paper while the untinted
+    /// card beside it sat a step above, so adding a tint silently flattened the
+    /// card. The wash is a layer on top of a ground, not a ground of its own —
+    /// callers say which ground.
+    var base: AdaptiveColor = MercuryColor.surface
+
+    @Environment(\.colorScheme) private var colorScheme
+
     /// Superseded by the one-edition-one-colour rule, kept so `Features/` keeps
     /// building until tasks 2 and 3 migrate.
     ///
@@ -56,20 +69,57 @@ struct AmbientBackground: View {
     /// measured against the unwashed value.
     static let maxTintOpacity = 0.08
 
-    private var hueOffset: Double {
+    static func hueOffset(seed: String, family: Family) -> Double {
         if let position = family.bandPosition { return position * DawnPalette.hueBand }
         return DawnPalette.hueOffset(seed: seed)
     }
 
-    private var accent: RGB {
-        DawnPalette.accentColor(hue: DawnPalette.anchor(for: date).hue + hueOffset, dark: false)
+    /// The wash's colour, for the appearance it is actually being drawn in.
+    ///
+    /// This used to pass `dark: false` unconditionally, so in dark mode the app
+    /// washed a near-black page with the *light* accent — solved for luminance
+    /// 0.150 against paper instead of 0.300 against night. The bug was
+    /// invisible to the test suite in the worst way: `ContrastTests` already
+    /// composited its washed grounds with `dark: isDark`, so every dark-mode
+    /// contrast number in that file described a wash the renderer never
+    /// produced. Static and pure so both sides now read the one definition.
+    static func accent(seed: String, date: Date, family: Family, dark isDark: Bool) -> RGB {
+        DawnPalette.accentColor(hue: DawnPalette.anchor(for: date).hue + hueOffset(seed: seed, family: family),
+                                dark: isDark)
     }
 
-    private var tint: Double { Self.maxTintOpacity * min(max(intensity, 0), 1) }
+    /// Alpha at the wash's strongest point — the mesh's full-alpha corners.
+    /// A contrast floor has to be measured against the worst case, so this is
+    /// deliberately the strongest rather than the average.
+    static func tintOpacity(intensity: Double) -> Double {
+        maxTintOpacity * min(max(intensity, 0), 1)
+    }
+
+    /// A ground with the wash composited over it, at its strongest point.
+    static func washedGround(base: RGB, accent: RGB, intensity: Double) -> RGB {
+        accent.composited(opacity: tintOpacity(intensity: intensity), over: base)
+    }
+
+    /// The colour content drawn over this view actually lands on.
+    ///
+    /// Computed from the same stored properties `body` renders from, so a
+    /// contrast test measures this instance rather than a hand-built model of
+    /// it that can drift away from what ships.
+    func ground(dark isDark: Bool) -> RGB {
+        Self.washedGround(base: base.resolved(dark: isDark),
+                          accent: Self.accent(seed: seed, date: date, family: family, dark: isDark),
+                          intensity: intensity)
+    }
+
+    private var accent: RGB {
+        Self.accent(seed: seed, date: date, family: family, dark: colorScheme == .dark)
+    }
+
+    private var tint: Double { Self.tintOpacity(intensity: intensity) }
 
     var body: some View {
         ZStack {
-            MercuryColor.surface.color
+            base.color
 
             if #available(iOS 18.0, *) {
                 MeshGradient(width: 3, height: 3, points: Self.meshPoints, colors: meshColors)

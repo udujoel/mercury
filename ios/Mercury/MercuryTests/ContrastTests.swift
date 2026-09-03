@@ -214,4 +214,137 @@ final class ContrastTests: XCTestCase {
             }
         }
     }
+
+    /// The test above measures a ground it builds itself. This one measures the
+    /// ground the *view* produces, from the view's own stored properties, which
+    /// is the gap the `dark: false` bug lived in: the arithmetic above was
+    /// right and the renderer disagreed with it.
+    func testInkClearsAAOverTheGroundTheViewItselfComputes() {
+        for isDark in [false, true] {
+            for family in [AmbientBackground.Family.derived, .greeting, .weather, .calendar, .inbox] {
+                let page = AmbientBackground(seed: "briefing", family: family)
+                let card = MercurySurface.wash(elevation: .raised, tintSeed: "briefing")
+                for ground in [page.ground(dark: isDark), card.ground(dark: isDark)] {
+                    for (name, ink) in MercuryColor.inkTokensForTesting {
+                        let ratio = ColorMath.contrast(ink.resolved(dark: isDark), ground)
+                        XCTAssertGreaterThanOrEqual(
+                            ratio, ColorMath.aaBody,
+                            "\(name) on \(family) ground \(ground.hexString) "
+                            + "[\(isDark ? "dark" : "light")]: \(ratio):1")
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - The wash resolves the appearance it is drawn in
+
+    func testTheWashUsesTheAppearancesOwnAccentRatherThanAlwaysTheLightOne() {
+        // The accent is pinned to a different luminance per appearance — 0.150
+        // on paper, 0.300 on night — so "the light accent in dark mode" is not
+        // a near-miss, it is a colour solved against the wrong ground.
+        for weekday in 1...7 {
+            let date = Self.date(weekday: weekday)
+            let light = AmbientBackground.accent(seed: "greeting", date: date, family: .greeting, dark: false)
+            let dark = AmbientBackground.accent(seed: "greeting", date: date, family: .greeting, dark: true)
+
+            XCTAssertEqual(light.relativeLuminance, DawnPalette.lightAccentLuminance, accuracy: 1e-4)
+            XCTAssertEqual(dark.relativeLuminance, DawnPalette.darkAccentLuminance, accuracy: 1e-4)
+            XCTAssertNotEqual(light, dark)
+        }
+    }
+
+    func testTheHardcodedLightAccentMeasurablyChangedTheDarkGround() {
+        // The bug, stated as a number rather than as a description. Washing the
+        // dark page with the light accent lands on a different ground than
+        // washing it with the dark accent — the light accent carries barely
+        // half the luminance the dark target asks for, so the dark wash it
+        // rendered was roughly half the strength the tokens were tuned against.
+        let date = Self.date(weekday: 2)
+        let correct = AmbientBackground(seed: "greeting", date: date, family: .greeting).ground(dark: true)
+        let buggy = AmbientBackground.washedGround(
+            base: MercuryColor.surface.dark,
+            accent: AmbientBackground.accent(seed: "greeting", date: date, family: .greeting, dark: false),
+            intensity: 1.0)
+
+        XCTAssertNotEqual(correct, buggy)
+        XCTAssertGreaterThan(correct.relativeLuminance, buggy.relativeLuminance,
+                             "the dark accent is the brighter of the two, so the correct wash lifts "
+                             + "the near-black page further than the light accent did")
+        // Both still clear AA — this was a fidelity bug, not a legibility one,
+        // and saying so is more useful than implying the app was unreadable.
+        for ground in [correct, buggy] {
+            XCTAssertGreaterThanOrEqual(
+                ColorMath.contrast(MercuryColor.inkFaint.dark, ground), ColorMath.aaBody)
+        }
+    }
+
+    // MARK: - Elevation
+
+    func testATintedCardKeepsTheElevationStepItsUntintedNeighbourHas() {
+        // The defect: `AmbientBackground` opened with an opaque
+        // `MercuryColor.surface`, so a card that asked for a tint had its
+        // `surfaceRaised` fill painted over with page paper. Two cards in one
+        // list, one tinted and one not, sat on different grounds — and the
+        // tinted one sat on the page, which is the opposite of raised.
+        // Note the metric. "Lighter than the page" is *not* the property: on
+        // light the accent is darker than paper, so the wash pulls a white card
+        // below page luminance and the card ends up slightly darker than the
+        // page — separation there comes from the rim and the shadow. What must
+        // survive is the elevation *fill*: a tinted card has to be built from
+        // the ground its elevation asked for, not from the page.
+        for isDark in [false, true] {
+            let page = MercuryColor.surface.resolved(dark: isDark)
+            let raised = MercurySurface.fill(.raised).resolved(dark: isDark)
+            let plainStep = abs(raised.relativeLuminance - page.relativeLuminance)
+            XCTAssertGreaterThan(plainStep, 0, "surfaceRaised must differ from surface at all")
+
+            let tinted = MercurySurface.wash(elevation: .raised, tintSeed: "briefing").ground(dark: isDark)
+
+            // The pre-fix ground: the identical wash, but composited over the
+            // page because `AmbientBackground` insisted on painting its own.
+            let regressed = AmbientBackground.washedGround(
+                base: page,
+                accent: AmbientBackground.accent(seed: "briefing", date: Date(),
+                                                 family: .derived, dark: isDark),
+                intensity: MercurySurface.tintIntensity)
+
+            XCTAssertNotEqual(tinted, regressed,
+                              "the tinted card must not resolve to the page's washed ground")
+            let survivingStep = abs(tinted.relativeLuminance - regressed.relativeLuminance)
+            XCTAssertGreaterThan(
+                survivingStep, plainStep * 0.8,
+                "the wash is a few percent alpha, so nearly all of the elevation step should "
+                + "survive it [\(isDark ? "dark" : "light")]: plain \(plainStep), surviving \(survivingStep)")
+        }
+    }
+
+    func testFlatIsFlushWithThePageAndRaisedIsNot() {
+        // `.flat` is documented as "flush with the page — a section that is
+        // grouped but not lifted". The fill ignored elevation entirely, so a
+        // flat section still carried the raised luminance step.
+        XCTAssertEqual(MercurySurface.fill(.flat).light, MercuryColor.surface.light)
+        XCTAssertEqual(MercurySurface.fill(.flat).dark, MercuryColor.surface.dark)
+        for elevation in [MercurySurface.Elevation.raised, .floating] {
+            XCTAssertEqual(MercurySurface.fill(elevation).light, MercuryColor.surfaceRaised.light)
+            XCTAssertEqual(MercurySurface.fill(elevation).dark, MercuryColor.surfaceRaised.dark)
+        }
+        for isDark in [false, true] {
+            XCTAssertEqual(MercurySurface.fill(.flat).resolved(dark: isDark),
+                           MercuryColor.surface.resolved(dark: isDark))
+            XCTAssertNotEqual(MercurySurface.fill(.raised).resolved(dark: isDark),
+                              MercurySurface.fill(.flat).resolved(dark: isDark))
+        }
+    }
+
+    /// Seven consecutive days, so every weekday anchor is exercised. Which
+    /// index lands on which weekday depends on the runner's calendar and does
+    /// not matter here: the assertions hold for every anchor, which is the
+    /// property being checked.
+    private static func date(weekday: Int) -> Date {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        let start = calendar.date(from: DateComponents(year: 2026, month: 8, day: 30))!
+        return calendar.date(byAdding: .day, value: weekday - 1, to: start)!
+    }
 }

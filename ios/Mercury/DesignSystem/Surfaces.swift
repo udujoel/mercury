@@ -58,6 +58,37 @@ enum MercurySurface {
         }
     }
 
+    /// The fill for an elevation.
+    ///
+    /// `.flat` is documented as flush with the page, and the fill was an
+    /// unconditional `surfaceRaised` that contradicted it: a flat section
+    /// carried the full luminance step, so "grouped but not lifted" rendered as
+    /// lifted and the elevation argument only ever chose a shadow. Elevation
+    /// now picks the ground as well as the shadow, which is what makes `.flat`
+    /// mean anything.
+    static func fill(_ elevation: Elevation) -> AdaptiveColor {
+        switch elevation {
+        case .flat:                return MercuryColor.surface
+        case .raised, .floating:   return MercuryColor.surfaceRaised
+        }
+    }
+
+    /// How much of the page's wash a card gets. Enough that the day's colour is
+    /// present, little enough that the card does not become a swatch.
+    static let tintIntensity = 0.55
+
+    /// The wash a tinted card draws.
+    ///
+    /// The modifier below renders exactly this value and the tests measure
+    /// exactly this value, so the ground asserted in `ContrastTests` is the
+    /// ground on screen rather than a second model of it.
+    static func wash(elevation: Elevation, tintSeed: String, date: Date = Date()) -> AmbientBackground {
+        AmbientBackground(seed: tintSeed,
+                          intensity: tintIntensity,
+                          date: date,
+                          base: fill(elevation))
+    }
+
     /// The rim. Does the real separating work, and is the only one of the three
     /// that survives at every size and in every appearance.
     static let rimWidth: CGFloat = 1.0 / 3.0 * 2  // ~0.67pt: a hairline at 3x, visible at 2x
@@ -77,12 +108,15 @@ private struct MercuryCardSurface: ViewModifier {
         let shape = RoundedRectangle(cornerRadius: MercurySurface.cornerRadius, style: .continuous)
         return content
             .background {
-                ZStack {
-                    MercuryColor.surfaceRaised.color
+                Group {
                     if let tintSeed {
-                        // Cards get a fraction of the page's wash so the day's
-                        // colour is present without the card becoming a swatch.
-                        AmbientBackground(seed: tintSeed, intensity: 0.55)
+                        // The wash carries its own ground — this card's
+                        // elevation fill — rather than being stacked over one.
+                        // Stacking meant the wash's opaque page surface painted
+                        // the elevation step away.
+                        MercurySurface.wash(elevation: elevation, tintSeed: tintSeed)
+                    } else {
+                        MercurySurface.fill(elevation).color
                     }
                 }
                 .clipShape(shape)
