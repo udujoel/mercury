@@ -79,6 +79,8 @@ async def synthesize_briefing(
     briefing_id: str,
     audio_url_for: Callable[[str], str],
     sources: list[SourceRef],
+    degraded_sources: list[str] | None = None,
+    degraded_attempts: int = 0,
 ) -> tuple[bytes, BriefingManifest, str]:
     """Synthesise every turn, stitch, and emit the timing manifest.
 
@@ -159,6 +161,8 @@ async def synthesize_briefing(
         segments=_segment_offsets(rendered),
         turns=rendered,
         sources=_remap_source_refs(sources, index_map),
+        degraded_sources=list(degraded_sources or []),
+        degraded_attempts=degraded_attempts,
     )
 
     log.info("synthesized %s: %d turns, %.1fs, %.1fKB, format=%s",

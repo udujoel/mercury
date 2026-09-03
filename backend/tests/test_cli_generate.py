@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from app.cli import main
+from app.cli import MAX_DEGRADED_ATTEMPTS, main
 from app.core.schemas import BriefingManifest, Turn
 from app.synthesis.stitch import EmptyBriefingError
 from app.synthesis.storage import LocalFilesystemStorage
@@ -224,3 +224,175 @@ def test_a_transient_failure_is_not_reported_as_an_expired_token(
 
     assert main(["generate", "--briefing-id", "2026-08-27"]) == 3
     assert "Testing mode" not in capsys.readouterr().out
+
+
+# ──────────────────────────────────────────────────────────────
+# A degraded briefing must not block its own replacement.
+#
+# Observed on production for three consecutive days (runs 33383999697,
+# 33491842708, 33610322516): the Google refresh token expired, the first
+# checkpoint each morning stored a briefing with no inbox and no calendar
+# and exited 3, and every later checkpoint that day reported SUCCESS —
+# because the degraded briefing was already there. The retry existed and
+# could not reach the one state it was for. From the outside the day looked
+# like a failure followed by a recovery; nothing had recovered.
+# ──────────────────────────────────────────────────────────────
+
+
+def _degraded_manifest(briefing_id: str = "2026-08-27") -> BriefingManifest:
+    m = _manifest(briefing_id)
+    return m.model_copy(update={"degraded_sources": ["email", "calendar"]})
+
+
+def test_a_degraded_briefing_is_regenerated_rather_than_reported_as_done(
+    cli, monkeypatch, caplog
+):
+    cli.save("2026-08-27", b"OLD AUDIO", "wav", _degraded_manifest())
+    generated: list[str] = []
+
+    async def _records(**kwargs):
+        generated.append(kwargs["briefing_id"])
+        # The replacement run is the healthy one — the token came back. The
+        # stub bypasses generate_briefing, so its module-level record of
+        # which sources failed has to be cleared explicitly or the CLI
+        # reports the PREVIOUS run's degradation and exits 3.
+        monkeypatch.setattr(
+            "app.pipeline.generate._failed_personal_sources", [], raising=True
+        )
+        return _manifest()
+
+    monkeypatch.setattr(
+        "app.pipeline.generate.generate_briefing", _records, raising=True
+    )
+    with caplog.at_level("WARNING"):
+        code = main(["generate", "--briefing-id", "2026-08-27"])
+
+    assert code == 0
+    assert generated == ["2026-08-27"], (
+        "a briefing missing its whole personal half is the one most worth "
+        "replacing, and idempotency made it the one that never could be"
+    )
+    assert any("shipped without email, calendar" in r.getMessage()
+               for r in caplog.records)
+
+
+def test_a_healthy_briefing_is_still_left_alone(cli, monkeypatch):
+    """The control, and the reason this cannot simply always regenerate:
+    the daily schedule fires several checkpoints and each costs real Gemini
+    and TTS spend. Only a degraded briefing is worth the second run."""
+    cli.save("2026-08-27", b"GOOD AUDIO", "wav", _manifest())
+
+    def _never(**_kwargs):
+        raise AssertionError("a healthy briefing must stay a no-op")
+
+    monkeypatch.setattr(
+        "app.pipeline.generate.generate_briefing", _never, raising=True
+    )
+
+    assert main(["generate", "--briefing-id", "2026-08-27"]) == 0
+
+
+def test_the_manifest_records_which_sources_were_missing():
+    """The signal has to survive the round trip through storage, or the
+    existence check on the next run cannot see it."""
+    m = _degraded_manifest()
+    restored = BriefingManifest.model_validate_json(m.model_dump_json())
+    assert restored.degraded_sources == ["email", "calendar"]
+    assert _manifest().degraded_sources == []
+
+
+def _degraded_manifest_at(attempts: int, briefing_id: str = "2026-08-27"):
+    m = _manifest(briefing_id)
+    return m.model_copy(update={
+        "degraded_sources": ["email", "calendar"],
+        "degraded_attempts": attempts,
+    })
+
+
+def test_the_retry_gives_up_after_the_cap(cli, monkeypatch, caplog):
+    """Unbounded self-healing is a bill, not a feature.
+
+    What degrades a briefing is almost always a credential a human has to
+    replace, and it stays broken until they do. Eight checkpoints fire on a
+    broken day, so an unbounded retry runs eight full generations for a
+    briefing that cannot improve — against a TTS free tier of a million
+    characters a month, and a briefing of roughly six thousand.
+    """
+    cli.save("2026-08-27", b"OLD", "wav", _degraded_manifest_at(MAX_DEGRADED_ATTEMPTS))
+
+    def _never(**_kwargs):
+        raise AssertionError("the cap must stop regeneration")
+
+    monkeypatch.setattr(
+        "app.pipeline.generate.generate_briefing", _never, raising=True
+    )
+
+    with caplog.at_level("ERROR"):
+        code = main(["generate", "--briefing-id", "2026-08-27"])
+
+    # Exit 3, not 0: giving up is still a degraded day, and the schedule
+    # must not report success for it.
+    assert code == 3
+    assert any("needs a person" in r.getMessage() for r in caplog.records)
+
+
+def test_the_cap_allows_three_generations_in_total(cli, monkeypatch):
+    """The arithmetic, spelled out, because the first version of this cap
+    said 'two retries' and delivered one — the stored count includes the
+    initial run, so `MAX = 2` blocked the third generation rather than the
+    fourth. A constant named for what it permits rather than what it counts
+    is how that hid."""
+    attempts_that_regenerate = []
+    for stored in range(0, MAX_DEGRADED_ATTEMPTS + 2):
+        blocked = stored >= MAX_DEGRADED_ATTEMPTS
+        if not blocked:
+            attempts_that_regenerate.append(stored)
+    assert MAX_DEGRADED_ATTEMPTS == 3
+    assert attempts_that_regenerate == [0, 1, 2], (
+        "three generations in total: the first, plus two retries"
+    )
+
+
+def test_below_the_cap_it_still_retries(cli, monkeypatch):
+    """The control. Giving up too early is the failure this whole PR is
+    about — a source that recovers at 06:00 must heal the same morning."""
+    cli.save("2026-08-27", b"OLD", "wav",
+             _degraded_manifest_at(MAX_DEGRADED_ATTEMPTS - 1))
+    generated: list[int] = []
+
+    async def _records(**kwargs):
+        generated.append(kwargs.get("previous_degraded_attempts"))
+        monkeypatch.setattr(
+            "app.pipeline.generate._failed_personal_sources", [], raising=True
+        )
+        return _manifest()
+
+    monkeypatch.setattr(
+        "app.pipeline.generate.generate_briefing", _records, raising=True
+    )
+
+    assert main(["generate", "--briefing-id", "2026-08-27"]) == 0
+    assert generated == [MAX_DEGRADED_ATTEMPTS - 1], (
+        "the attempt count must be carried into the run, or the next "
+        "manifest resets it and the cap never binds"
+    )
+
+
+def test_force_overrides_the_cap(cli, monkeypatch):
+    """--force is the operator saying they have fixed the cause."""
+    cli.save("2026-08-27", b"OLD", "wav", _degraded_manifest_at(99))
+    ran: list[str] = []
+
+    async def _records(**kwargs):
+        ran.append(kwargs["briefing_id"])
+        monkeypatch.setattr(
+            "app.pipeline.generate._failed_personal_sources", [], raising=True
+        )
+        return _manifest()
+
+    monkeypatch.setattr(
+        "app.pipeline.generate.generate_briefing", _records, raising=True
+    )
+
+    assert main(["generate", "--force", "--briefing-id", "2026-08-27"]) == 0
+    assert ran == ["2026-08-27"]

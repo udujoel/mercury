@@ -42,6 +42,22 @@ from app.core.config import get_settings
 from app.core.providers import build_embedding_provider
 from app.core.schemas import BriefingLength
 
+# How many times a briefing may be generated in a day while it keeps
+# shipping degraded, counting the first one. Three: the original plus two
+# retries.
+#
+# Named for what it counts. As MAX_DEGRADED_RETRIES = 2 it read as "two
+# retries" and delivered one, because the stored count includes the initial
+# run: that run stores 1, its retry stores 2, and `>= 2` then blocks the
+# third. An off-by-one nobody would see from production, since the symptom
+# is a briefing that heals slightly less often than intended.
+#
+# Not unbounded, because what degrades a briefing is almost always a
+# credential a human has to replace, and eight checkpoints fire on a broken
+# day. Not one, because the whole point is that a source which recovers at
+# 06:00 heals the same morning rather than the next.
+MAX_DEGRADED_ATTEMPTS = 3
+
 log = logging.getLogger("mercury.cli")
 
 
@@ -267,7 +283,53 @@ async def _generate(
     # not block its own replacement. Generation is idempotent, so the one state
     # that most needs regenerating would otherwise be the one state that never
     # can be.
-    if not force and existing_manifest(storage, briefing_id) is not None:
+    previous_degraded_attempts = 0
+    existing = None if force else existing_manifest(storage, briefing_id)
+    if (
+        existing is not None
+        and existing.degraded_sources
+        and existing.degraded_attempts >= MAX_DEGRADED_ATTEMPTS
+    ):
+        # Stop retrying. The thing that degrades a briefing is almost always
+        # a credential a human has to replace, and it stays broken until
+        # they do — so an unbounded retry means every one of the day's eight
+        # checkpoints runs a full generation, for a briefing that cannot
+        # improve. Google TTS's free tier is a million characters a month
+        # and a briefing is about six thousand.
+        #
+        # Loud rather than silent: the run still exits 3 further down, and
+        # this says why the self-healing stopped instead of leaving someone
+        # to wonder why the retry gave up.
+        log.error(
+            "briefing %s has shipped without %s on %d attempts — not "
+            "regenerating again today. This needs a person: check the "
+            "credentials for that source. --force overrides.",
+            briefing_id, ", ".join(existing.degraded_sources),
+            existing.degraded_attempts,
+        )
+        return 3
+
+    if existing is not None and existing.degraded_sources:
+        # A briefing that shipped without its whole personal half is exactly
+        # the one worth retrying, and idempotency made it the one that never
+        # could be. Observed three days running: the first checkpoint exits 3
+        # and goes red having stored a weather-and-news briefing, and every
+        # later checkpoint reports success because that briefing is already
+        # there. The retry existed and could not reach the thing it was for.
+        #
+        # Same shape as the empty-TTS guard in stitch.py (ADR-010's commit):
+        # a bad artifact that blocks its own replacement is worse than no
+        # artifact, because it looks like success from the outside.
+        log.warning(
+            "briefing %s exists but shipped without %s — regenerating rather "
+            "than reporting success, since that is the state most worth "
+            "replacing",
+            briefing_id, ", ".join(existing.degraded_sources),
+        )
+        previous_degraded_attempts = existing.degraded_attempts
+        existing = None
+
+    if existing is not None:
         log.info(
             "briefing %s already exists; nothing to do (pass --force to "
             "regenerate, e.g. after fixing a run that shipped degraded)",
@@ -316,6 +378,7 @@ async def _generate(
             tts=tts,
             embeddings=embeddings,
             storage=storage,
+            previous_degraded_attempts=previous_degraded_attempts,
         )
     except EmptyBriefingError as exc:
         # Named separately from a generic failure because the operator action

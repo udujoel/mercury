@@ -94,6 +94,7 @@ async def generate_briefing(
     briefing_id: str | None = None,
     length: BriefingLength = BriefingLength.STANDARD,
     embeddings: EmbeddingProvider | None = None,
+    previous_degraded_attempts: int = 0,
     fetch_emails: Any = _real_fetch_emails,
     fetch_events: Any = _real_fetch_events,
     fetch_weather: Any = _real_fetch_weather,
@@ -127,7 +128,7 @@ async def generate_briefing(
     briefing_id = briefing_id or datetime.now(UTC).strftime("%Y-%m-%d")
     briefing_date = _parse_briefing_date(briefing_id)
 
-    emails, events, weather, articles = await _ingest_concurrently(
+    (emails, events, weather, articles), degraded = await _ingest_concurrently(
         fetch_emails=fetch_emails,
         fetch_events=fetch_events,
         fetch_weather=fetch_weather,
@@ -213,6 +214,13 @@ async def generate_briefing(
         briefing_id=briefing_id,
         audio_url_for=lambda _fmt: storage.audio_path_for(briefing_id),
         sources=sources,
+        # THIS run's failures, carried down from ingestion rather than
+        # re-read from the module global at the end — see
+        # _ingest_concurrently for why the global cannot answer honestly.
+        degraded_sources=degraded,
+        # How many times this briefing has already been regenerated because
+        # it shipped degraded. Bounds the retry — see MAX_DEGRADED_RETRIES.
+        degraded_attempts=(previous_degraded_attempts + 1) if degraded else 0,
     )
 
     # to_thread, because BriefingStorage is synchronous and R2Storage is boto3.
@@ -239,10 +247,23 @@ async def _ingest_concurrently(
     hours_ahead: int,
     user_lat: float,
     user_lon: float,
-) -> tuple[list[Item], list[Any], Any, list[Item]]:
-    """Fetch all four sources concurrently. Any source that fails (missing
-    module, network error, malformed fixture, anything) is logged and
-    replaced with an empty/None default — CLAUDE.md rule 7."""
+) -> tuple[tuple[list[Item], list[Any], Any, list[Item]], list[str]]:
+    """Fetch all four sources concurrently.
+
+    Returns the four payloads AND the labels of the personal sources that
+    failed in THIS invocation. The second half exists because the manifest
+    needs to record it and a module global cannot answer the question
+    honestly: `generate_briefing` runs minutes of LLM and TTS work between
+    ingestion and synthesis, and both `app/scheduler/cron.py` and
+    `POST /briefing/generate` drive it on the same event loop without a
+    mutual gate. A second run starting in that window overwrites the global,
+    and the manifest is then stamped with the wrong run's failures — a
+    degraded briefing marked healthy, which is precisely the masking this
+    was written to remove.
+
+    Any source that fails (missing module, network error, malformed
+    fixture, anything) is logged and replaced with an empty/None default —
+    CLAUDE.md rule 7."""
 
     async def _emails() -> list[Item]:
         if fetch_emails is None:
@@ -307,6 +328,10 @@ async def _ingest_concurrently(
         for label, result in zip(labels[:2], results[:2], strict=True)
         if isinstance(result, BaseException)
     }
+    # Still recorded globally, because app/cli.py reads it after the fact to
+    # decide the process exit code and there is exactly one run per process
+    # there. But it is ALSO returned, and the manifest uses the returned
+    # value — see below.
     _record_failed_sources(personal_failed)
     if len(personal_failed) == 2:
         log.error(
@@ -316,7 +341,7 @@ async def _ingest_concurrently(
             ", ".join(personal_failed),
         )
 
-    return tuple(out)  # type: ignore[return-value]
+    return tuple(out), sorted(personal_failed)  # type: ignore[return-value]
 
 
 def _is_newsletter(item: Item) -> bool:
