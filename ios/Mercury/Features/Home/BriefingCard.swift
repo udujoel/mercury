@@ -53,7 +53,7 @@ struct WaveformPill: View {
                     .fill(MercuryColor.textPrimary)
                     .frame(width: 3, height: animate ? CGFloat.random(in: 6...16) : 6)
                     .animation(
-                        motion.resolve(MercuryMotion.ambient)?.delay(Double(i) * 0.1),
+                        motion.resolve(MercuryMotion.pulse)?.delay(Double(i) * 0.1),
                         value: animate
                     )
             }

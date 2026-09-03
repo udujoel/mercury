@@ -241,3 +241,29 @@ private extension UIFont.TextStyle {
         }
     }
 }
+
+extension DesignTokenTests {
+
+    /// Both continuous loops stop under Reduce Motion, not just the one that
+    /// existed when `resolved` was written.
+    ///
+    /// `pulse` was split out of `ambient` because the waveform pill had
+    /// inherited a 1.4s duration — a 2.8-second cycle once autoreversed,
+    /// which reads as breathing rather than as audio. Splitting a token is
+    /// exactly when an `==` check against the old one silently stops
+    /// covering the new one, and a waveform that keeps looping is the single
+    /// most obvious thing the setting exists to switch off.
+    func testBothContinuousLoopsStopUnderReduceMotion() {
+        XCTAssertNil(MercuryMotion.resolved(MercuryMotion.ambient, reduceMotion: true))
+        XCTAssertNil(MercuryMotion.resolved(MercuryMotion.pulse, reduceMotion: true))
+
+        XCTAssertNotNil(MercuryMotion.resolved(MercuryMotion.ambient, reduceMotion: false))
+        XCTAssertNotNil(MercuryMotion.resolved(MercuryMotion.pulse, reduceMotion: false))
+    }
+
+    /// The two are genuinely different animations, so the `==` above is
+    /// discriminating rather than accidentally matching everything.
+    func testPulseAndAmbientAreNotTheSameAnimation() {
+        XCTAssertNotEqual(MercuryMotion.pulse, MercuryMotion.ambient)
+    }
+}

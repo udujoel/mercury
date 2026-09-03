@@ -25,8 +25,20 @@ enum MercuryMotion {
     /// Something arriving or leaving — a sheet, a newly ready briefing.
     static let present = Animation.spring(response: 0.50, dampingFraction: 0.88)
 
-    /// Continuous, non-interactive motion: the waveform pill while audio plays.
+    /// Slow continuous drift — a background that breathes. Nothing uses this
+    /// yet; it is here so the next thing that wants ambient motion does not
+    /// invent its own duration.
     static let ambient = Animation.easeInOut(duration: 1.4).repeatForever(autoreverses: true)
+
+    /// Continuous motion that stands for *sound*: the waveform pill while
+    /// audio plays.
+    ///
+    /// Split from `ambient` rather than sharing it. One token covered both
+    /// and the pill inherited 1.4s, which autoreverses into a 2.8-second
+    /// cycle — that reads as breathing, not as audio. A waveform is a claim
+    /// about what the speaker is doing this second, so it has to move at
+    /// roughly the pace of speech or it says the wrong thing.
+    static let pulse = Animation.easeInOut(duration: 0.4).repeatForever(autoreverses: true)
 
     /// The fade used in place of movement when Reduce Motion is on. Short
     /// enough not to feel like a delay, long enough to read as a transition.
@@ -40,7 +52,10 @@ enum MercuryMotion {
     /// the setting exists to switch off.
     static func resolved(_ animation: Animation, reduceMotion: Bool) -> Animation? {
         guard reduceMotion else { return animation }
-        if animation == ambient { return nil }
+        // Both loops stop dead. A thing that moves forever with no user
+        // intent behind it is exactly what the setting exists to switch off,
+        // and a waveform is the clearest example of it.
+        if animation == ambient || animation == pulse { return nil }
         if animation == crossfade { return crossfade }
         return reducedSubstitute
     }
