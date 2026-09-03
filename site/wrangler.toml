@@ -19,7 +19,15 @@ name = "mercury-site"
 main = "src/index.js"
 compatibility_date = "2026-08-01"
 
+# Two patterns per host rather than one `/mercury*` wildcard. The wildcard
+# also swallowed `/mercury-blog` and `/mercuryfoo`, which are not this
+# Worker's to answer. Identical behaviour today, since the site 404s those
+# too — but it would silently intercept a future page on a live personal
+# site, and that is not a surprise worth leaving lying around. `/mercury`
+# and `/mercury/*` are exactly the two pages Google needs.
 routes = [
-  { pattern = "joeludu.com/mercury*", zone_name = "joeludu.com" },
-  { pattern = "www.joeludu.com/mercury*", zone_name = "joeludu.com" },
+  { pattern = "joeludu.com/mercury", zone_name = "joeludu.com" },
+  { pattern = "joeludu.com/mercury/*", zone_name = "joeludu.com" },
+  { pattern = "www.joeludu.com/mercury", zone_name = "joeludu.com" },
+  { pattern = "www.joeludu.com/mercury/*", zone_name = "joeludu.com" },
 ]
