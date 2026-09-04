@@ -19,10 +19,10 @@ struct WelcomeView: View {
                     } label: {
                         Text("Get started")
                             .font(MercuryType.cardTitle)
-                            .foregroundStyle(.black)
+                            .foregroundStyle(MercuryColor.inkOnAccent.color)
                             .frame(maxWidth: .infinity)
                             .padding()
-                            .background(MercuryColor.textPrimary, in: Capsule())
+                            .background(MercuryColor.accent.color, in: Capsule())
                     }
                     .padding(.horizontal, 32)
                     .padding(.bottom, 48)
