@@ -168,6 +168,95 @@ def test_get_manifest_missing_is_404(client, monkeypatch, tmp_path):
     assert resp.status_code == 404
 
 
+def _fake_digest(briefing_id: str):
+    from datetime import UTC, datetime
+
+    from app.core.schemas import BriefingDigest, DigestNewsletter
+
+    return BriefingDigest(
+        briefing_id=briefing_id,
+        generated_at=datetime.now(UTC),
+        newsletters=[
+            DigestNewsletter(
+                id="nl_1",
+                source_name="Stratechery",
+                sender="ben@stratechery.com",
+                subject="The Gemini Moat",
+                received_at=datetime.now(UTC),
+            )
+        ],
+    )
+
+
+def test_get_digest_returns_the_stored_digest(client, monkeypatch, tmp_path):
+    """The Worker exists to speak these exact routes back to an unchanged
+    client (worker/src/index.js). A read surface implemented on only one of
+    the two halves is the "works on my laptop, missing in production" defect
+    that ADR-008's split makes easy to create."""
+    from app.synthesis.storage import LocalFilesystemStorage
+
+    storage = LocalFilesystemStorage(base_dir=tmp_path)
+    storage.save(
+        "2026-08-22", b"fake audio", "wav", _fake_manifest("2026-08-22"),
+        _fake_digest("2026-08-22"),
+    )
+    monkeypatch.setattr(
+        briefing_api,
+        "build_storage",
+        lambda: LocalFilesystemStorage(base_dir=tmp_path),
+    )
+
+    resp = client.get("/briefing/2026-08-22/digest")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["briefing_id"] == "2026-08-22"
+    assert body["schema_version"] == 1
+    assert body["newsletters"][0]["subject"] == "The Gemini Moat"
+
+
+def test_get_digest_missing_is_404_not_an_error(client, monkeypatch, tmp_path):
+    """Ordinary, not exceptional: every briefing generated before the digest
+    existed has none, and the client shows an empty state rather than an
+    error. The manifest for that briefing still serves."""
+    from app.synthesis.storage import LocalFilesystemStorage
+
+    storage = LocalFilesystemStorage(base_dir=tmp_path)
+    storage.save("2026-08-22", b"fake audio", "wav", _fake_manifest("2026-08-22"))
+    monkeypatch.setattr(
+        briefing_api,
+        "build_storage",
+        lambda: LocalFilesystemStorage(base_dir=tmp_path),
+    )
+
+    resp = client.get("/briefing/2026-08-22/digest")
+    assert resp.status_code == 404
+    # On the DETAIL, not just the status. An unrouted path is also a 404, so
+    # a bare status assertion here passes with the route deleted — the
+    # weakest possible test for a route.
+    assert "digest for '2026-08-22' not found" in resp.json()["detail"]
+
+    # ...and the briefing itself is unaffected.
+    assert client.get("/briefing/2026-08-22").status_code == 200
+
+
+def test_the_digest_route_is_behind_the_api_token(monkeypatch, tmp_path):
+    """Not a second auth path. The router-level dependency fails closed, and
+    the digest is a list of who mails the user — at least as personal as the
+    transcript the manifest route already guards."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.synthesis.storage import LocalFilesystemStorage
+
+    monkeypatch.setattr(
+        briefing_api,
+        "build_storage",
+        lambda: LocalFilesystemStorage(base_dir=tmp_path),
+    )
+    with TestClient(app) as unauthenticated:
+        resp = unauthenticated.get("/briefing/2026-08-22/digest")
+    assert resp.status_code == 401
+
 def test_get_audio_returns_bytes_with_correct_media_type(
     client, monkeypatch, tmp_path
 ):

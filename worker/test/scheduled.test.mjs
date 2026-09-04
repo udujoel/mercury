@@ -62,6 +62,16 @@ const PLAYABLE = {
 /** ~3MB is a real briefing; anything this side of a kilobyte is not audio. */
 const REAL_AUDIO = { size: 3_000_000 };
 
+/** The browse surface: newsletters that arrived, stories that clustered. */
+const DIGEST = {
+  json: {
+    briefing_id: "2026-08-30",
+    schema_version: 1,
+    newsletters: [{ id: "nl_1", source_name: "Stratechery" }],
+    stories: [{ id: "st_c3", covered_in_audio: true, turn_index: 4 }],
+  },
+};
+
 function envFor(objects) {
   return {
     BRIEFINGS: bucket(objects),
@@ -193,6 +203,19 @@ describe("scheduled()", () => {
 });
 
 describe("briefingState", () => {
+  // `/status` asks about TODAY, derived from the wall clock in the configured
+  // zone — so the objects it looks for have to be keyed to today as well.
+  // These were written with "2026-08-30" hardcoded and passed for exactly one
+  // day; every run after that reported `missing` and the four assertions here
+  // were measuring nothing. A test that expires silently is worse than no
+  // test, because the suite stays green until somebody reads the count.
+  const TODAY = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Lisbon",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+
   const status = async (objects) => {
     const response = await worker.fetch(
       new Request("https://w/status", { headers: { "X-Mercury-Token": TOKEN } }),
@@ -201,39 +224,60 @@ describe("briefingState", () => {
     return response.json();
   };
 
+  /** Re-key fixture objects from the placeholder day onto today's. */
+  const forToday = (objects) =>
+    Object.fromEntries(
+      Object.entries(objects).map(([key, value]) => [
+        key.replace(/^\d{4}-\d{2}-\d{2}/, TODAY),
+        value,
+      ]),
+    );
+
+  test("the fixtures are keyed to the day /status actually asks about", async () => {
+    // Guard the premise. Without it the four tests below can all quietly go
+    // back to reporting `missing` — a valid-looking answer — the moment a
+    // hardcoded date creeps back in.
+    const body = await status(forToday({
+      "2026-08-30.manifest.json": PLAYABLE,
+      "2026-08-30.m4a": REAL_AUDIO,
+    }));
+    assert.equal(body.briefing_id, TODAY);
+    assert.notEqual(body.state, "missing");
+  });
+
   test("a zero-byte audio object is not playable", async () => {
     // `head` returns an object for a zero-byte key, so the old existence
     // check called it ok. The phone gets a valid manifest and no audio, and
     // idempotency then preserves that state for the rest of the day.
-    const body = await status({
+    const body = await status(forToday({
       "2026-08-30.manifest.json": PLAYABLE,
       "2026-08-30.m4a": { size: 0 },
-    });
+    }));
     assert.equal(body.state, "empty");
   });
 
   test("a truncated audio object is not playable", async () => {
-    const body = await status({
+    const body = await status(forToday({
       "2026-08-30.manifest.json": PLAYABLE,
       "2026-08-30.m4a": { size: 44 },
-    });
+    }));
     assert.equal(body.state, "empty");
   });
 
   test("a real briefing is ok", async () => {
-    const body = await status({
+    const body = await status(forToday({
       "2026-08-30.manifest.json": PLAYABLE,
       "2026-08-30.m4a": REAL_AUDIO,
-    });
+    }));
     assert.equal(body.state, "ok");
     assert.equal(body.ok, true);
   });
 
   test("a wav fallback is ok too", async () => {
-    const body = await status({
+    const body = await status(forToday({
       "2026-08-30.manifest.json": PLAYABLE,
       "2026-08-30.wav": REAL_AUDIO,
-    });
+    }));
     assert.equal(body.state, "ok");
   });
 });
@@ -248,6 +292,7 @@ describe("conditional GET", () => {
   const objects = {
     "2026-08-30.manifest.json": { ...PLAYABLE, etag: '"m-1"' },
     "2026-08-30.m4a": { ...REAL_AUDIO, etag: '"a-1"' },
+    "2026-08-30.digest.json": { ...DIGEST, etag: '"d-1"' },
   };
 
   const request = (path, ifNoneMatch) =>
@@ -263,6 +308,11 @@ describe("conditional GET", () => {
   for (const [what, path, etag] of [
     ["manifest", "/briefing/2026-08-30", '"m-1"'],
     ["audio", "/briefing/2026-08-30/audio", '"a-1"'],
+    // The digest shares serveJsonObject with the manifest, which is exactly
+    // why it is proven here rather than assumed: one shared helper means one
+    // place to get `cache-control` or the 304 wrong, and the response it
+    // would be got wrong on is a list of who mails the user.
+    ["digest", "/briefing/2026-08-30/digest", '"d-1"'],
   ]) {
     test(`a matching If-None-Match on the ${what} is a bodyless 304`, async () => {
       const response = await request(path, etag);
@@ -310,6 +360,115 @@ describe("briefing ids", () => {
     assert.equal(response.status, 400);
     const leap = await fetchId("2024-02-29");
     assert.equal(leap.status, 404);
+  });
+});
+
+describe("the digest route", () => {
+  const get = (id, headers = {}) =>
+    worker.fetch(
+      new Request(`https://w/briefing/${id}/digest`, { headers }),
+      envFor({
+        "2026-08-30.manifest.json": PLAYABLE,
+        "2026-08-30.m4a": REAL_AUDIO,
+        "2026-08-30.digest.json": DIGEST,
+      }),
+    );
+
+  test("serves the digest object for a real briefing", async () => {
+    const response = await get("2026-08-30", { "X-Mercury-Token": TOKEN });
+
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-type"), "application/json");
+    assert.ok((await response.text()).length > 0);
+  });
+
+  test("is behind the same token as everything else", async () => {
+    // Not a second auth path, and not an unauthenticated one. The digest is
+    // a list of who mails the user and when, which is at least as personal
+    // as the transcript the manifest already guards.
+    for (const headers of [{}, { "X-Mercury-Token": "wrong" }]) {
+      const response = await get("2026-08-30", headers);
+      assert.equal(response.status, 401, JSON.stringify(headers));
+    }
+  });
+
+  test("refuses to serve before the Worker is configured", async () => {
+    const response = await worker.fetch(
+      new Request("https://w/briefing/2026-08-30/digest", {
+        headers: { "X-Mercury-Token": TOKEN },
+      }),
+      { ...envFor({}), MERCURY_API_TOKEN: "" },
+    );
+    assert.equal(response.status, 503);
+  });
+
+  test("a weak token is refused here too", async () => {
+    // Same floor as MIN_TOKEN_LENGTH in app/core/auth.py. A route that
+    // skipped this would be the more exposed half of the system being the
+    // more permissive one.
+    const response = await worker.fetch(
+      new Request("https://w/briefing/2026-08-30/digest", {
+        headers: { "X-Mercury-Token": "short" },
+      }),
+      { ...envFor({}), MERCURY_API_TOKEN: "short" },
+    );
+    assert.equal(response.status, 503);
+  });
+
+  test("marks the response private", async () => {
+    const response = await get("2026-08-30", { "X-Mercury-Token": TOKEN });
+    assert.equal(response.headers.get("cache-control"), "private, no-cache");
+  });
+
+  test("a date-shaped impossible date is rejected before it reaches R2", async () => {
+    // Same guard as the manifest route: the id becomes an object key, so
+    // this is also what stops path traversal reaching the bucket.
+    for (const id of ["2026-01-99", "2026-02-30", "../secrets"]) {
+      const response = await get(encodeURIComponent(id), {
+        "X-Mercury-Token": TOKEN,
+      });
+      assert.equal(response.status, 400, `${id} should be a 400`);
+    }
+  });
+
+  test("a briefing with no digest is a 404, not an error", async () => {
+    // Every briefing generated before the digest existed has none, and a run
+    // whose enrichment failed still ships one. The client shows an
+    // explanatory empty state; the audio stays playable either way.
+    const response = await worker.fetch(
+      new Request("https://w/briefing/2026-08-30/digest", {
+        headers: { "X-Mercury-Token": TOKEN },
+      }),
+      envFor({
+        "2026-08-30.manifest.json": PLAYABLE,
+        "2026-08-30.m4a": REAL_AUDIO,
+      }),
+    );
+
+    assert.equal(response.status, 404);
+    assert.match((await response.json()).detail, /No digest for 2026-08-30/);
+  });
+
+  test("a missing digest does not make the briefing look broken", async () => {
+    // The failure to avoid: an absent digest read as an absent briefing,
+    // which would send the scheduler off regenerating a briefing that is
+    // sitting in the bucket, playable, every morning.
+    const response = await worker.fetch(
+      new Request("https://w/status", { headers: { "X-Mercury-Token": TOKEN } }),
+      envFor({}),
+    );
+    assert.equal(response.status, 200);
+  });
+
+  test("POSTing to it is still refused", async () => {
+    const response = await worker.fetch(
+      new Request("https://w/briefing/2026-08-30/digest", {
+        method: "POST",
+        headers: { "X-Mercury-Token": TOKEN },
+      }),
+      envFor({}),
+    );
+    assert.equal(response.status, 405);
   });
 });
 
