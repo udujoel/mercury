@@ -160,6 +160,20 @@ final class AppState {
     @MainActor
     var isPlaybackLoaded: Bool { playback.isLoaded }
 
+    /// True when the loaded audio is the briefing currently on screen.
+    ///
+    /// The condition every offset-based control needs, and stricter than
+    /// `isPlaybackLoaded` in exactly one window: `playBriefing` sets
+    /// `manifest` and then awaits the audio download, so during that await
+    /// the engine holds the PREVIOUS briefing while the new transcript,
+    /// chapter ribbon and scrubber are all on screen describing a different
+    /// one. Seeking then applies today's offset to yesterday's audio.
+    @MainActor
+    var isPlaybackCurrent: Bool {
+        guard let id = manifest?.briefingId else { return false }
+        return playback.loadedBriefingId == id
+    }
+
     /// Play, pause, or fetch — whichever the current state calls for.
     ///
     /// Every control that starts playback goes through here. Tapping the Home

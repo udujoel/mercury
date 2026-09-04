@@ -20,7 +20,16 @@ enum TranscriptScript {
         case unspoken
     }
 
-    static func state(ofTurnAt index: Int, activeIndex: Int?) -> LineState {
+    /// `isFinished` is not a detail. `PlaybackCoordinator.finish()` keeps
+    /// `currentTurn` set — deliberately, so the transcript holds the last
+    /// line rather than blanking — so without it the final line stays lit as
+    /// speaking after the audio has stopped, and VoiceOver goes on
+    /// announcing "Now playing" over silence.
+    static func state(ofTurnAt index: Int, activeIndex: Int?,
+                      isFinished: Bool = false) -> LineState {
+        // The briefing has been heard, all of it. Nothing is speaking and
+        // nothing is still ahead of you.
+        if isFinished { return .spoken }
         guard let activeIndex else { return .unspoken }
         if index == activeIndex { return .speaking }
         return index < activeIndex ? .spoken : .unspoken

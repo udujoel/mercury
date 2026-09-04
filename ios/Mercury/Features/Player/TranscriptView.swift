@@ -26,6 +26,10 @@ struct TranscriptView: View {
 
     let turns: [Turn]
     let activeTurn: Turn?
+    /// True once the audio has run out. The coordinator keeps `currentTurn`
+    /// set after finishing so the last line stays on screen; without this the
+    /// script would go on claiming to be speaking it.
+    var isFinished: Bool = false
     /// False until there is audio in the engine, matching the scrubber and
     /// the chapter ribbon: tapping a line is a seek, and a seek with no file
     /// does nothing.
@@ -78,7 +82,8 @@ struct TranscriptView: View {
 
     @ViewBuilder
     private func line(_ turn: Turn, at index: Int) -> some View {
-        let state = TranscriptScript.state(ofTurnAt: index, activeIndex: activeIndex)
+        let state = TranscriptScript.state(
+            ofTurnAt: index, activeIndex: activeIndex, isFinished: isFinished)
 
         VStack(alignment: .leading, spacing: MercurySpace.tight) {
             if TranscriptScript.showsSpeaker(at: index, in: turns) {

@@ -41,6 +41,22 @@ final class TranscriptScriptTests: XCTestCase {
         XCTAssertEqual(TranscriptScript.state(ofTurnAt: 3, activeIndex: nil), .unspoken)
     }
 
+    /// `finish()` deliberately keeps `currentTurn` set so the last line
+    /// stays on screen rather than the transcript blanking. Without the
+    /// flag, that line stayed lit as speaking over silence and VoiceOver
+    /// went on announcing "Now playing".
+    func testOnceTheBriefingHasFinishedNothingIsStillSpeaking() {
+        XCTAssertEqual(
+            TranscriptScript.state(ofTurnAt: 3, activeIndex: 3, isFinished: true), .spoken)
+    }
+
+    func testOnceFinishedNothingIsStillAheadOfYouEither() {
+        XCTAssertEqual(
+            TranscriptScript.state(ofTurnAt: 0, activeIndex: 3, isFinished: true), .spoken)
+        XCTAssertEqual(
+            TranscriptScript.state(ofTurnAt: 3, activeIndex: 0, isFinished: true), .spoken)
+    }
+
     // MARK: - Which line is active
 
     /// By identity, from the turn the coordinator already resolved — not by
