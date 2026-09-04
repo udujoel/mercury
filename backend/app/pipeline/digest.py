@@ -55,7 +55,7 @@ from app.core.schemas import (
     SourceType,
     Story,
 )
-from app.pipeline.clustering import authority_sorted
+from app.pipeline.clustering import _as_utc, authority_sorted
 from app.pipeline.prompts import DIGEST_PROMPT, DIGEST_SYSTEM
 from app.pipeline.script_chain import (
     _STORY_BODY_CHARS,
@@ -274,6 +274,28 @@ async def enrich_stories(
 # ──────────────────────────────────────────────────────────────
 
 
+def _timestamp(value: datetime) -> datetime:
+    """Read a naive timestamp as UTC before it is serialised.
+
+    Not cosmetic. `Item.timestamp` can be NAIVE — `gmail._parse_date` falls
+    back to `email.utils.parsedate_to_datetime`, which returns a naive
+    datetime for RFC 2822's "unknown timezone" offset `-0000`, common in bulk
+    newsletter mail. Pydantic then writes it as "2026-08-20T07:15:00", with
+    no offset, and Swift's `.iso8601` decoding strategy REJECTS that — so one
+    newsletter whose sender writes dates that way would fail the decode of
+    the entire digest, and the browse screen would be empty on exactly the
+    mornings it had the most in it.
+
+    The digest is the first artifact to persist an item timestamp at all
+    (`SourceRef` carries none and `BriefingManifest.generated_at` is always
+    aware), which is why this has not bitten before. It is the same reading
+    `clustering._as_utc` already applies and documents: every other timestamp
+    in the pipeline is UTC, and the alternative — writing the offset the
+    sender's mail server happened to omit — is not information we have.
+    """
+    return _as_utc(value)
+
+
 def _story_id(cluster_id: str) -> str:
     return f"st_{cluster_id}"
 
@@ -363,7 +385,7 @@ def build_digest(
                         source_name=member.source_name,
                         title=member.title,
                         url=member.url,
-                        published_at=member.timestamp,
+                        published_at=_timestamp(member.timestamp),
                         source_type=member.source_type,
                     )
                     for member in members
@@ -391,7 +413,7 @@ def build_digest(
             source_name=item.source_name,
             sender=item.author,
             subject=item.title,
-            received_at=item.timestamp,
+            received_at=_timestamp(item.timestamp),
             url=item.url,
             story_ids=(
                 [_story_id(item.cluster_id)]

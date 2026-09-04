@@ -286,6 +286,61 @@ async def test_a_turn_index_past_the_end_is_dropped_rather_than_shipped():
     assert digest.stories[0].segment is None
 
 
+async def test_every_timestamp_is_written_with_an_offset(
+    tmp_path, clustering_threshold
+):
+    """Found by looking at a generated file rather than by a test.
+
+    `Item.timestamp` can be NAIVE: `gmail._parse_date` falls back to
+    `email.utils.parsedate_to_datetime`, which returns a naive datetime for
+    RFC 2822's "unknown timezone" offset `-0000` — common in bulk newsletter
+    mail, and present in this fixture on purpose (see
+    test_news_pipeline_e2e.test_the_cluster_really_does_mix_naive_and_aware
+    _timestamps). Pydantic writes that as "2026-08-20T07:15:00", with no
+    offset, and Swift's `.iso8601` strategy REJECTS it — so one newsletter
+    from a sender whose mail server writes dates that way would fail the
+    decode of the WHOLE digest, and the browse screen would come up empty on
+    exactly the mornings with the most in it.
+
+    A manifest the iOS client could not decode is a defect this project has
+    already shipped once, and the digest is the first artifact to persist an
+    item timestamp at all — `SourceRef` carries none.
+
+    Checked against the stubbed-out fix by dropping `_timestamp()` back to
+    the bare `member.timestamp` / `item.timestamp`, which fails here.
+    """
+    from app.ingestion.gmail import fetch_emails
+
+    # Guard the premise: a naive timestamp really does reach this pipeline.
+    emails = await fetch_emails(fixture=GMAIL_FIXTURE)
+    assert any(e.timestamp.tzinfo is None for e in emails), (
+        "no fixture email carries a naive timestamp any more, so this test "
+        "proves nothing"
+    )
+
+    _manifest, storage = await _generate(tmp_path)
+    raw = json.loads((tmp_path / "2026-08-21.digest.json").read_text())
+
+    stamps = [n["received_at"] for n in raw["newsletters"]]
+    stamps += [
+        src["published_at"] for st in raw["stories"] for src in st["sources"]
+    ]
+    assert stamps
+    for stamp in stamps:
+        # Asserted on the SERIALISED string, not the parsed object: the
+        # client decodes text, and a tz-aware Python object that round-trips
+        # through pydantic is not the thing that was in doubt.
+        assert stamp.endswith("Z") or stamp[-6] in "+-", stamp
+
+    # And the same, through a strict decoder.
+    digest = storage.load_digest("2026-08-21")
+    assert all(n.received_at.tzinfo is not None for n in digest.newsletters)
+    assert all(
+        src.published_at.tzinfo is not None
+        for story in digest.stories
+        for src in story.sources
+    )
+
 # ──────────────────────────────────────────────────────────────
 # Rule 5 — no raw body reaches the artifact
 # ──────────────────────────────────────────────────────────────
