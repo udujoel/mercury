@@ -1,18 +1,257 @@
 import SwiftUI
+import UIKit
 
-/// True black canvas, not dark grey — this is what makes ambient card
-/// colours (see `AmbientBackground`) read as vivid. PRD 3.3.
+/// A token that resolves to a different colour per appearance.
+///
+/// The structural problem this fixes: every colour in the app was a hardcoded
+/// literal — `Color.black` for the canvas, `Color.white.opacity(0.72)` for
+/// secondary text — so the system was not merely dark-styled, it was
+/// *incapable* of light mode. There was no seam to put a second value behind.
+/// Holding both values in one token, as data, is what makes ADR-012's light
+/// register possible at all, and it is why tests can measure both appearances
+/// without instantiating a view.
+struct AdaptiveColor {
+    let light: RGB
+    let dark: RGB
+
+    /// Built once, not per read.
+    ///
+    /// This was a computed property, so every access allocated a fresh
+    /// closure-backed `UIColor` and `Color` — and every deprecated alias
+    /// below is itself a computed `static var` forwarding to it, so each of
+    /// those allocated too. `PlayerView` re-renders on `positionMs`, which
+    /// the display link updates twenty times a second, and reads several
+    /// tokens per body evaluation. `light` and `dark` are immutable, so
+    /// there is nothing to recompute; the cost only scales with adoption,
+    /// which makes the foundation the wrong place to leave it.
+    let color: Color
+
+    init(light: RGB, dark: RGB) {
+        self.light = light
+        self.dark = dark
+        self.color = Color(UIColor { traits in
+            UIColor(traits.userInterfaceStyle == .dark ? dark.color : light.color)
+        })
+    }
+
+    init(light: String, dark: String) {
+        self.init(light: RGB(hex: light), dark: RGB(hex: dark))
+    }
+
+    /// Same colour in both appearances — for the handful of things that are
+    /// genuinely appearance-independent, like text on a saturated accent fill.
+    init(fixed: String) {
+        let c = RGB(hex: fixed)
+        self.init(light: c, dark: c)
+    }
+
+    func resolved(dark isDark: Bool) -> RGB { isDark ? dark : light }
+}
+
+/// Mercury's semantic colour tokens.
+///
+/// Named by role, not by value: `surface`, `ink`, `hairline`. A view asking for
+/// `MercuryColor.ink` gets legible text in either appearance without knowing
+/// which one it is in, which is the point — the old names (`textPrimary` =
+/// `.white`) encoded the answer for exactly one appearance.
+///
+/// Every ratio quoted below is measured by `ContrastTests`, not estimated.
+/// If you change a value, that file tells you what it cost.
 enum MercuryColor {
-    static let canvas = Color.black
-    static let cardCornerRadius: CGFloat = 28
 
-    // Section-title accents per card family (PRD 3.3 card spec table).
-    static let calendarAccent = Color(hue: 0.5, saturation: 0.55, brightness: 0.95)   // cyan
-    static let inboxAccent = Color(hue: 0.33, saturation: 0.65, brightness: 0.85)     // bright green
-    static let weatherAccent = Color(hue: 0.575, saturation: 0.3, brightness: 1.0)
-    static let greetingAccent = Color(hue: 0.09, saturation: 0.4, brightness: 1.0)
+    // MARK: - Grounds
 
-    static let textPrimary = Color.white
-    static let textSecondary = Color.white.opacity(0.72)
-    static let textTertiary = Color.white.opacity(0.45)
+    /// The page. Warm off-white on light — paper, not screen — and a near-black
+    /// that is not pure black on dark, so raised surfaces have somewhere to go.
+    static let surface = AdaptiveColor(light: "FBFAF8", dark: "111114")
+
+    /// Cards and sheets sitting on `surface`.
+    static let surfaceRaised = AdaptiveColor(light: "FFFFFF", dark: "1A1A1F")
+
+    /// Rules, dividers, card edges. Structure rather than text, so WCAG's 3:1
+    /// for UI components does not apply — it identifies no control. Measured
+    /// 1.23:1 (light) and 1.36:1 (dark) against `surface`, which is the range a
+    /// 1px rule reads at without becoming a stripe.
+    static let hairline = AdaptiveColor(light: "E6E3DE", dark: "2C2C33")
+
+    // MARK: - Ink
+
+    /// Body and headline text. 16.65:1 on light surface, 16.69:1 on dark.
+    static let ink = AdaptiveColor(light: "191A1F", dark: "F2F1EE")
+
+    /// Supporting text — bylines, timecodes, counts. 6.45:1 light, 8.00:1 dark;
+    /// clears AA body on both grounds.
+    static let inkMuted = AdaptiveColor(light: "5A5B66", dark: "A8A8B2")
+
+    /// The quietest legible ink. 5.64:1 light, 6.12:1 dark on `surface`.
+    ///
+    /// Retuned twice, both times by measurement rather than by eye. The values
+    /// this layer was first drafted with (`#8A8B96` / `#77777F`) measured
+    /// 3.24:1 and 3.90:1 — under AA body, the same defect as the
+    /// `white.opacity(0.45)` tertiary they replaced. The second pair cleared AA
+    /// unwashed but sat so close to the line that `AmbientBackground`'s tint
+    /// pushed them back under it: `ContrastTests` measured 4.28:1 over a washed
+    /// ground. A token whose legibility depends on nothing else being drawn
+    /// underneath it is under-specified, so this pair is set far enough out to
+    /// survive the strongest tint the wash can apply.
+    static let inkFaint = AdaptiveColor(light: "63646C", dark: "92929C")
+
+    /// Text and glyphs drawn *on* an accent fill. Accents are pinned to a fixed
+    /// luminance in each appearance, so which of these reads is decided once
+    /// here rather than per call site.
+    static let inkOnAccent = AdaptiveColor(light: "FFFFFF", dark: "111114")
+
+    // MARK: - Accent
+
+    /// Today's accent — the weekday colour. See `DawnPalette`.
+    static var accent: AdaptiveColor { DawnPalette.accent(for: Date()) }
+
+    static func accent(for date: Date, calendar: Calendar = .current) -> AdaptiveColor {
+        DawnPalette.accent(for: date, calendar: calendar)
+    }
+
+    // MARK: - Geometry
+
+    /// Card corner radius. 28 came from PRD 3.3's Huxe-derived deck; the
+    /// editorial register wants a squarer card, and 20 reads as paper rather
+    /// than as a widget at the sizes task 2 uses.
+    static let cardCornerRadius: CGFloat = 20
+
+    // MARK: - Testing seam
+
+    /// Every semantic ink token, so `ContrastTests` measures the set rather
+    /// than whichever ones someone remembered to add.
+    static let inkTokensForTesting: [(String, AdaptiveColor)] = [
+        ("ink", ink), ("inkMuted", inkMuted), ("inkFaint", inkFaint),
+    ]
+
+    static let groundTokensForTesting: [(String, AdaptiveColor)] = [
+        ("surface", surface), ("surfaceRaised", surfaceRaised),
+    ]
+
+    // MARK: - Superseded names
+
+    // ADR-012 replaced the dark-only palette. These forward to the semantic
+    // tokens so `Features/` keeps building while tasks 2, 3 and 7 migrate.
+    //
+    // THE MIGRATION LIST — 46 call sites, generated from `xcodebuild build`
+    // deprecation warnings at commit time, not from memory. The build is the
+    // authoritative version; regenerate rather than trusting these line
+    // numbers once the files start moving.
+    //
+    // Task 2 owns Home, task 3 owns Player, task 7 owns Onboarding and
+    // ShowNotes.
+    //
+    //   canvas -> surface   (7 sites)
+    //     Home/HomeView.swift:11
+    //     Onboarding/ConnectAccountsView.swift:12
+    //     Onboarding/ScheduleSetupView.swift:12
+    //     Onboarding/WelcomeView.swift:7
+    //     Player/PlayerView.swift:55,57
+    //     ShowNotes/ShowNotesView.swift:41
+    //
+    //   textPrimary -> ink   (20 sites)
+    //     Home/BriefingCard.swift:21,48
+    //     Home/CalendarCard.swift:21,37
+    //     Home/InboxCard.swift:21,37
+    //     Home/WeatherCard.swift:11
+    //     Onboarding/ConnectAccountsView.swift:17,20,47
+    //     Onboarding/ScheduleSetupView.swift:16,57
+    //     Onboarding/WelcomeView.swift:12,25
+    //     Player/ChapterTabs.swift:18,22
+    //     Player/TranscriptView.swift:26
+    //     Player/TransportControls.swift:22,31
+    //     ShowNotes/ShowNotesView.swift:54
+    //
+    //   textSecondary -> inkMuted   (11 sites)
+    //     Home/BriefingCard.swift:28
+    //     Home/CalendarCard.swift:42
+    //     Home/InboxCard.swift:42
+    //     Home/WeatherCard.swift:14,22
+    //     Onboarding/ConnectAccountsView.swift:24
+    //     Onboarding/WelcomeView.swift:15
+    //     Player/PlayerView.swift:29,38
+    //     ShowNotes/ShowNotesView.swift:62,70
+    //
+    //   textTertiary -> inkFaint   (3 sites)
+    //     Onboarding/ConnectAccountsView.swift:36
+    //     Player/TransportControls.swift:40,45
+    //
+    //   calendarAccent -> accent   (2 sites)
+    //     Home/CalendarCard.swift:27,31
+    //
+    //   inboxAccent -> accent   (2 sites)
+    //     Home/InboxCard.swift:27,32
+    //
+    //   weatherAccent -> accent   (1 sites)
+    //     Home/WeatherCard.swift:32
+    //
+    // Two of these are NOT a blind rename:
+    //
+    //   Player/ChapterTabs.swift:22 and Player/TransportControls.swift:31 use
+    //   `textPrimary` as a *fill* behind black text — the active pill and the
+    //   play button — not as ink. Those want `accent` with `inkOnAccent` on
+    //   top. Renaming them to `ink` inverts them into black-on-black.
+    //
+    //   The four *Accent names now all resolve to the same colour, so the four
+    //   cards go identical until task 2 drops the distinction. That is the
+    //   intended end state — one edition, one colour — not a bug to work
+    //   around by reintroducing four hues.
+    //
+    // `AmbientBackground(family:)` is also superseded, at Home/BriefingCard:11,
+    // Home/CalendarCard:18, Home/InboxCard:18, Home/WeatherCard:6 and
+    // Player/TranscriptView:13. It still compiles and resolves through the
+    // day's anchor; pass only a seed, or drop it.
+    //
+    // Not a rename, and the reason task 2 is a rewrite rather than a migration:
+    // `CardDeck.swift` carries `.shadow(color: .black.opacity(0.5))` on a black
+    // canvas, which never rendered. ADR-012 deletes the file.
+
+    // None of these carry `renamed:`, deliberately. `renamed:` makes Xcode
+    // offer a fix-it that rewrites the call site, and every replacement here is
+    // an `AdaptiveColor` while every deprecated name is a `Color` — so applying
+    // the fix-it produced code that does not build. Verified rather than
+    // assumed: rewriting `MercuryColor.canvas` to `MercuryColor.surface` in
+    // WelcomeView, which is exactly what the fix-it did, fails with
+    // "value of type 'AdaptiveColor' has no member 'ignoresSafeArea'".
+    // A migration this layer exists to make safe should not ship an
+    // automated one-click way to break the build, so the replacement is
+    // spelled out in the message — including the `.color` — instead.
+
+    @available(*, deprecated,
+               message: "ADR-012: the canvas is no longer true black. Use MercuryColor.surface.color.")
+    static var canvas: Color { surface.color }
+
+    @available(*, deprecated,
+               message: "ADR-012: use MercuryColor.ink.color.")
+    static var textPrimary: Color { ink.color }
+
+    @available(*, deprecated,
+               message: "ADR-012: use MercuryColor.inkMuted.color.")
+    static var textSecondary: Color { inkMuted.color }
+
+    @available(*, deprecated,
+               message: "ADR-012: use MercuryColor.inkFaint.color.")
+    static var textTertiary: Color { inkFaint.color }
+
+    // The four per-family accents are gone: one edition has one colour, and a
+    // card's identity now comes from its position and type rather than from a
+    // hue of its own. All four resolve to today's accent, which is correct but
+    // makes the four cards identical — task 2 should drop the distinction
+    // rather than keep four names for one value.
+    @available(*, deprecated,
+               message: "ADR-012: one edition, one colour. Use MercuryColor.accent.color.")
+    static var calendarAccent: Color { accent.color }
+
+    @available(*, deprecated,
+               message: "ADR-012: one edition, one colour. Use MercuryColor.accent.color.")
+    static var inboxAccent: Color { accent.color }
+
+    @available(*, deprecated,
+               message: "ADR-012: one edition, one colour. Use MercuryColor.accent.color.")
+    static var weatherAccent: Color { accent.color }
+
+    @available(*, deprecated,
+               message: "ADR-012: one edition, one colour. Use MercuryColor.accent.color.")
+    static var greetingAccent: Color { accent.color }
 }

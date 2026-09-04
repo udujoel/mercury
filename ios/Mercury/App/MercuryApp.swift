@@ -73,7 +73,18 @@ struct MercuryApp: App {
         WindowGroup {
             RootView()
                 .environment(appState)
-                .preferredColorScheme(.dark)
+                // No .preferredColorScheme here. ADR-012 makes light the
+                // primary design target and dark a first-class second, and
+                // the whole semantic token layer resolves through
+                // `traits.userInterfaceStyle` — which this line pinned to
+                // .dark, making light unreachable in the running app.
+                //
+                // Nothing caught it: every contrast test calls
+                // `resolved(dark:)` directly, so the maths was verified
+                // while the resolution it depends on never ran. It took
+                // launching the app and flipping the simulator's appearance.
+                //
+                // The app follows the system now.
                 .task {
                     // Before anything is fetched: last night's briefing is
                     // already on disk, and showing it beats showing a
@@ -211,11 +222,23 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 struct RootView: View {
     @Environment(AppState.self) private var appState
 
+    /// The one place the app asks the system about Reduce Motion.
+    ///
+    /// `MercuryMotionContext` shipped with a `false` default and no caller
+    /// anywhere, so `\.mercuryMotion` was a constant: the resolve/substitute
+    /// logic was fully tested and could never run. Read here rather than in
+    /// `MercuryApp` because this value comes from the trait environment, which
+    /// an `App` is not part of.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
-        if appState.hasCompletedOnboarding {
-            HomeView()
-        } else {
-            WelcomeView()
+        Group {
+            if appState.hasCompletedOnboarding {
+                HomeView()
+            } else {
+                WelcomeView()
+            }
         }
+        .mercuryMotionEnvironment(reduceMotion: reduceMotion)
     }
 }

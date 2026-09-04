@@ -9,7 +9,10 @@ overnight and produces one narrated two-host audio briefing each morning.
 Modelled on Huxe (shut down May 2026), with the story-clustering approach from
 Particle and the audio-generation rules from NotebookLM.
 
-Full spec: `docs/PRD.md`. Roadmap and phase gates: `docs/ROADMAP.md`.
+Full spec: `docs/mercury_ios_prd_blueprint.docx`. Roadmap and phase gates:
+`docs/ROADMAP.md`. Sections 3.3 and 3.4 of the spec are superseded by
+ADR-012 — the visual register is Particle's light editorial, not Huxe's
+ambient dark. Huxe still governs behaviour.
 
 ## Core architecture decision
 

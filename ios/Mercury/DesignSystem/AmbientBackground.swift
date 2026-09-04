@@ -1,105 +1,166 @@
 import SwiftUI
 
-/// Deterministic ambient backgrounds for cards and DeepCast tiles.
+/// A wash of the day's colour across a surface.
 ///
-/// Generating an image per item is slow and expensive. Instead we hash the
-/// title into a stable hue and build a mesh gradient from it. Same title
-/// always produces the same visual identity, every item looks distinct, and
-/// it costs nothing.
+/// This used to be the loudest thing on screen: four saturated mesh gradients,
+/// one per card, each a different hue. ADR-012 moved the register to editorial,
+/// where the paper stays paper and the colour is carried by ink. So the same
+/// component survives at a fraction of the volume — a tint you notice only if
+/// you look for it, which is what stops a page of white cards feeling like a
+/// settings screen without turning it into a lava lamp.
+///
+/// Two bugs were fixed on the way through, both in `NoiseOverlay`.
 struct AmbientBackground: View {
 
     let seed: String
+    /// Multiplies the tint. 1.0 is a full-strength page wash; cards want less.
+    var intensity: Double = 1.0
+    var date: Date = Date()
     var family: Family = .derived
 
+    /// The ground the wash is drawn over.
+    ///
+    /// It is a parameter rather than an unconditional `MercuryColor.surface`
+    /// because `mercuryCard(tintSeed:)` draws this component *over*
+    /// `surfaceRaised`. Painting the page surface here erased the card's
+    /// elevation step: a tinted card rendered on page paper while the untinted
+    /// card beside it sat a step above, so adding a tint silently flattened the
+    /// card. The wash is a layer on top of a ground, not a ground of its own —
+    /// callers say which ground.
+    var base: AdaptiveColor = MercuryColor.surface
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    /// Superseded by the one-edition-one-colour rule, kept so `Features/` keeps
+    /// building until tasks 2 and 3 migrate.
+    ///
+    /// These used to be four independent hues — amber, sky, teal, olive — which
+    /// is what made the home screen read as four unrelated apps stacked up.
+    /// They now resolve through the day's anchor like everything else: each
+    /// case takes a fixed position in the day's ±0.09 band, evenly spaced so
+    /// the four are as distinguishable as the band allows while staying
+    /// obviously the same morning. Evenly spaced rather than hashed, because
+    /// four hashed seeds cluster at random and two of the four usually land on
+    /// top of each other.
     enum Family {
-        case derived        // hue from the seed hash
-        case greeting       // warm amber and rust
-        case weather        // sky blue
-        case calendar       // teal to slate
-        case inbox          // olive to forest
+        case derived
+        case greeting
+        case weather
+        case calendar
+        case inbox
+
+        /// Position within the band, in `[-1, 1]`.
+        var bandPosition: Double? {
+            switch self {
+            case .derived:  return nil   // hashed from the seed instead
+            case .weather:  return -1.0
+            case .calendar: return -1.0 / 3.0
+            case .inbox:    return  1.0 / 3.0
+            case .greeting: return  1.0
+            }
+        }
     }
+
+    /// The strongest the tint is ever allowed to get.
+    ///
+    /// It is a token rather than a literal because `ContrastTests` asserts that
+    /// every ink token still clears AA over a ground washed this hard. A tint
+    /// looks free and is not: it moves the ground's luminance, and the ink was
+    /// measured against the unwashed value.
+    static let maxTintOpacity = 0.08
+
+    static func hueOffset(seed: String, family: Family) -> Double {
+        if let position = family.bandPosition { return position * DawnPalette.hueBand }
+        return DawnPalette.hueOffset(seed: seed)
+    }
+
+    /// The wash's colour, for the appearance it is actually being drawn in.
+    ///
+    /// This used to pass `dark: false` unconditionally, so in dark mode the app
+    /// washed a near-black page with the *light* accent — solved for luminance
+    /// 0.150 against paper instead of 0.300 against night. The bug was
+    /// invisible to the test suite in the worst way: `ContrastTests` already
+    /// composited its washed grounds with `dark: isDark`, so every dark-mode
+    /// contrast number in that file described a wash the renderer never
+    /// produced. Static and pure so both sides now read the one definition.
+    static func accent(seed: String, date: Date, family: Family, dark isDark: Bool) -> RGB {
+        DawnPalette.accentColor(hue: DawnPalette.anchor(for: date).hue + hueOffset(seed: seed, family: family),
+                                dark: isDark)
+    }
+
+    /// Alpha at the wash's strongest point — the mesh's full-alpha corners.
+    /// A contrast floor has to be measured against the worst case, so this is
+    /// deliberately the strongest rather than the average.
+    static func tintOpacity(intensity: Double) -> Double {
+        maxTintOpacity * min(max(intensity, 0), 1)
+    }
+
+    /// A ground with the wash composited over it, at its strongest point.
+    static func washedGround(base: RGB, accent: RGB, intensity: Double) -> RGB {
+        accent.composited(opacity: tintOpacity(intensity: intensity), over: base)
+    }
+
+    /// The colour content drawn over this view actually lands on.
+    ///
+    /// Computed from the same stored properties `body` renders from, so a
+    /// contrast test measures this instance rather than a hand-built model of
+    /// it that can drift away from what ships.
+    func ground(dark isDark: Bool) -> RGB {
+        Self.washedGround(base: base.resolved(dark: isDark),
+                          accent: Self.accent(seed: seed, date: date, family: family, dark: isDark),
+                          intensity: intensity)
+    }
+
+    private var accent: RGB {
+        Self.accent(seed: seed, date: date, family: family, dark: colorScheme == .dark)
+    }
+
+    private var tint: Double { Self.tintOpacity(intensity: intensity) }
 
     var body: some View {
         ZStack {
+            base.color
+
             if #available(iOS 18.0, *) {
-                MeshGradient(
-                    width: 3, height: 3,
-                    points: Self.meshPoints,
-                    colors: colors
-                )
+                MeshGradient(width: 3, height: 3, points: Self.meshPoints, colors: meshColors)
+                    .opacity(tint)
             } else {
-                fallbackGradient
+                fallbackWash.opacity(tint)
             }
-            NoiseOverlay()
-                .blendMode(.overlay)
-                .opacity(0.06)
+
+            // Dither, not texture. Large near-flat gradients band visibly on
+            // OLED; a little noise breaks the bands up.
+            NoiseOverlay(seed: seed)
+                .blendMode(.softLight)
+                .opacity(0.035)
         }
         .drawingGroup()
     }
 
-    /// iOS 17 fallback — MeshGradient is iOS 18+. A layered radial/linear
-    /// gradient approximates the same three-tone identity without it.
-    private var fallbackGradient: some View {
-        let (base, secondary, highlight) = palette
+    /// The wash is one hue at three strengths rather than three hues — the
+    /// edition has one colour, and a multi-hue mesh is what made the old cards
+    /// read as four unrelated apps.
+    private var meshColors: [Color] {
+        let c = accent.color
+        let strong = c, mid = c.opacity(0.55), soft = c.opacity(0.15)
+        return [strong, mid, soft,
+                mid, soft, mid,
+                soft, mid, strong]
+    }
+
+    /// iOS 17 path — `MeshGradient` is iOS 18+. Layered gradients reproduce the
+    /// same corner-weighted wash. Kept working deliberately: the project
+    /// targets iOS 17, and this fallback was itself a fix in the MVP pass.
+    private var fallbackWash: some View {
+        let c = accent.color
         return ZStack {
-            LinearGradient(
-                colors: [highlight, base, secondary],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            RadialGradient(
-                colors: [highlight.opacity(0.6), .clear],
-                center: .topLeading,
-                startRadius: 0,
-                endRadius: 400
-            )
-            RadialGradient(
-                colors: [secondary.opacity(0.5), .clear],
-                center: .bottomTrailing,
-                startRadius: 0,
-                endRadius: 400
-            )
+            LinearGradient(colors: [c, c.opacity(0.2), c.opacity(0.65)],
+                           startPoint: .topLeading, endPoint: .bottomTrailing)
+            RadialGradient(colors: [c.opacity(0.7), .clear],
+                           center: .topLeading, startRadius: 0, endRadius: 420)
+            RadialGradient(colors: [c.opacity(0.5), .clear],
+                           center: .bottomTrailing, startRadius: 0, endRadius: 420)
         }
-    }
-
-    // MARK: - Palette
-
-    private var colors: [Color] {
-        let (base, secondary, highlight) = palette
-        return [
-            highlight, base,      secondary,
-            base,      secondary, base,
-            secondary, base,      highlight,
-        ]
-    }
-
-    private var palette: (Color, Color, Color) {
-        switch family {
-        case .greeting: return hues(0.055)   // amber
-        case .weather:  return hues(0.575)   // sky
-        case .calendar: return hues(0.500)   // teal
-        case .inbox:    return hues(0.235)   // olive
-        case .derived:  return hues(derivedHue)
-        }
-    }
-
-    private var derivedHue: Double {
-        var hasher = Hasher()
-        hasher.combine(seed)
-        return Double(abs(hasher.finalize()) % 360) / 360.0
-    }
-
-    private func hues(_ h: Double) -> (Color, Color, Color) {
-        (
-            Color(hue: h, saturation: 0.62, brightness: 0.55),
-            Color(hue: wrap(h + 0.08), saturation: 0.70, brightness: 0.38),
-            Color(hue: wrap(h - 0.05), saturation: 0.45, brightness: 0.72)
-        )
-    }
-
-    private func wrap(_ v: Double) -> Double {
-        let x = v.truncatingRemainder(dividingBy: 1.0)
-        return x < 0 ? x + 1 : x
     }
 
     private static let meshPoints: [SIMD2<Float>] = [
@@ -109,18 +170,85 @@ struct AmbientBackground: View {
     ]
 }
 
-/// Fine noise texture. Without this, large gradients band visibly on OLED.
-private struct NoiseOverlay: View {
+/// Fixed dither field.
+///
+/// The version this replaces had two problems. It called `Double.random` inside
+/// a `Canvas` draw closure, so the field was re-rolled on every redraw — the
+/// texture crawled during any animation, and "deterministic ambient background"
+/// was false twice over. And it drew `width * height / 40` one-point ellipses:
+/// about 5,850 individual `context.fill` calls for a single full-width card,
+/// scaling with area, every frame.
+///
+/// This draws from a table generated once by a seeded PRNG, batched into three
+/// alpha buckets so a redraw is three path fills instead of thousands. Cost is
+/// constant in the surface's area.
+struct NoiseOverlay: View {
+    var seed: String = ""
+
+    /// Enough points to break banding at card and full-screen sizes; small
+    /// enough that building the paths is not worth caching.
+    static let pointCount = 900
+
+    private static let buckets = 3
+
+    /// Unit-square points, split by alpha bucket. Generated once per process
+    /// from a fixed seed — `static let` is lazy and `let`, so this is
+    /// initialised exactly once and is safe to touch from any thread.
+    private static let field: [[CGPoint]] = {
+        var generator = SplitMix64(seed: 0x9E37_79B9_7F4A_7C15)
+        var out = [[CGPoint]](repeating: [], count: buckets)
+        for _ in 0..<pointCount {
+            let x = generator.nextUnit()
+            let y = generator.nextUnit()
+            let bucket = Int(generator.nextUnit() * Double(buckets)) % buckets
+            out[bucket].append(CGPoint(x: x, y: y))
+        }
+        return out
+    }()
+
+    /// Per-instance offset so two surfaces on screen do not share a field and
+    /// reveal the pattern. Deterministic in the seed, like everything else.
+    private var offset: CGPoint {
+        let h = DawnPalette.fnv1a(seed)
+        return CGPoint(x: Double(h & 0xFFFF) / 65_536.0,
+                       y: Double((h >> 16) & 0xFFFF) / 65_536.0)
+    }
+
     var body: some View {
         Canvas { context, size in
-            for _ in 0..<Int(size.width * size.height / 40) {
-                let x = Double.random(in: 0...size.width)
-                let y = Double.random(in: 0...size.height)
-                context.fill(
-                    Path(ellipseIn: CGRect(x: x, y: y, width: 1, height: 1)),
-                    with: .color(.white.opacity(Double.random(in: 0.1...0.4)))
-                )
+            let shift = offset
+            for (index, points) in Self.field.enumerated() {
+                var path = Path()
+                for point in points {
+                    let x = (point.x + shift.x).truncatingRemainder(dividingBy: 1) * size.width
+                    let y = (point.y + shift.y).truncatingRemainder(dividingBy: 1) * size.height
+                    path.addRect(CGRect(x: x, y: y, width: 1, height: 1))
+                }
+                let alpha = 0.18 + 0.22 * Double(index) / Double(Self.buckets - 1)
+                context.fill(path, with: .color(.white.opacity(alpha)))
             }
         }
+        .allowsHitTesting(false)
+    }
+}
+
+/// SplitMix64. Small, fast, and — the only property that matters here — a pure
+/// function of its seed, so the dither field is identical in every process.
+struct SplitMix64: RandomNumberGenerator {
+    private var state: UInt64
+
+    init(seed: UInt64) { state = seed }
+
+    mutating func next() -> UInt64 {
+        state = state &+ 0x9E37_79B9_7F4A_7C15
+        var z = state
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+        return z ^ (z >> 31)
+    }
+
+    /// A `Double` in `[0, 1)`. Takes the top 53 bits so the division is exact.
+    mutating func nextUnit() -> Double {
+        Double(next() >> 11) * (1.0 / 9_007_199_254_740_992.0)
     }
 }
