@@ -491,11 +491,21 @@ async def test_every_newsletter_that_arrived_is_listed_including_dropped_ones(
     """"View all the newsletters that dropped" means ALL of them.
 
     A list of only the ones that reached the audio is the manifest's source
-    list under another name, and this is the feature that was actually
-    asked for. So: every newsletter in the fixture inbox appears, and at
-    least one of them did NOT reach the audio — otherwise the assertion is
-    satisfied by a morning where everything happened to be covered and the
-    distinction is untested.
+    list under another name, and this is the feature that was actually asked
+    for. So: every newsletter in the fixture inbox appears, whatever the
+    ranker did with it.
+
+    That is ALL this proves, and the docstring used to claim more — that at
+    least one of them did not reach the audio, so the covered/dropped
+    distinction was under test here too. It is not. This fixture is the
+    ADR-003 acceptance case: three newsletters and two wire reports on ONE
+    acquisition, so all three land in the same cluster and that cluster is
+    the story the hosts lead with. Asserting the claim fails outright.
+    The distinction is real and is proved elsewhere — at story level by
+    `test_a_story_the_ranker_dropped_is_still_on_the_desk`, and for
+    `in_briefing` specifically by
+    `test_a_newsletter_points_at_the_story_it_contributed_to`, which builds
+    a morning with one of each rather than hoping for one.
 
     Checked against the stubbed-out fix by filtering `emails` to
     `selection["emails"]` when building the digest, which drops the

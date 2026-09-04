@@ -114,6 +114,31 @@ afterEach(() => {
 });
 
 // Summer: Lisbon is UTC+1, so these UTC times are 04:40 and 06:40 local.
+// `/status` asks about TODAY, derived from the wall clock in the configured
+// zone — so the objects it looks for have to be keyed to today as well. These
+// were written with "2026-08-30" hardcoded and passed for exactly one day;
+// every run after that reported `missing` and four assertions were measuring
+// nothing. A test that expires silently is worse than no test, because the
+// suite stays green until somebody reads the count.
+//
+// Module scope rather than inside one `describe`, because a second copy in
+// the digest suite is a second thing to forget to re-key.
+const TODAY = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Europe/Lisbon",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+}).format(new Date());
+
+/** Re-key fixture objects from the placeholder day onto today's. */
+const forToday = (objects) =>
+  Object.fromEntries(
+    Object.entries(objects).map(([key, value]) => [
+      key.replace(/^\d{4}-\d{2}-\d{2}/, TODAY),
+      value,
+    ]),
+  );
+
 const GENERATE_CHECKPOINT = Date.parse("2026-08-30T03:40:00Z");
 const DEADLINE_CHECKPOINT = Date.parse("2026-08-30T05:08:00Z");
 const ALARM_CHECKPOINT = Date.parse("2026-08-30T05:40:00Z");
@@ -203,19 +228,6 @@ describe("scheduled()", () => {
 });
 
 describe("briefingState", () => {
-  // `/status` asks about TODAY, derived from the wall clock in the configured
-  // zone — so the objects it looks for have to be keyed to today as well.
-  // These were written with "2026-08-30" hardcoded and passed for exactly one
-  // day; every run after that reported `missing` and the four assertions here
-  // were measuring nothing. A test that expires silently is worse than no
-  // test, because the suite stays green until somebody reads the count.
-  const TODAY = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Europe/Lisbon",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-
   const status = async (objects) => {
     const response = await worker.fetch(
       new Request("https://w/status", { headers: { "X-Mercury-Token": TOKEN } }),
@@ -223,15 +235,6 @@ describe("briefingState", () => {
     );
     return response.json();
   };
-
-  /** Re-key fixture objects from the placeholder day onto today's. */
-  const forToday = (objects) =>
-    Object.fromEntries(
-      Object.entries(objects).map(([key, value]) => [
-        key.replace(/^\d{4}-\d{2}-\d{2}/, TODAY),
-        value,
-      ]),
-    );
 
   test("the fixtures are keyed to the day /status actually asks about", async () => {
     // Guard the premise. Without it the four tests below can all quietly go
@@ -453,11 +456,25 @@ describe("the digest route", () => {
     // The failure to avoid: an absent digest read as an absent briefing,
     // which would send the scheduler off regenerating a briefing that is
     // sitting in the bucket, playable, every morning.
+    //
+    // This asked `/status` about an EMPTY bucket and asserted only the 200,
+    // so it was green whether or not briefingState looked at the digest —
+    // with no manifest and no audio the honest answer is `missing`, which is
+    // the very state the test claims to rule out. It now sets up a playable
+    // briefing for the day /status actually asks about, and withholds only
+    // the digest.
     const response = await worker.fetch(
       new Request("https://w/status", { headers: { "X-Mercury-Token": TOKEN } }),
-      envFor({}),
+      envFor(forToday({
+        "2026-08-30.manifest.json": PLAYABLE,
+        "2026-08-30.m4a": REAL_AUDIO,
+      })),
     );
+
     assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.briefing_id, TODAY, "premise: keyed to the day asked about");
+    assert.equal(body.state, "ok");
   });
 
   test("POSTing to it is still refused", async () => {
