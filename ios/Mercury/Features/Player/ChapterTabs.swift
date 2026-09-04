@@ -39,7 +39,15 @@ struct ChapterTabs: View {
                 scroll(proxy, to: id)
             }
             .onChange(of: typeSize) { _, _ in
-                scroll(proxy, to: activeSegmentID)
+                // The pills resize on this change and the ScrollView has not
+                // measured the new widths yet, so a `scrollTo` issued here
+                // uses the old geometry and leaves the active chapter
+                // misplaced or off screen. Same yield as the `task` below,
+                // for exactly the same reason.
+                Task {
+                    await Task.yield()
+                    scroll(proxy, to: activeSegmentID)
+                }
             }
             // Entering the player mid-briefing has to start in the right
             // place too — otherwise the ribbon is only correct for people

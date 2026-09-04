@@ -72,9 +72,55 @@ final class BriefingDigestTests: XCTestCase {
     }
 
     private func source(_ turnIndex: Int, _ title: String, _ name: String,
-                        _ type: String, clusterSize: Int = 1) -> SourceRef {
+                        _ type: String, clusterSize: Int = 1,
+                        itemId: String? = nil) -> SourceRef {
         SourceRef(turnIndex: turnIndex, title: title, url: nil,
-                  sourceName: name, sourceType: type, clusterSize: clusterSize)
+                  sourceName: name, sourceType: type, clusterSize: clusterSize,
+                  itemId: itemId)
+    }
+
+    // MARK: - Two meetings with the same name are two meetings
+
+    /// `_build_source_refs` matches a calendar event BY TITLE, and every
+    /// calendar ref carries the same `source_name` of "Calendar". So before
+    /// `item_id` existed the dedup key could not tell two events apart at
+    /// all, and a day with two "1:1"s reported one event. Recurring meetings
+    /// make that ordinary rather than exotic.
+    func testTwoCalendarEventsSharingATitleAreCountedTwice() {
+        let m = manifest(sources: [
+            source(2, "1:1", "Calendar", "calendar", itemId: "ev-morning"),
+            source(2, "1:1", "Calendar", "calendar", itemId: "ev-afternoon"),
+        ])
+
+        XCTAssertEqual(row("calendar", in: manifestRows(m))?.detail, "2 events")
+    }
+
+    /// The same two events in a manifest generated before the field existed —
+    /// every briefing already in R2. They still collapse to one, and that is
+    /// the documented limit of the fallback rather than a behaviour to
+    /// preserve: the point of this test is that such a manifest keeps
+    /// decoding and rendering at all.
+    func testAManifestWithoutItemIdsStillRenders() {
+        let m = manifest(sources: [
+            source(2, "1:1", "Calendar", "calendar"),
+            source(2, "1:1", "Calendar", "calendar"),
+        ])
+
+        XCTAssertEqual(row("calendar", in: manifestRows(m))?.detail, "1 event")
+    }
+
+    /// Distinct titles never depended on the id, and must not start to.
+    func testDistinctCalendarTitlesAreStillCountedSeparatelyWithoutIds() {
+        let m = manifest(sources: [
+            source(2, "Standup", "Calendar", "calendar"),
+            source(2, "Design review", "Calendar", "calendar"),
+        ])
+
+        XCTAssertEqual(row("calendar", in: manifestRows(m))?.detail, "2 events")
+    }
+
+    private func manifestRows(_ m: BriefingManifest) -> [BriefingDigest.Row] {
+        BriefingDigest.rows(for: m)
     }
 
     private func row(_ id: String, in rows: [BriefingDigest.Row]) -> BriefingDigest.Row? {

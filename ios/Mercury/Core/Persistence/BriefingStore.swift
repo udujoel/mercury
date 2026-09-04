@@ -28,7 +28,7 @@ actor BriefingStore {
             SourceRefEntity(turnIndex: $0.turnIndex, title: $0.title,
                             url: $0.url.flatMap(URL.init(string:)),
                             sourceName: $0.sourceName, sourceType: $0.sourceType,
-                            clusterSize: $0.clusterSize)
+                            clusterSize: $0.clusterSize, itemId: $0.itemId)
         }
 
         if let existing {
@@ -177,7 +177,8 @@ actor BriefingStore {
                 .sorted { $0.turnIndex < $1.turnIndex }
                 .map { SourceRef(turnIndex: $0.turnIndex, title: $0.title,
                                  url: $0.url?.absoluteString, sourceName: $0.sourceName,
-                                 sourceType: $0.sourceType, clusterSize: $0.clusterSize) }
+                                 sourceType: $0.sourceType, clusterSize: $0.clusterSize,
+                                 itemId: $0.itemId) }
         )
         return Stored(manifest: manifest, localAudioPath: entity.localAudioPath)
     }

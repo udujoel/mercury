@@ -20,6 +20,31 @@ struct HomeView: View {
 
     private var rows: [BriefingDigest.Row] { BriefingDigest.rows(for: appState.manifest) }
 
+    /// The day the briefing on screen was made, which is not always today.
+    ///
+    /// `restoreLastBriefing` puts the last briefing on the device into
+    /// `manifest`, so before the cron has run — or with the phone offline —
+    /// Home renders yesterday's rows and yesterday's runtime underneath a
+    /// masthead showing today's date, a card headed "Today's briefing" and a
+    /// section labelled "In today's briefing". Four true-looking statements
+    /// about the wrong day.
+    ///
+    /// `generatedAt`, not `briefingId`: the id is a date string the backend
+    /// derives in the SERVER's timezone. PlayerView's masthead carries the
+    /// same note.
+    private var briefingDay: Date? { appState.manifest?.generatedAt }
+
+    private var isFromToday: Bool {
+        guard let briefingDay else { return true }
+        return Calendar.current.isDateInToday(briefingDay)
+    }
+
+    /// "Today's briefing", or "Thursday's briefing" when it is older.
+    private var briefingTitle: String {
+        guard let briefingDay, !isFromToday else { return "Today's briefing" }
+        return "\(briefingDay.formatted(.dateTime.weekday(.wide)))'s briefing"
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -36,6 +61,7 @@ struct HomeView: View {
                         .accessibilityAddTraits(.isHeader)
 
                     TodaysBriefingCard(
+                        title: briefingTitle,
                         state: appState.loadState,
                         summary: BriefingDigest.summary(for: appState.manifest),
                         isPlaying: appState.playback.isPlaying,
@@ -44,7 +70,7 @@ struct HomeView: View {
                     )
 
                     if !rows.isEmpty {
-                        SectionLabel("In today's briefing")
+                        SectionLabel("In \(briefingTitle.lowercased())")
                             .padding(.top, MercurySpace.section)
                             .padding(.bottom, MercurySpace.snug)
 
@@ -84,21 +110,33 @@ struct HomeView: View {
         }
     }
 
+    /// Toggles when there is audio loaded, fetches when there is not.
+    ///
+    /// It used to call `playBriefing()` either way, so the pause affordance
+    /// on a playing card restarted the briefing from zero — a full manifest
+    /// fetch and audio download to undo the thing the user asked for.
+    ///
+    /// Navigation is left to the `isPlaying` observer below: resuming opens
+    /// the player, pausing stays on Home, and the notification path gets the
+    /// same treatment without a second rule.
     private func play() {
         Task {
-            await appState.playBriefing()
+            await appState.togglePlayback()
             if case .ready = appState.loadState { showPlayer = true }
         }
     }
 
-    /// Tapping a row goes to the player *at that chapter*. If the briefing is
-    /// not loaded into the coordinator yet the seek is harmless — `seek` on a
-    /// coordinator with no file schedules nothing — and the play path takes
-    /// over from the card.
+    /// Tapping a row goes to the player *at that chapter*, and plays.
+    ///
+    /// Both halves were missing. The seek went to a coordinator that may hold
+    /// no file — on the restore path it always does, and `seek` there
+    /// schedules nothing — and on a merely paused briefing it moved the
+    /// playhead and left the audio stopped, while the row's own VoiceOver
+    /// hint said it plays this part of the briefing.
     private func open(at row: BriefingDigest.Row) {
         guard let ms = row.seekMs else { return }
-        appState.playback.seek(toMs: ms)
         showPlayer = true
+        Task { await appState.play(fromMs: ms) }
     }
 }
 

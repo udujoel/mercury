@@ -143,6 +143,63 @@ final class AppState {
             defaults.object(forKey: Self.wakeTimeKey) as? Int ?? Self.defaultWakeTimeMinutes
     }
 
+    /// True once the coordinator actually holds audio.
+    ///
+    /// A manifest is not enough, and that distinction is the whole bug behind
+    /// three separate findings on this PR. `restoreLastBriefing` decodes a
+    /// transcript from disk and sets `manifest` without loading anything into
+    /// the engine; `PlaybackCoordinator.seek(toMs:)` with no file returns
+    /// having scheduled nothing. So on that path the scrubber, the chapter
+    /// ribbon and every Home row moved no audio and reported no error.
+    ///
+    /// `.ready` is set only after `playback.load` has succeeded, which makes
+    /// it the one honest proxy for "there is a file in the engine".
+    @MainActor
+    var isPlaybackLoaded: Bool { loadState == .ready }
+
+    /// Play, pause, or fetch — whichever the current state calls for.
+    ///
+    /// Every control that starts playback goes through here. Tapping the Home
+    /// card while a briefing was already playing called `playBriefing()`
+    /// unconditionally, which re-fetched the manifest, re-downloaded the
+    /// audio and restarted from zero — so the card drew a pause affordance
+    /// and pressing it began the briefing again.
+    @MainActor
+    func togglePlayback() async {
+        guard isPlaybackLoaded else {
+            await playBriefing()
+            return
+        }
+        playback.isPlaying ? playback.pause() : playback.play()
+    }
+
+    /// Jump to a point in the briefing and play from there, loading first if
+    /// the engine is empty.
+    ///
+    /// This is what a chapter tab and a Home row do, and both tell VoiceOver
+    /// they play that part of the briefing. A bare seek honoured neither
+    /// half: on a restored manifest it did nothing at all, and on a paused
+    /// one it moved the playhead and left the audio stopped.
+    @MainActor
+    func play(fromMs ms: Int) async {
+        if !isPlaybackLoaded { await playBriefing() }
+        guard isPlaybackLoaded else { return }
+        playback.seek(toMs: ms)
+        if !playback.isPlaying { playback.play() }
+    }
+
+    /// Move the playhead without changing whether audio is running.
+    ///
+    /// The scrubber's contract, as distinct from `play(fromMs:)`: dragging
+    /// while paused leaves you paused. Callers must check `isPlaybackLoaded`
+    /// first — this deliberately does NOT fetch, because a drag is not a
+    /// request to start downloading a briefing.
+    @MainActor
+    func seek(toMs ms: Int) {
+        guard isPlaybackLoaded else { return }
+        playback.seek(toMs: ms)
+    }
+
     /// Tapping the greeting card is the primary action of the entire app.
     ///
     /// FETCHES FIRST, generates only as a fallback. Per ADR-001 the phone

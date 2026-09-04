@@ -20,45 +20,79 @@ import SwiftUI
 /// layout, so at accessibility sizes the speed control simply draws on top of
 /// the forward-skip button.
 struct TransportControls: View {
+    @Environment(\.dynamicTypeSize) private var typeSize
+
     let isPlaying: Bool
     let rate: Float
+    /// False until there is audio in the engine. Skip and speed act on a
+    /// coordinator that would ignore them, so they are shown disabled rather
+    /// than silently doing nothing. Play stays enabled at all times — it is
+    /// the control that loads.
+    var isEnabled: Bool = true
     let onTogglePlay: () -> Void
     let onSkip: (Int) -> Void
     let onCycleRate: () -> Void
 
     var body: some View {
-        HStack(spacing: 0) {
-            rateButton
-                .opacity(0)
-                .accessibilityHidden(true)
-                .allowsHitTesting(false)
+        Group {
+            if typeSize.isAccessibilitySize {
+                // The balancing twin costs a full rate-button width, and at
+                // accessibility sizes that is the width of a grown "1.25x".
+                // Five cells stop fitting: on a compact device the row
+                // overflows its content width and the speed label truncates.
+                //
+                // The twin exists only to centre play, so at these sizes the
+                // speed control moves to its own line and play is centred by
+                // construction instead — three equal flexible cells — which
+                // also gives the label the width it now wants.
+                VStack(spacing: MercurySpace.snug) {
+                    HStack(spacing: 0) { transport }
+                    rateButton
+                }
+            } else {
+                HStack(spacing: 0) {
+                    rateButton
+                        .opacity(0)
+                        .accessibilityHidden(true)
+                        .allowsHitTesting(false)
 
-            skip(by: -PlayerTransport.skipInterval,
-                 symbol: "gobackward.15",
-                 label: "Back 15 seconds")
+                    transport
 
-            Button(action: onTogglePlay) {
-                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 26, weight: .medium))
-                    .foregroundStyle(MercuryColor.inkOnAccent.color)
-                    // A FILL with a glyph on it, not ink — see the note in
-                    // ChapterTabs. `inkOnAccent` is the token that exists for
-                    // exactly this.
-                    .frame(width: 64, height: 64)
-                    .background(Circle().fill(MercuryColor.accent.color))
-                    .contentShape(Circle())
+                    rateButton
+                }
             }
-            .buttonStyle(.plain)
-            .frame(maxWidth: .infinity)
-            .accessibilityLabel(isPlaying ? "Pause" : "Play")
-
-            skip(by: PlayerTransport.skipInterval,
-                 symbol: "goforward.15",
-                 label: "Forward 15 seconds")
-
-            rateButton
         }
         .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private var transport: some View {
+        skip(by: -PlayerTransport.skipInterval,
+             symbol: "gobackward.15",
+             label: "Back 15 seconds")
+
+        playButton
+
+        skip(by: PlayerTransport.skipInterval,
+             symbol: "goforward.15",
+             label: "Forward 15 seconds")
+    }
+
+    private var playButton: some View {
+        Button(action: onTogglePlay) {
+            Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                .font(.system(size: 26, weight: .medium))
+                .foregroundStyle(MercuryColor.inkOnAccent.color)
+                // A FILL with a glyph on it, not ink — see the note in
+                // ChapterTabs. `inkOnAccent` is the token that exists for
+                // exactly this.
+                .frame(width: 64, height: 64)
+                .background(Circle().fill(MercuryColor.accent.color))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
+        .accessibilityLabel(isPlaying ? "Pause" : "Play")
     }
 
     private func skip(by delta: Int, symbol: String, label: String) -> some View {
@@ -71,6 +105,7 @@ struct TransportControls: View {
         }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity)
+        .disabled(!isEnabled)
         .accessibilityLabel(label)
     }
 
@@ -90,6 +125,7 @@ struct TransportControls: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(!isEnabled)
         .accessibilityLabel("Playback speed")
         .accessibilityValue(PlayerTransport.rateLabel(rate))
         .accessibilityHint("Cycles through 1x, 1.25x, 1.5x and 2x")

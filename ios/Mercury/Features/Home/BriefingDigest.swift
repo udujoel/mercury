@@ -182,10 +182,20 @@ enum BriefingDigest {
         Set(sources.map(key(for:)))
     }
 
+    /// Prefer the item's own id; fall back to title and sender.
+    ///
+    /// The fallback is what every briefing generated before `item_id` existed
+    /// still gets, and it is wrong in one specific way: `_mentions` matches a
+    /// calendar event by title, so two events called "1:1" on the same day
+    /// produce two refs that this collapses into one, and the calendar row
+    /// undercounts. Recurring meetings make that ordinary rather than exotic.
+    /// New manifests carry the id and count both.
+    ///
     /// A null byte, not a hyphen: a title is free text and can contain any
     /// separator a human would pick.
     private static func key(for source: SourceRef) -> String {
-        "\(source.title)\u{0}\(source.sourceName)"
+        if let id = source.itemId, !id.isEmpty { return id }
+        return "\(source.title)\u{0}\(source.sourceName)"
     }
 
     // MARK: - Lengths

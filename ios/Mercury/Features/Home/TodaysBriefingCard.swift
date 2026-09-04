@@ -16,6 +16,11 @@ import SwiftUI
 struct TodaysBriefingCard: View {
     @Environment(\.dynamicTypeSize) private var typeSize
 
+    /// "Today's briefing", usually — but Home passes the actual day when
+    /// what is on the device is older than today. A card that says "Today's"
+    /// over yesterday's runtime is the kind of confident wrongness that costs
+    /// trust in everything else on the page.
+    let title: String
     let state: LoadState
     let summary: String?
     let isPlaying: Bool
@@ -42,7 +47,7 @@ struct TodaysBriefingCard: View {
             layout {
                 glyph
                 VStack(alignment: .leading, spacing: MercurySpace.tight) {
-                    Text("Today's briefing")
+                    Text(title)
                         .font(MercuryType.cardTitle)
                         .foregroundStyle(MercuryColor.ink.color)
                     Text(subtitle)
@@ -56,7 +61,7 @@ struct TodaysBriefingCard: View {
         }
         .buttonStyle(.plain)
         .disabled(isLoading)
-        .accessibilityLabel(isPlaying ? "Today's briefing, playing" : "Play today's briefing")
+        .accessibilityLabel(isPlaying ? "\(title), playing" : "Play \(title.lowercased())")
         .accessibilityValue(subtitle)
     }
 
@@ -138,11 +143,18 @@ struct TodaysBriefingCard: View {
 
 #Preview("Ready") {
     VStack(spacing: 20) {
-        TodaysBriefingCard(state: .ready, summary: "6 min · 14 sources",
+        TodaysBriefingCard(title: "Today's briefing", state: .ready,
+                           summary: "6 min · 14 sources",
                            isPlaying: false, onPlay: {}, onRetry: {})
-        TodaysBriefingCard(state: .loading, summary: nil,
+        TodaysBriefingCard(title: "Today's briefing", state: .loading, summary: nil,
                            isPlaying: false, onPlay: {}, onRetry: {})
-        TodaysBriefingCard(state: .failed("Network error: Error Domain=NSURLErrorDomain Code=-1009"),
+        // What Home shows when the cron has not run and the only briefing on
+        // the device is older than today.
+        TodaysBriefingCard(title: "Thursday's briefing", state: .ready,
+                           summary: "8 min · 11 sources",
+                           isPlaying: false, onPlay: {}, onRetry: {})
+        TodaysBriefingCard(title: "Today's briefing",
+                           state: .failed("Network error: Error Domain=NSURLErrorDomain Code=-1009"),
                            summary: nil, isPlaying: false, onPlay: {}, onRetry: {})
     }
     .padding()

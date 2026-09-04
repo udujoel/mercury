@@ -9,6 +9,9 @@ import SwiftUI
 struct ScrubBar: View {
     let positionMs: Int
     let durationMs: Int
+    /// False until there is audio in the engine. Defaulted so the preview and
+    /// every existing call site keep working unchanged.
+    var isEnabled: Bool = true
     let onSeek: (Int) -> Void
 
     /// Non-nil while a finger is down. The coordinator publishes a new
@@ -79,6 +82,14 @@ struct ScrubBar: View {
                         onSeek(target)
                     }
             )
+            // A drag on a coordinator with no file schedules nothing and
+            // reports nothing, so on the restore path — a manifest decoded
+            // from disk, no audio loaded — the scrubber moved under the
+            // finger and sprang back. Disabled says that; a live-looking
+            // control that ignores you does not. It is not wired to fetch:
+            // dragging a scrubber is not a request to download a briefing.
+            .disabled(!isEnabled)
+            .opacity(isEnabled ? 1 : 0.4)
         }
         // The line is 2pt; the gesture area is 44. A hairline you cannot hit
         // is decoration.

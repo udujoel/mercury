@@ -32,16 +32,18 @@ struct PlayerView: View {
                 ScrubBar(
                     positionMs: playback.positionMs,
                     durationMs: manifest?.durationMs ?? 0,
-                    onSeek: { playback.seek(toMs: $0) }
+                    isEnabled: appState.isPlaybackLoaded,
+                    onSeek: { appState.seek(toMs: $0) }
                 )
                 .mercuryGutter()
 
                 TransportControls(
                     isPlaying: playback.isPlaying,
                     rate: playback.rate,
+                    isEnabled: appState.isPlaybackLoaded,
                     onTogglePlay: togglePlay,
                     onSkip: { delta in
-                        playback.seek(toMs: PlayerTransport.skipTarget(
+                        appState.seek(toMs: PlayerTransport.skipTarget(
                             positionMs: playback.positionMs,
                             byMs: delta,
                             durationMs: manifest?.durationMs ?? 0
@@ -54,7 +56,11 @@ struct PlayerView: View {
                 ChapterTabs(
                     segments: manifest?.segments ?? [],
                     activeSegmentID: playback.currentSegment?.id,
-                    onSelect: { playback.seek(toMs: $0.startMs) }
+                    // Loads first when nothing is loaded, and plays: a
+                    // chapter tab is a request to hear that chapter.
+                    onSelect: { segment in
+                        Task { await appState.play(fromMs: segment.startMs) }
+                    }
                 )
 
                 privacyLine
@@ -69,7 +75,9 @@ struct PlayerView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     NavigationLink {
                         ShowNotesView(manifest: manifest,
-                                      onSeek: { playback.seek(toMs: $0) })
+                                      onSeek: { ms in
+                                          Task { await appState.play(fromMs: ms) }
+                                      })
                     } label: {
                         Image(systemName: "list.bullet.rectangle")
                             .foregroundStyle(MercuryColor.inkMuted.color)
@@ -99,12 +107,10 @@ struct PlayerView: View {
     /// nothing else does. It is a proxy, and the honest fix is a `isLoaded`
     /// on the coordinator, which lives in `Core/` and is not this task's to
     /// add. Flagged in the report.
+    /// The same one place Home's card goes through — see
+    /// `AppState.togglePlayback`.
     private func togglePlay() {
-        guard case .ready = appState.loadState else {
-            Task { await appState.playBriefing() }
-            return
-        }
-        appState.playback.isPlaying ? appState.playback.pause() : appState.playback.play()
+        Task { await appState.togglePlayback() }
     }
 
     /// "BRIEFING · 4 SEP".

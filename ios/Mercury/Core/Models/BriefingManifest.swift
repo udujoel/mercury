@@ -72,6 +72,11 @@ struct SourceRef: Codable, Identifiable, Equatable, Hashable {
     let sourceName: String
     let sourceType: String
     let clusterSize: Int
+    /// The id of the item this ref points at, when the manifest carries one.
+    ///
+    /// Optional because every briefing already in R2 was generated before the
+    /// field existed, and those must keep decoding.
+    let itemId: String?
 
     enum CodingKeys: String, CodingKey {
         case turnIndex = "turn_index"
@@ -79,6 +84,24 @@ struct SourceRef: Codable, Identifiable, Equatable, Hashable {
         case sourceName = "source_name"
         case sourceType = "source_type"
         case clusterSize = "cluster_size"
+        case itemId = "item_id"
+    }
+
+    /// Written out rather than synthesised so `itemId` can default.
+    ///
+    /// Every manifest already in R2 predates the field, and so does every
+    /// fixture and every test that builds a ref by hand; a memberwise
+    /// initialiser would have made all of them say `itemId: nil` to express
+    /// nothing.
+    init(turnIndex: Int, title: String, url: String?, sourceName: String,
+         sourceType: String, clusterSize: Int, itemId: String? = nil) {
+        self.turnIndex = turnIndex
+        self.title = title
+        self.url = url
+        self.sourceName = sourceName
+        self.sourceType = sourceType
+        self.clusterSize = clusterSize
+        self.itemId = itemId
     }
 
     var id: String { "\(turnIndex)-\(title)" }
