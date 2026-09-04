@@ -150,6 +150,58 @@ final class PlayerTransportTests: XCTestCase {
         }
     }
 
+    // MARK: - Manifest values that trap
+
+    /// These four are crash tests, not assertion tests.
+    ///
+    /// Swift's `Int` arithmetic is checked, so the failure mode each one
+    /// covers is a trap that takes the whole process down — there is no
+    /// `XCTAssertThrows` to catch it and no return value to compare. That
+    /// makes them unusually honest about the "stubbed out" standard: revert
+    /// any one of the clamps and the corresponding test does not fail, it
+    /// kills the runner mid-suite. Verified that way for all four.
+    ///
+    /// Reachable because `durationMs` is a manifest field. `Int.max` is a
+    /// perfectly ordinary JSON integer and `JSONDecoder` accepts it without
+    /// complaint, so nothing between a bad generation run and this arithmetic
+    /// rejects it.
+
+    func testRemainingSurvivesADurationOfIntMax() {
+        // `remaining + 999` overflowed here — at position zero, the most
+        // ordinary position there is.
+        XCTAssertEqual(
+            PlayerTransport.remainingLabel(positionMs: 0, durationMs: .max).first, "−"
+        )
+    }
+
+    func testRemainingSurvivesADurationOfIntMin() {
+        // `durationMs - positionMs` underflowed. A negative duration is not
+        // a briefing, so the honest answer is that none of it is left.
+        XCTAssertEqual(
+            PlayerTransport.remainingLabel(positionMs: 1, durationMs: .min), "−0:00"
+        )
+    }
+
+    func testSeekToTheEndOfAnIntMaxTrackDoesNotTrap() {
+        // `Double(Int.max)` rounds up to 2^63, one past the top of `Int`.
+        XCTAssertEqual(
+            PlayerTransport.seekTarget(atX: 320, trackWidth: 320, durationMs: .max), .max
+        )
+    }
+
+    func testSkippingForwardFromAPositionNearIntMaxDoesNotTrap() {
+        XCTAssertEqual(
+            PlayerTransport.skipTarget(positionMs: .max, byMs: 15_000, durationMs: .max), .max
+        )
+    }
+
+    func testATimecodePastInt32DoesNotPrintGarbage() {
+        // `String(format: "%d:%02d", …)` read four bytes of an eight-byte
+        // argument here, so the minutes and the seconds came out of
+        // different halves of the stack.
+        XCTAssertEqual(PlayerTransport.timecode(ms: 3_000_000_000_000), "50000000:00")
+    }
+
     // MARK: - Accessibility
 
     func testTheScrubberAnnouncesAPositionAPersonCanAct() {
