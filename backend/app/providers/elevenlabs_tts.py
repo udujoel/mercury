@@ -95,10 +95,14 @@ def _words_from_alignment(alignment: dict | None) -> tuple[WordTiming, ...]:
         nonlocal buf, start_s
         if buf and start_s is not None:
             word = "".join(buf)
-            # A run of punctuation between two spaces is not a word to light
-            # up, but punctuation ATTACHED to one is part of it — which the
-            # buffer already handles, because it only breaks on whitespace.
-            if word.strip():
+            # A run of punctuation between two spaces — an em dash, an
+            # ellipsis on its own — is not a word to light up. Punctuation
+            # ATTACHED to a word is part of it, which the buffer already
+            # handles because it only breaks on whitespace.
+            #
+            # `word.strip()` was the wrong test and always passed: the buffer
+            # is built by skipping whitespace, so it can never be blank.
+            if any(ch.isalnum() for ch in word):
                 out.append(
                     WordTiming(
                         word=word,

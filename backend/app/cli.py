@@ -385,9 +385,16 @@ async def _generate(
         # is different: nothing was stored, so there is no stale briefing to
         # force past, and the thing to go and look at is the TTS provider.
         log.error("generation produced no audio for %s: %s", briefing_id, exc)
+        # Name the provider that is actually configured. This said "check
+        # Google TTS credentials and quota" unconditionally, which after
+        # TTS_PROVIDER existed sent the operator to the wrong dashboard on
+        # the one morning they are reading it in a hurry.
+        from app.core.config import get_settings
+
+        provider = (get_settings().tts_provider or "google").strip() or "google"
         print(
             f"::error::Briefing {briefing_id} produced NO AUDIBLE TURNS and was "
-            "not stored. Every TTS call failed — check Google TTS credentials "
+            f"not stored. Every TTS call failed — check {provider} credentials "
             "and quota. Nothing was written, so a re-run needs no --force."
         )
         return 1

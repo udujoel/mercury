@@ -12,7 +12,12 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.providers import Speech, WordTiming, build_tts_provider
+from app.core.providers import (
+    FallbackTTSProvider,
+    Speech,
+    WordTiming,
+    build_tts_provider,
+)
 from app.providers.elevenlabs_tts import _words_from_alignment
 
 
@@ -54,9 +59,30 @@ def test_punctuation_attached_to_a_word_stays_part_of_it():
 
 
 def test_a_run_of_punctuation_alone_is_not_a_word():
-    # An em dash set off by spaces is not something to light up.
+    """The test that was wrong in the first cut of this file.
+
+    It asserted the em dash WAS in the list while carrying this name, and
+    the production comment said the opposite — the name, the comment and the
+    assertion all disagreed in one diff. The name was right: an em dash set
+    off by spaces is not something to light up.
+
+    The bug underneath was the guard. `word.strip()` can never be falsy,
+    because the buffer is built by skipping whitespace, so every
+    punctuation-only token passed it.
+    """
     words = _words_from_alignment(_alignment("a — b"))
-    assert [w.word for w in words] == ["a", "—", "b"]
+    assert [w.word for w in words] == ["a", "b"]
+
+
+def test_an_ellipsis_on_its_own_is_not_a_word_either():
+    words = _words_from_alignment(_alignment("wait ... really"))
+    assert [w.word for w in words] == ["wait", "really"]
+
+
+def test_a_number_is_a_word():
+    """`isalnum`, not `isalpha`: "4.2" and "2026" are spoken and highlightable."""
+    words = _words_from_alignment(_alignment("paid 4.2 billion"))
+    assert [w.word for w in words] == ["paid", "4.2", "billion"]
 
 
 def test_multiple_spaces_and_newlines_do_not_produce_empty_words():
@@ -175,7 +201,129 @@ def _build_with_stubs(monkeypatch, *, elevenlabs_raises: bool = False) -> str:
     monkeypatch.setitem(sys.modules, "app.providers.google_tts", goog)
 
     provider = build_tts_provider()
-    return "elevenlabs" if isinstance(provider, _Eleven) else "google"
+    # ElevenLabs comes back wrapped, because Google sits behind it for the
+    # whole run rather than only at construction time.
+    if isinstance(provider, FallbackTTSProvider):
+        return "elevenlabs" if isinstance(provider._primary, _Eleven) else "google"
+    return "google"
+
+
+def test_a_typo_in_the_provider_name_is_logged_rather_than_silently_ignored(
+    monkeypatch, caplog
+):
+    """The case the factory's own docstring warns about. `elvenlabs` fell
+    through to Google with no log line at all — a briefing shipping in the
+    wrong voice with no breadcrumb, which is precisely the failure the
+    fallback logging exists to prevent."""
+    import app.core.config as config
+
+    monkeypatch.setattr(config, "get_settings", _settings(tts_provider="elvenlabs"))
+    built = _build_with_stubs(monkeypatch)
+
+    assert built == "google"
+    assert any("elvenlabs" in r.getMessage() for r in caplog.records)
+    assert any(r.levelname == "ERROR" for r in caplog.records)
+
+
+def test_google_spelled_normally_is_not_logged_as_a_typo(monkeypatch, caplog):
+    import app.core.config as config
+
+    monkeypatch.setattr(config, "get_settings", _settings(tts_provider="google"))
+    _build_with_stubs(monkeypatch)
+    assert not [r for r in caplog.records if r.levelname == "ERROR"]
+
+
+# ── an outage mid-run, not just a missing key ─────────────────
+
+
+class _Boom:
+    """A provider that works until it doesn't."""
+
+    voice_a = "el-a"
+    voice_b = "el-b"
+
+    def __init__(self, fail_from: int = 0) -> None:
+        self.calls = 0
+        self._fail_from = fail_from
+
+    async def synthesize(self, text: str, voice_id: str) -> Speech:
+        self.calls += 1
+        if self.calls > self._fail_from:
+            raise RuntimeError("elevenlabs is down")
+        return Speech(audio=b"primary", words=(WordTiming("w", 0, 1),))
+
+
+class _Backup:
+    voice_a = "g-a"
+    voice_b = "g-b"
+
+    def __init__(self) -> None:
+        self.voices_asked: list[str] = []
+
+    async def synthesize(self, text: str, voice_id: str) -> Speech:
+        self.voices_asked.append(voice_id)
+        return Speech(audio=b"backup")
+
+
+@pytest.mark.asyncio
+async def test_an_outage_after_construction_switches_provider_instead_of_failing(
+    caplog,
+):
+    """Catching a constructor error covers a MISSING KEY, not an outage.
+    With only that, ElevenLabs going down at 04:00 meant every turn
+    exhausted its retries, every clip came back None, and the run raised
+    EmptyBriefingError — no briefing, which is what rule 7 exists to
+    prevent."""
+    backup = _Backup()
+    p = FallbackTTSProvider(_Boom(fail_from=1), lambda: backup)
+
+    first = await p.synthesize("hello", p.voice_a)
+    second = await p.synthesize("there", p.voice_a)
+
+    assert first.audio == b"primary"
+    assert second.audio == b"backup"
+    assert any(r.levelname == "ERROR" for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_the_fallback_is_asked_for_its_own_voice_not_the_primarys():
+    """The caller reads `voice_b` off the wrapper, which reports ElevenLabs
+    ids. Handing one of those to Google would fail every remaining turn for
+    a second, sillier reason."""
+    backup = _Backup()
+    p = FallbackTTSProvider(_Boom(fail_from=0), lambda: backup)
+
+    await p.synthesize("x", p.voice_b)
+
+    assert backup.voices_asked == ["g-b"]
+
+
+@pytest.mark.asyncio
+async def test_it_does_not_keep_retrying_a_provider_that_already_failed():
+    """Permanent for the run. Re-attempting a provider that just burned five
+    retries wastes minutes of a run against the clock, and a briefing
+    alternating voices turn by turn is worse than one that changes once."""
+    boom = _Boom(fail_from=0)
+    p = FallbackTTSProvider(boom, _Backup)
+
+    for _ in range(4):
+        await p.synthesize("x", p.voice_a)
+
+    assert boom.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_with_no_fallback_available_the_original_failure_is_raised():
+    """An ElevenLabs-only deployment. The honest error is the one that
+    actually happened, not the one from trying to build a provider the
+    machine was never configured for."""
+    def _no_fallback():
+        raise RuntimeError("GOOGLE_TTS_CREDENTIALS is not set")
+
+    p = FallbackTTSProvider(_Boom(fail_from=0), _no_fallback)
+
+    with pytest.raises(RuntimeError, match="elevenlabs is down"):
+        await p.synthesize("x", p.voice_a)
 
 
 # ── the offset that music will move ───────────────────────────

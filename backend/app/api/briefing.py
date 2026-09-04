@@ -55,6 +55,51 @@ def _today_briefing_id() -> str:
     return datetime.now(tz).strftime("%Y-%m-%d")
 
 
+def _tts_configured(s) -> bool:
+    """Whether the CONFIGURED TTS provider has what it needs.
+
+    Asking for a Google service-account file unconditionally was wrong the
+    moment a second provider existed: an ElevenLabs deployment with no
+    Google key failed this check, so the scheduler quietly chose
+    `FakeTTSProvider` and the daily job produced FIXTURE TONES that a
+    manifest and a push notification presented as the morning briefing.
+    A fake that presents as success is the failure mode this whole function
+    was written to avoid, reintroduced by a new provider.
+
+    Google is still required when Google is the provider, and also when
+    ElevenLabs is configured WITHOUT it — not because the run needs it, but
+    because there is then nothing behind ElevenLabs and an outage takes the
+    briefing with it (rule 7). That is a warning rather than a refusal: a
+    briefing in one voice with no safety net still beats fixture tones.
+    """
+    import logging
+
+    from app.core.providers import ELEVENLABS_NAMES
+
+    google_ready = _google_tts_credentials_present(s)
+    choice = (s.tts_provider or "google").strip().lower()
+
+    if choice in ELEVENLABS_NAMES:
+        if not (s.elevenlabs_api_key and s.elevenlabs_voice_a and s.elevenlabs_voice_b):
+            return False
+        if not google_ready:
+            logging.getLogger(__name__).warning(
+                "TTS_PROVIDER=elevenlabs with no Google credentials — there is "
+                "no fallback provider, so an ElevenLabs outage mid-run will "
+                "cost the whole briefing rather than just the voice."
+            )
+        return True
+
+    return google_ready
+
+
+def _google_tts_credentials_present(s) -> bool:
+    tts_creds = Path(s.google_tts_credentials)
+    if not tts_creds.is_absolute():
+        tts_creds = (Path(__file__).resolve().parents[2] / tts_creds).resolve()
+    return tts_creds.is_file()
+
+
 def _credentials_configured() -> bool:
     """Whether a live run can actually produce a real briefing.
 
@@ -70,10 +115,7 @@ def _credentials_configured() -> bool:
     if not s.gemini_api_key:
         return False
 
-    tts_creds = Path(s.google_tts_credentials)
-    if not tts_creds.is_absolute():
-        tts_creds = (Path(__file__).resolve().parents[2] / tts_creds).resolve()
-    if not tts_creds.is_file():
+    if not _tts_configured(s):
         return False
 
     # A cached user token, not just the OAuth client: the client file alone is

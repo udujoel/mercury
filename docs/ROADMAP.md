@@ -292,6 +292,28 @@ Added 2026-09-04, after the ElevenLabs go-ahead:
         you. The same rule the prefetch now follows: publish when the
         current one has finished, not while it is playing.
 
+- [ ] 14. **An app icon, and an onboarding worth the first launch.** Mercury
+      ships with the default template icon, which is the first thing anyone
+      sees and currently says nothing.
+
+      Onboarding exists — welcome, Google connect, wake time, length — but it
+      was built in the dark ambient register and predates ADR-012, so it is
+      the last screen in the app still wearing the old design. It also asks
+      for Google access before saying what Mercury does with it, which is the
+      wrong order for the one permission prompt that decides whether the app
+      works at all.
+
+      - Icon: a mark that survives being 60pt on a home screen, drawn for the
+        light editorial register rather than tinted to match it. It also
+        needs a dark and a tinted variant — iOS 18 renders all three.
+      - Onboarding onto the design system, and reordered: what it does, then
+        why it needs Gmail (read-only, bodies discarded — the privacy policy
+        already says this in plain words and the app never repeats it), then
+        the permission, then wake time.
+      - The empty first morning. There is no briefing until the cron has run
+        once, and nothing currently explains that: a new user reaches Home
+        and sees a card that fetches nothing.
+
 **Start 1, 5 and 8 in parallel** — provider, player view, new feature module.
 None blocks the others, and everything else falls out of them in order.
 

@@ -96,8 +96,92 @@ class TTSProvider(Protocol):
     def voice_b(self) -> str: ...
 
 
+ELEVENLABS_NAMES = {"elevenlabs", "eleven_labs", "eleven-labs", "11labs"}
+GOOGLE_NAMES = {"google", "google_tts", "gcp", ""}
+
+
+class FallbackTTSProvider:
+    """A primary provider with a second one behind it, per turn.
+
+    Construction-time fallback is not enough, and claiming otherwise was the
+    bug: `build_tts_provider` catching a constructor error covers a missing
+    key, not an outage. ElevenLabs going down at 04:00 AFTER a successful
+    construction meant every turn exhausted its retries and raised, every
+    clip came back None, and `synthesize_briefing` raised
+    `EmptyBriefingError` — no briefing at all, which is exactly what rule 7
+    exists to prevent.
+
+    The switch is permanent for the run rather than per turn. Retrying a
+    provider that has already failed its own five attempts wastes minutes of
+    a run that is against the clock, and a briefing alternating between two
+    voices turn by turn would be worse than one that changes voice once.
+
+    It does change voice once, mid-briefing, and that is deliberately not
+    hidden: an ERROR log names it. A briefing that is half one voice and half
+    another is unpleasant and obviously wrong, which is the correct way for
+    this to fail — silently shipping is the thing to avoid.
+    """
+
+    def __init__(self, primary: TTSProvider, build_fallback) -> None:
+        self._primary = primary
+        self._build_fallback = build_fallback
+        self._fallback: TTSProvider | None = None
+        self._failed_over = False
+
+    @property
+    def voice_a(self) -> str:
+        return self._primary.voice_a
+
+    @property
+    def voice_b(self) -> str:
+        return self._primary.voice_b
+
+    def _translated(self, voice_id: str) -> str:
+        """The fallback's equivalent of a primary voice id.
+
+        The caller picked `voice_a` or `voice_b` off THIS object, which
+        reports the primary's ids. Passing an ElevenLabs voice id to Google
+        would fail every remaining turn for a second, sillier reason.
+        """
+        assert self._fallback is not None
+        if voice_id == self._primary.voice_b:
+            return self._fallback.voice_b
+        return self._fallback.voice_a
+
+    async def synthesize(self, text: str, voice_id: str) -> Speech:
+        import logging
+
+        log = logging.getLogger(__name__)
+
+        if not self._failed_over:
+            try:
+                return await self._primary.synthesize(text, voice_id)
+            except Exception as exc:  # noqa: BLE001 - any failure is a failover
+                try:
+                    self._fallback = self._build_fallback()
+                except Exception as build_exc:
+                    log.error(
+                        "%s failed (%s) and no fallback provider could be "
+                        "built (%s) — the run has no way to produce audio.",
+                        type(self._primary).__name__, exc, build_exc,
+                    )
+                    raise exc from None
+
+                self._failed_over = True
+                log.error(
+                    "%s failed mid-run (%s) — switching to %s for the REST of "
+                    "this briefing. It will change voice partway through, "
+                    "and turns after this point carry no word timings.",
+                    type(self._primary).__name__, exc,
+                    type(self._fallback).__name__,
+                )
+
+        assert self._fallback is not None
+        return await self._fallback.synthesize(text, self._translated(voice_id))
+
+
 def build_tts_provider() -> TTSProvider:
-    """The TTS provider named by TTS_PROVIDER, with Google as the fallback.
+    """The TTS provider named by TTS_PROVIDER, with Google behind it.
 
     A factory for the reason `build_embedding_provider` documents, and this
     one had the disease already: `tts_provider` has been in `Settings` since
@@ -106,36 +190,51 @@ def build_tts_provider() -> TTSProvider:
     `GoogleTTSProvider()` directly, so setting TTS_PROVIDER=elevenlabs would
     have changed nothing at all, silently, on every path.
 
-    Falls back rather than failing. Rule 6 keeps Google behind the protocol
-    precisely so a paid tier going down at 4am costs the voice and not the
-    briefing, and rule 7 says the run still ships. A fallback is logged
-    loudly: a briefing that quietly sounds like the old one is how you find
-    out weeks later.
+    Rule 6 keeps Google behind the protocol precisely so a paid tier going
+    down at 4am costs the voice and not the briefing, and rule 7 says the run
+    still ships — so the fallback covers BOTH a provider that cannot be built
+    and one that stops working mid-run. See `FallbackTTSProvider`.
+
+    Every fallback is logged at ERROR: a briefing that quietly sounds like
+    the old one is how you find out weeks later.
     """
     import logging
 
     log = logging.getLogger(__name__)
     from app.core.config import get_settings
 
+    def _google() -> TTSProvider:
+        from app.providers.google_tts import GoogleTTSProvider
+
+        return GoogleTTSProvider()
+
     choice = (get_settings().tts_provider or "google").strip().lower()
 
-    if choice in {"elevenlabs", "eleven_labs", "11labs"}:
+    if choice in ELEVENLABS_NAMES:
         try:
             from app.providers.elevenlabs_tts import ElevenLabsTTSProvider
 
-            return ElevenLabsTTSProvider()
+            return FallbackTTSProvider(ElevenLabsTTSProvider(), _google)
         except Exception as exc:
             log.error(
-                "TTS_PROVIDER=elevenlabs but ElevenLabs is unavailable (%s) — "
-                "falling back to Google. The briefing will ship in the old "
-                "voice and WITHOUT word timings, so transcript highlighting "
-                "degrades to whole-line.",
+                "TTS_PROVIDER=elevenlabs but ElevenLabs could not be built "
+                "(%s) — falling back to Google. The briefing will ship in the "
+                "old voice and WITHOUT word timings, so transcript "
+                "highlighting degrades to whole-line.",
                 exc,
             )
+    elif choice not in GOOGLE_NAMES:
+        # A typo is the case this docstring warns about, so it must not be
+        # the case that passes silently. "elvenlabs" used to land here and
+        # get Google without a word in the log.
+        log.error(
+            "TTS_PROVIDER=%r is not a provider this build knows (expected one "
+            "of %s) — using Google. If you meant ElevenLabs, this is a typo "
+            "and the briefing is about to ship in the wrong voice.",
+            choice, sorted(ELEVENLABS_NAMES | {"google"}),
+        )
 
-    from app.providers.google_tts import GoogleTTSProvider
-
-    return GoogleTTSProvider()
+    return _google()
 
 
 def build_embedding_provider() -> EmbeddingProvider | None:
