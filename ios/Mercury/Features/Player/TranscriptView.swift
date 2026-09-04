@@ -21,7 +21,13 @@ struct TranscriptView: View {
                 Spacer()
                 Text(turn?.text ?? " ")
                     .font(MercuryType.transcript)
-                    .multilineTextAlignment(.center)
+                    // Ragged right, per ADR-012 — the one modifier that
+                    // made Typography's docstring a claim rather than a
+                    // description. Centred text has no left edge for the eye
+                    // to return to, which is fine for a poster and wrong for
+                    // something read line by line while the audio moves.
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .lineSpacing(6)
                     .foregroundStyle(MercuryColor.textPrimary)
                     .padding(.horizontal, 28)
