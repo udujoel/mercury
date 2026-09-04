@@ -236,7 +236,10 @@ The browse surface:
       and the source row. Presentation, not new data.
 - [ ] 9. Article links, properly. `DigestSource.url` is already there. Start
       with in-app `SFSafariViewController` — it keeps the morning ritual
-      intact.
+      intact. Note the field is `str | None`, and email sources are
+      structurally the None case: a Gmail item carries no public URL. So the
+      source row needs a defined appearance for a source you cannot open,
+      and for a newsletter-only story that is EVERY row.
 - [ ] 10. Browse previous mornings. One Worker route exposing
       `list_briefing_ids()`, plus an archive view. The horizon must be read
       from `retention_days`, never hardcoded to 30.
