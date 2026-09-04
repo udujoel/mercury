@@ -11,7 +11,7 @@
  * thing that is true and this page is the bug.
  */
 
-const UPDATED = "2 September 2026";
+const UPDATED = "4 September 2026";
 const CONTACT = "udujoel@gmail.com";
 
 /**
@@ -91,8 +91,10 @@ const PRIVACY = page(
 <li>the narrated audio file</li>
 <li>the script the hosts read, and the timings that let the app follow along</li>
 <li>source references — a sender's name, a subject line, a link — so the app can show where something came from</li>
+<li>a short written summary of each story, so the app can list the newsletters that arrived and what they covered, including the ones the briefing had no time to read out</li>
 </ul>
-<p>These are stored in a private Cloudflare R2 bucket that is not publicly readable, and are <strong>deleted automatically after 30 days</strong>.</p>
+<p>Those summaries are <strong>written by the model in its own words</strong>, from the same material used to write the script. They are not extracts: no sentence, clause or phrase is copied out of a message. The same rule applies as everywhere else here — the raw body is used to produce them and is then discarded, and only the summary is kept.</p>
+<p>These are stored in a private Cloudflare R2 bucket that is not publicly readable, and are <strong>deleted automatically after 30 days</strong>. The summaries are deleted on the same schedule, as part of the same briefing.</p>
 
 <h2>Who else sees it</h2>
 <p>Producing a briefing means sending the day's material to two Google services, under Google's own terms:</p>
