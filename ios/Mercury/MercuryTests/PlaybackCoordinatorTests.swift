@@ -481,3 +481,62 @@ final class TurnResolutionTests: XCTestCase {
         XCTAssertEqual(coordinator.currentTurn?.text, "second")
     }
 }
+
+// MARK: - Audio session category
+//
+// A device-only failure, reported from an iPhone 16 Pro while every
+// simulator run and the whole suite stayed green.
+//
+// `.playback` was configured with `options: [.allowBluetooth]`. That
+// constant is Hands-Free Profile: the SDK header deprecates it in favour of
+// `.allowBluetoothHFP` and documents it as controlling whether a paired HFP
+// device is available *for input*. `.playback` has no input. A real audio
+// session rejects the pair with paramErr (-50) — surfacing in the device log
+// as `Failed to set properties, error: 4294967246`, which is -50 unsigned —
+// and `setCategory` throws, taking `load()` with it. The briefing then
+// reports "Cached audio could not be loaded ... Code=-50".
+//
+// The simulator's session does not enforce the combination, so no amount of
+// simulator testing would have found it. What CAN be asserted here is the
+// contract that was violated, which is what these tests do.
+
+final class AudioSessionCategoryTests: XCTestCase {
+
+    /// `.playback` accepts only a small set of options. Anything derived from
+    /// recording — Hands-Free Profile, default-to-speaker — is a category
+    /// mismatch, and a real session says so with paramErr.
+    private static let optionsValidForPlayback: AVAudioSession.CategoryOptions = [
+        .mixWithOthers,
+        .duckOthers,
+        .interruptSpokenAudioAndMixWithOthers,
+        .allowBluetoothA2DP,
+        .allowAirPlay,
+    ]
+
+    func testTheConfiguredOptionsAreLegalForPlayback() throws {
+        // The value the app actually passes, not one this test invents. The
+        // first draft called setCategory itself and asserted on its own call,
+        // so it passed with the bug restored.
+        let configured = PlaybackCoordinator.playbackCategoryOptions
+
+        XCTAssertTrue(
+            Self.optionsValidForPlayback.isSuperset(of: configured),
+            """
+            \(configured) contains an option that is not valid for .playback. \
+            A real device rejects the whole setCategory call with paramErr \
+            (-50) and playback never starts — the simulator does not.
+            """
+        )
+    }
+
+    /// The specific regression. `.allowBluetooth` is HFP, the narrow-band mono
+    /// call profile — so even on a session that tolerated it, it would have
+    /// made a spoken-word briefing sound worse on exactly the devices most
+    /// likely to play it. `.playback` already routes to A2DP by default.
+    func testHandsFreeProfileIsNotRequestedForPlayback() {
+        XCTAssertFalse(
+            PlaybackCoordinator.playbackCategoryOptions.contains(.allowBluetooth),
+            "HFP is for phone calls; a briefing wants A2DP, which .playback gives by default"
+        )
+    }
+}
