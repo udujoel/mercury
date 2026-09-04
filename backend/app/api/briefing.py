@@ -145,10 +145,10 @@ def _build_providers(offline: bool):
     # construction time if the required credentials aren't configured, and
     # importing them at module load would make the whole router fail to
     # mount on a machine with no credentials at all.
+    from app.core.providers import build_tts_provider
     from app.providers.gemini import GeminiProvider
-    from app.providers.google_tts import GoogleTTSProvider
 
-    return GeminiProvider(), GoogleTTSProvider()
+    return GeminiProvider(), build_tts_provider()
 
 
 @router.post("/generate", response_model=GenerateResponse, status_code=202)

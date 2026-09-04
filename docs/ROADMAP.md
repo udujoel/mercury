@@ -246,13 +246,51 @@ The browse surface:
 
 Control:
 
-- [ ] 11. Settings, built out. Wake time and length exist and are half-wired.
+- [ ] 11a. **The settings artifact.** The screen is the easy half. Most of
+      what belongs on it — feeds, voices, thresholds, segment budgets — is a
+      server-side constant read by a job the phone cannot see, so a setting
+      the app writes and the cron never reads is worse than no setting at
+      all. This is a small JSON artifact in R2 that the app writes and
+      `generate_briefing` reads at the top of a run, with the env vars as the
+      fallback when it is absent. Without it, everything in 11b is
+      decoration.
+- [ ] 11b. Settings, built out. Wake time and length exist and are half-wired.
       The rest: voice and provider, briefing length, which feeds and
       newsletters count, timezone, appearance override, retention window, and
       a visible account state for the Google connection — including the token
       expiry that silently broke three mornings. Last on purpose: a settings
       screen is only worth building once there is something worth setting,
       and tasks 1, 3 and 10 each add one.
+
+Added 2026-09-04, after the ElevenLabs go-ahead:
+
+- [ ] 12. **Voice chosen in the app, not in the environment.** The two
+      ElevenLabs voice ids are `ELEVENLABS_VOICE_A` / `ELEVENLABS_VOICE_B`
+      today, which means changing a host means editing a GitHub secret. They
+      belong in settings, with the voice library fetched from ElevenLabs
+      (`GET /v1/voices`) so the picker lists real voices with samples rather
+      than asking for an id to be pasted. **Needs 11a** — the env var is the
+      fallback, and the artifact is what lets the phone change it.
+- [ ] 13. **Regenerate against what has arrived since.** Today's briefing is
+      made overnight, so by 9am it is describing an inbox that has moved on.
+      A "regenerate" action re-runs ingestion NOW and rebuilds the briefing
+      from current mail and calendar, rather than replaying the one built at
+      04:00.
+
+      Three things make this more than a button:
+
+      - It costs a full generation — LLM, TTS, and with ElevenLabs that is
+        real money per press. It needs a confirmation and a daily cap, and
+        the cap wants to be visible rather than a surprise.
+      - `--force` already exists and regeneration is already idempotent per
+        briefing id, so the mechanism is there. What is missing is a
+        client-triggered path to it: the Worker is read-only by construction
+        and answers 405 to POST, which is a deliberate security property
+        (ADR-008) and must not be quietly given up. Most likely shape is a
+        `workflow_dispatch` from the app with a narrowly-scoped token.
+      - The briefing you are LISTENING to must not be swapped underneath
+        you. The same rule the prefetch now follows: publish when the
+        current one has finished, not while it is playing.
 
 **Start 1, 5 and 8 in parallel** — provider, player view, new feature module.
 None blocks the others, and everything else falls out of them in order.

@@ -354,10 +354,10 @@ async def _generate(
                  briefing_id)
 
     try:
+        from app.core.providers import build_tts_provider
         from app.providers.gemini import GeminiProvider
-        from app.providers.google_tts import GoogleTTSProvider
 
-        llm, tts = GeminiProvider(), GoogleTTSProvider()
+        llm, tts = GeminiProvider(), build_tts_provider()
     except RuntimeError as exc:
         log.error("credentials are not configured: %s", exc)
         return 2
