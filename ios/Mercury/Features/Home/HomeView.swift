@@ -15,7 +15,6 @@ import SwiftUI
 /// play glyph — and everything else is ink on paper.
 struct HomeView: View {
     @Environment(AppState.self) private var appState
-    @Environment(\.dynamicTypeSize) private var typeSize
 
     @State private var showPlayer = false
 
@@ -251,26 +250,46 @@ struct BriefingRowView: View {
 
 /// Turns `LoadState.failed`'s string into something a person can read.
 ///
-/// The string is `error.localizedDescription`, and `APIError` builds it for
-/// the log rather than for a reader: `.transport` yields "Network error:
-/// Error Domain=NSURLErrorDomain Code=-1009 …" and `.decoding` yields the
-/// whole `DecodingError` dump. Home rendered that verbatim, in red, at
-/// caption size.
+/// The string is `error.localizedDescription`, and `APIError.errorDescription`
+/// builds it for a log rather than for a reader — it interpolates the
+/// underlying error with `\(error)`, which is the *debug* description. So a
+/// dropped connection reached the screen as
 ///
-/// The proper fix is a `userFacingMessage` on `APIError` itself, which lives
-/// in `Core/` and is not this task's to change — so this presents rather than
-/// parses. The single exception is the `Backend returned 404: ` prefix, which
-/// `AppState.fetchTodayOrGenerate` constructs deliberately with a sentence
-/// written for the user; promoting that one is honouring a contract with a
-/// known producer, not scraping.
+///     Network error: Error Domain=NSURLErrorDomain Code=-1004
+///     "Could not connect to the server." UserInfo={_kCFStreamErrorCodeKey=61,
+///     NSUnderlyingError=…
+///
+/// rendered verbatim, in red, at caption size, on the screen a person opens
+/// at 7am. Note that the readable sentence is *inside* that dump: the fix
+/// APIError itself wants is `error.localizedDescription` rather than
+/// `\(error)`. `APIError` lives in `Core/` and is not this task's to change,
+/// so this maps at the boundary instead. Flagged in the report.
+///
+/// This matches on the three prefixes `APIError.errorDescription` constructs,
+/// which is a contract with a known producer in this repo rather than
+/// scraping arbitrary text — and it falls through to a generic headline with
+/// the raw string demoted to a quiet detail line, so an error nobody
+/// anticipated is still legible and still reportable.
 enum HomeErrorPresentation: Equatable {
     case readable(headline: String, detail: String?)
 
-    private static let promotablePrefix = "Backend returned 404: "
+    /// Ordered: `AppState.fetchTodayOrGenerate` deliberately builds a 404
+    /// whose body is a sentence written for the user ("Today's briefing
+    /// hasn't been generated yet…"), so that one is promoted whole.
+    private static let known: [(prefix: String, headline: String?)] = [
+        ("Backend returned 404: ", nil),
+        ("Network error: ", "Mercury couldn't reach the server."),
+        ("Could not decode response: ", "Today's briefing arrived in a format this app can't read."),
+    ]
 
     static func present(_ message: String) -> HomeErrorPresentation {
-        if message.hasPrefix(promotablePrefix) {
-            let body = String(message.dropFirst(promotablePrefix.count))
+        for entry in known where message.hasPrefix(entry.prefix) {
+            if let headline = entry.headline {
+                // The tail is a debug dump. It goes to the console — AppState
+                // and APIClient both print — and not onto the page.
+                return .readable(headline: headline, detail: nil)
+            }
+            let body = String(message.dropFirst(entry.prefix.count))
             if !body.isEmpty { return .readable(headline: body, detail: nil) }
         }
         return .readable(

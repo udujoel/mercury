@@ -10,6 +10,14 @@ import SwiftUI
 /// it was the one thing it did not do.
 struct ChapterTabs: View {
     @Environment(\.mercuryMotion) private var motion
+    /// Not decoration. Changing the text size re-lays the pills out at new
+    /// widths and the scroll view keeps its old *offset*, which now points
+    /// somewhere else entirely — observed on the simulator: at
+    /// `accessibility1` the ribbon jumped from the active Sign-off pill back
+    /// to the middle of the list and stayed there until the next segment
+    /// change. Re-centring on the size is what makes "follows playback" true
+    /// at every text size rather than only at the default one.
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     let segments: [BriefingSegment]
     let activeSegmentID: String?
@@ -30,10 +38,21 @@ struct ChapterTabs: View {
             .onChange(of: activeSegmentID) { _, id in
                 scroll(proxy, to: id)
             }
+            .onChange(of: typeSize) { _, _ in
+                scroll(proxy, to: activeSegmentID)
+            }
             // Entering the player mid-briefing has to start in the right
             // place too — otherwise the ribbon is only correct for people
             // who listened from the beginning without leaving.
-            .onAppear { scroll(proxy, to: activeSegmentID) }
+            //
+            // `task` rather than `onAppear`: `onAppear` runs before the
+            // ScrollView has measured its content, and a `scrollTo` issued
+            // then is silently dropped. Yielding once puts it after the
+            // first layout pass.
+            .task {
+                await Task.yield()
+                scroll(proxy, to: activeSegmentID)
+            }
         }
     }
 

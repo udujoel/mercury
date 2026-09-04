@@ -265,3 +265,69 @@ final class BriefingDigestTests: XCTestCase {
                        "and nothing should have leaked into inbox")
     }
 }
+
+/// `LoadState.failed` carries `error.localizedDescription`, and
+/// `APIError.errorDescription` interpolates its underlying error with
+/// `\(error)` — the *debug* description. So Home rendered
+/// `Error Domain=NSURLErrorDomain Code=-1004 "Could not connect to the
+/// server." UserInfo={_kCFStreamErrorCodeKey=61, …}` verbatim, in red, at
+/// caption size, on the screen a person opens at 7am. Seen on the simulator,
+/// not imagined.
+final class HomeErrorPresentationTests: XCTestCase {
+
+    func testANetworkFailureReadsAsASentence() {
+        let raw = "Network error: Error Domain=NSURLErrorDomain Code=-1004 "
+            + "\"Could not connect to the server.\" UserInfo={_kCFStreamErrorCodeKey=61}"
+        let shown = HomeErrorPresentation.present(raw)
+
+        XCTAssertEqual(shown.headline, "Mercury couldn't reach the server.")
+        XCTAssertNil(shown.detail, "the dump belongs in the console, not on the page")
+    }
+
+    func testADecodingFailureReadsAsASentence() {
+        let raw = "Could not decode response: keyNotFound(CodingKeys(stringValue: "
+            + "\"duration_ms\", intValue: nil), Swift.DecodingError.Context(codingPath: []))"
+        let shown = HomeErrorPresentation.present(raw)
+
+        XCTAssertEqual(shown.headline,
+                       "Today's briefing arrived in a format this app can't read.")
+        XCTAssertNil(shown.detail)
+    }
+
+    func testTheSentenceAppStateWritesForTheUserIsPromotedWhole() {
+        // `AppState.fetchTodayOrGenerate` turns the read-only Worker's 405
+        // into a 404 whose body it wrote for a reader. That is the one
+        // message in the stack already fit to show, so it is shown.
+        let written = "Today's briefing hasn't been generated yet. It's produced "
+            + "automatically each morning — try again shortly."
+        let shown = HomeErrorPresentation.present("Backend returned 404: " + written)
+
+        XCTAssertEqual(shown.headline, written)
+        XCTAssertNil(shown.detail)
+    }
+
+    func testAnUnrecognisedFailureKeepsItsTextAsAQuietDetail() {
+        // Legible headline, and the raw string still on screen so it can be
+        // reported — the fallback must not throw away information the way a
+        // bare "Something went wrong" does.
+        let shown = HomeErrorPresentation.present("Backend returned 500: upstream exploded")
+
+        XCTAssertEqual(shown.headline, "Today's briefing didn't load.")
+        XCTAssertEqual(shown.detail, "Backend returned 500: upstream exploded")
+    }
+
+    func testAnEmptyMessageProducesNoEmptyDetailLine() {
+        let shown = HomeErrorPresentation.present("")
+
+        XCTAssertEqual(shown.headline, "Today's briefing didn't load.")
+        XCTAssertNil(shown.detail)
+    }
+
+    func testAnEmptyBodyOnAPromotedPrefixFallsBackRatherThanShowingNothing() {
+        // A 404 with no body would otherwise promote an empty string into
+        // the headline and leave the card blank.
+        let shown = HomeErrorPresentation.present("Backend returned 404: ")
+
+        XCTAssertEqual(shown.headline, "Today's briefing didn't load.")
+    }
+}
