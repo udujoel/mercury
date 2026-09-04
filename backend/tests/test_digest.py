@@ -651,6 +651,63 @@ async def test_an_unenriched_mixed_story_falls_back_to_a_published_headline():
     assert digest.stories[0].headline == "The Gemini Moat"
 
 
+async def test_a_personal_email_turn_does_not_deep_link_a_story():
+    """Cluster-level coverage, counted only over the members the digest shows.
+
+    `_build_source_refs` emits a ref for a personal email carrying that
+    email's `cluster_id`, so a cluster was marked covered by the inbox turn
+    where the hosts read out a colleague's message. The story then deep-linked
+    into audio that never mentions it and names none of its sources — which
+    got worse, not better, once the digest stopped listing that email as a
+    source at all.
+
+    Cluster-level coverage itself is right and stays: a turn about the wire
+    report covers the story the newsletters also wrote about. It is only the
+    members the browse screen hides that no longer vote.
+    """
+    personal = _email("Maria Chen", "Q3 budget review before Friday")
+    newsletter = _newsletter("Stratechery", "The Gemini Moat")
+    story = _story("c1", newsletter, personal)
+    inbox_ref = SourceRef(
+        turn_index=0, title="Q3 budget review before Friday", url=None,
+        source_name="Maria Chen", source_type=SourceType.EMAIL, cluster_id="c1",
+    )
+    manifest = _manifest_with(
+        turns=[Turn(speaker="A", segment=Segment.INBOX, text="Maria wrote.")],
+        sources=[inbox_ref],
+    )
+
+    digest = build_digest(
+        briefing_id="2026-08-21", stories=[story],
+        emails=[personal, newsletter], manifest=manifest,
+    )
+
+    assert digest.stories[0].covered_in_audio is False
+    assert digest.stories[0].turn_index is None
+    assert digest.stories[0].segment is None
+    assert digest.newsletters[0].in_briefing is False
+
+    # ...and a ref naming the NEWSLETTER still covers the same cluster, so
+    # this is a narrowing of who votes, not of what coverage means.
+    covered = build_digest(
+        briefing_id="2026-08-21", stories=[story],
+        emails=[personal, newsletter],
+        manifest=_manifest_with(
+            turns=manifest.turns,
+            sources=[
+                inbox_ref,
+                SourceRef(
+                    turn_index=0, title="The Gemini Moat", url=None,
+                    source_name="Stratechery", source_type=SourceType.EMAIL,
+                    cluster_id="c1",
+                ),
+            ],
+        ),
+    )
+    assert covered.stories[0].turn_index == 0
+    assert covered.newsletters[0].in_briefing is True
+
+
 async def test_sources_are_ordered_by_authority_with_the_canonical_first():
     """ADR-003: primary reporting beats commentary, and the canonical item
     is the one the show notes link to. The digest must render the SAME

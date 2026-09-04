@@ -359,7 +359,9 @@ def _newsletter_id(item: Item) -> str:
     return f"nl_{item.id}"
 
 
-def _coverage(manifest: BriefingManifest) -> dict[str, int]:
+def _coverage(
+    manifest: BriefingManifest, published: dict[str, set[tuple[str, str]]]
+) -> dict[str, int]:
     """cluster_id -> the EARLIEST post-compaction turn that discusses it.
 
     Read off `manifest.sources`, which `stitch._remap_source_refs` has
@@ -369,10 +371,25 @@ def _coverage(manifest: BriefingManifest) -> dict[str, int]:
 
     Earliest rather than any, so tapping a story lands on the moment the
     hosts introduce it rather than a later callback to it.
+
+    Only refs naming a member the digest actually SHOWS count. `published`
+    is the (source_name, title) of each cluster's `digest_members`, and
+    without it a cluster was marked covered by any ref carrying its id —
+    including the ref `_build_source_refs` emits for a personal email in
+    that cluster. The story then deep-linked into the inbox turn where the
+    hosts read out a colleague's message: audio that never mentions the
+    story, and not one of the sources the story lists. Cluster-level
+    coverage is still the rule, which is right — a turn about the Reuters
+    report covers the story the newsletters also wrote about — it is only
+    the members the browse screen hides that no longer vote.
     """
     earliest: dict[str, int] = {}
     for ref in manifest.sources:
         if ref.cluster_id is None:
+            continue
+        if (ref.source_name, ref.title) not in published.get(
+            ref.cluster_id, set()
+        ):
             continue
         current = earliest.get(ref.cluster_id)
         if current is None or ref.turn_index < current:
@@ -399,7 +416,14 @@ def build_digest(
     """
     cards = cards or {}
     browsable = digest_stories(stories)
-    covered = _coverage(manifest)
+    published = {
+        story.cluster_id: {
+            (member.source_name, member.title)
+            for member in digest_members(story)
+        }
+        for story in browsable
+    }
+    covered = _coverage(manifest, published)
     turn_count = len(manifest.turns)
 
     out_stories: list[DigestStory] = []
