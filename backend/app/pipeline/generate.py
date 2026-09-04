@@ -44,6 +44,13 @@ from app.core.schemas import (
     Story,
 )
 from app.pipeline.dedup import build_stories
+from app.pipeline.digest import (
+    build_digest,
+    build_enrichment_prompt,
+    digest_stories,
+    enrich_stories,
+    stories_to_enrich,
+)
 from app.pipeline.ranking import score_stories
 from app.synthesis.stitch import synthesize_briefing
 from app.synthesis.storage import BriefingStorage, build_storage
@@ -150,7 +157,7 @@ async def generate_briefing(
     # that covered the same acquisition to be read out separately —
     # precisely the "concatenated, not edited" failure ADR-003 exists to
     # prevent.
-    world_stories, inbox_emails = await _build_world_stories(
+    world_stories, inbox_emails, all_stories = await _build_world_stories(
         emails=emails,
         articles=articles,
         events=events,
@@ -200,6 +207,18 @@ async def generate_briefing(
         date=briefing_date,
     )
 
+    # The LAST read of any body in this run, and it happens BEFORE the scrub
+    # below on purpose. `build_enrichment_prompt` flattens the source text
+    # into a prompt string; from here on the digest is built from metadata
+    # alone, so no code path after the scrub can reach a body even by
+    # mistake. See app/pipeline/digest.py.
+    browsable = digest_stories(all_stories)
+    enrichment_prompt = (
+        build_enrichment_prompt(stories_to_enrich(browsable))
+        if browsable
+        else ""
+    )
+
     # CLAUDE.md rule 5: raw email bodies are ephemeral, held only for the
     # duration of this run. The script has been written; nothing downstream
     # needs the body text, so drop it from every Item this run touched
@@ -208,19 +227,52 @@ async def generate_briefing(
     _scrub_email_bodies(scored_emails)
     _scrub_email_bodies(selection.get("emails", []))
 
-    audio_bytes, manifest, audio_format = await synthesize_briefing(
-        turns,
-        tts=tts,
+    # Concurrent with synthesis, not before it. TTS is the long pole — a live
+    # run is 71 seconds against the PRD's 90-second budget — and an
+    # enrichment call in series would spend a tenth of the remaining margin
+    # on a screen nobody is waiting for. Started first so it is already in
+    # flight while the turns synthesise.
+    cards_task = asyncio.create_task(enrich_stories(llm, enrichment_prompt))
+    try:
+        audio_bytes, manifest, audio_format = await synthesize_briefing(
+            turns,
+            tts=tts,
+            briefing_id=briefing_id,
+            audio_url_for=lambda _fmt: storage.audio_path_for(briefing_id),
+            sources=sources,
+            # THIS run's failures, carried down from ingestion rather than
+            # re-read from the module global at the end — see
+            # _ingest_concurrently for why the global cannot answer honestly.
+            degraded_sources=degraded,
+            # How many times this briefing has already been regenerated
+            # because it shipped degraded. Bounds the retry — see
+            # MAX_DEGRADED_RETRIES.
+            degraded_attempts=(
+                (previous_degraded_attempts + 1) if degraded else 0
+            ),
+        )
+    except BaseException:
+        # An EmptyBriefingError here means nothing is stored and the run
+        # fails. Leaving the enrichment call running would hold the event
+        # loop open on an LLM round trip for a briefing that no longer
+        # exists — and, in the API process, would log its result against a
+        # job that has already reported failure.
+        cards_task.cancel()
+        raise
+
+    cards = await cards_task
+
+    # Built from the MANIFEST, so `turn_index` is the post-compaction index.
+    # `synthesize_briefing` drops turns whose TTS failed and remaps every
+    # SourceRef onto the compacted list; deriving deep-links from anything
+    # else lands them on the wrong sentence, which is a bug this project has
+    # already shipped once.
+    digest = build_digest(
         briefing_id=briefing_id,
-        audio_url_for=lambda _fmt: storage.audio_path_for(briefing_id),
-        sources=sources,
-        # THIS run's failures, carried down from ingestion rather than
-        # re-read from the module global at the end — see
-        # _ingest_concurrently for why the global cannot answer honestly.
-        degraded_sources=degraded,
-        # How many times this briefing has already been regenerated because
-        # it shipped degraded. Bounds the retry — see MAX_DEGRADED_RETRIES.
-        degraded_attempts=(previous_degraded_attempts + 1) if degraded else 0,
+        stories=all_stories,
+        emails=emails,
+        manifest=manifest,
+        cards=cards,
     )
 
     # to_thread, because BriefingStorage is synchronous and R2Storage is boto3.
@@ -228,7 +280,7 @@ async def generate_briefing(
     # while the client polls /status — so calling it directly froze the server
     # for the whole upload.
     await asyncio.to_thread(
-        storage.save, briefing_id, audio_bytes, audio_format, manifest
+        storage.save, briefing_id, audio_bytes, audio_format, manifest, digest
     )
     return manifest
 
@@ -368,10 +420,17 @@ async def _build_world_stories(
     events: list[Any],
     embeddings: EmbeddingProvider | None,
     length: BriefingLength,
-) -> tuple[list[Story], list[Item]]:
+) -> tuple[list[Story], list[Item], list[Story]]:
     """Cluster the day's news and decide what the world segment gets.
 
-    Returns (stories for the world segment, emails still owed to the inbox).
+    Returns (stories for the world segment, emails still owed to the inbox,
+    EVERY story clustered this run).
+
+    That third value is the digest's whole reason to exist. The world
+    segment is the top few by score — four at standard length out of the
+    couple of hundred a real morning clusters — and the rest used to be
+    dropped on the floor here, unreachable by anything. They are the
+    difference between the edit and the desk (`app/pipeline/digest.py`).
 
     Everything goes into ONE `build_stories` call — newsletters and articles
     together. That is the point of the shared `Item` schema, and clustering
@@ -399,7 +458,7 @@ async def _build_world_stories(
     """
     clusterable = emails + articles
     if not clusterable:
-        return [], emails
+        return [], emails, []
 
     stories = await build_stories(clusterable, embeddings=embeddings)
     # The WHOLE fetch window, not the briefing day. `select_for_briefing`
@@ -474,7 +533,7 @@ async def _build_world_stories(
         len(articles), len(emails), len(stories), len(world), len(absorbed),
         len(superseded),
     )
-    return world, inbox_emails
+    return world, inbox_emails, stories
 
 
 # Set by the ingestion gather so callers (app.cli) can report a degraded run

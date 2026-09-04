@@ -50,7 +50,9 @@ class _BlockingStorage:
     def audio_path_for(self, briefing_id: str) -> str:
         return f"/briefing/{briefing_id}/audio"
 
-    def save(self, briefing_id, audio_bytes, audio_format, manifest) -> None:
+    def save(
+        self, briefing_id, audio_bytes, audio_format, manifest, digest=None
+    ) -> None:
         time.sleep(BLOCK_S)
 
     def load_manifest(self, briefing_id: str) -> BriefingManifest | None:

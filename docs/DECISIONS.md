@@ -580,3 +580,176 @@ fixed brightness drifts in and out of AA depending on which hue it lands on.
 the same pass — see the file's own comment for the measurements. Its docstring
 promised "same title always produces the same visual identity" and that held
 only until you killed the app.
+
+## ADR-013 — The digest is a sibling of the manifest, and the desk is bigger than the edit
+
+**Status:** accepted
+
+Joel asked to "view all newsletters that dropped, and delve into the stories
+in them". PR #13 made that answerable for the first time: RSS, embeddings,
+clustering and ranking had been built and never called, so `Story` objects
+with real cross-source members did not exist at generation time until then.
+This decides what is persisted for that screen and where.
+
+### The audio is the edit; the digest is the full desk
+
+`LENGTH_BUDGETS` gives the hosts four stories at standard length. A real
+morning clusters far more than four — 201 articles and 54 emails became 222
+stories on 2026-09-03 — and every one of the other 218 was scored, ranked and
+dropped on the floor inside `_build_world_stories`, unreachable by anything.
+
+So a story with `covered_in_audio: false` is the normal case, not a defect.
+The difference between what was said and what arrived is the product; a
+digest carrying only what reached the audio is the manifest's source list
+under another name.
+
+### A sibling file, not a bigger manifest
+
+`{briefing_id}.digest.json` beside `{briefing_id}.manifest.json`, served at
+`GET /briefing/{id}/digest` behind the same token.
+
+The manifest is what the player downloads to start playing audio. The digest
+is ~100KB on a busy morning. Folding one into the other would make every
+launch pay for a screen the user may never open, on a phone, before the audio
+starts.
+
+### `turn_index` is read off the manifest, and that is the whole correctness argument
+
+Every covered story deep-links into the audio: tap a story, hear the hosts
+discuss it. `turn_index` therefore has to index the manifest's
+**post-compaction** `turns` array — `synthesize_briefing` drops turns whose
+TTS failed (two of forty-three on a live run) and `_remap_source_refs`
+rebases every `SourceRef` onto the shortened list.
+
+`build_digest` is handed the finished manifest and reads `manifest.sources`.
+There is no second index to get wrong because it never sees the
+pre-compaction numbering at all. This project has already shipped that
+off-by-one once, which is why the guarantee is structural rather than
+careful.
+
+The join needed one new field: `SourceRef.cluster_id`. The alternative was
+matching on `(title, source_name)`, and two items can share both — a feed
+publishing "Morning Briefing" daily, carried in a window spanning two of them
+— which puts them in different clusters and deep-links a story into another
+story's moment.
+
+### Rule 5 holds structurally, not by care
+
+What persists is derived: LLM-written headlines and summaries, plus metadata
+(`title`, `source_name`, `url`, timestamp) that already persists today in
+`SourceRef`. **No extractive snippets** — an extract is the raw body with a
+smaller word count.
+
+Bodies are read once, to build the enrichment prompt, before
+`_scrub_email_bodies` runs, exactly as `script_chain` already reads them to
+write the script. `build_digest` reads no body at all, so it produces a
+byte-identical artifact before and after the scrub, and that is asserted.
+
+The privacy policy at joeludu.com/mercury was updated in the same change. It
+listed exhaustively what persists, and a fourth item now exists; the page is
+public and Google read it to publish the consent screen.
+
+### Enrichment is bounded at 40 stories; the desk is not
+
+The interface contract asked for an LLM headline and summary on every story.
+222 summaries in one call is roughly 15k output tokens — slow enough to
+threaten the PRD's 90-second budget, deep enough into a long structured
+emission to reinvite the malformed-JSON failure that lost the 2026-08-27
+briefing, and a real draw on the same free-tier quota the four script passes
+spend.
+
+So every story still appears, and only the re-writing is capped. An unenriched
+story carries the publication's own headline — real, human-written, and
+already persisted in `SourceRef` — and a null summary. The fallback is
+explicitly not a snippet.
+
+Which stories get the budget is not "top N by score". Newsletter-backed
+clusters always qualify, however they ranked: they are the feature that was
+asked for, and a pure score rule would spend the budget on wire copy while
+the newsletter the ranker dropped — precisely the one the user opened the app
+to find — got a bare subject line.
+
+"Always" stops at 40, though, or the bound is not one. Review caught that the
+priority was applied BEFORE the cap, so a morning with 41 newsletter-backed
+clusters sent every one of them into a single call — the unbounded emission
+this whole section exists to prevent, on a day the inbox is busiest. A live
+run ingests 54 emails, so that is a Tuesday. The slice is taken off the
+score-sorted list, so the cap costs the lowest-ranked newsletters their
+summary and nothing their place on the desk.
+
+The call runs concurrently with TTS, so it costs no wall clock against a
+71-second live run, and it is cancelled when synthesis raises rather than
+left holding the loop open for a briefing that no longer exists.
+
+### Personal email is not a story, and not part of one either
+
+A cluster reaches the digest only if it contains a newsletter or an RSS
+article. An ordinary message from a colleague is neither, and rendering it as
+a browsable "story" would put private correspondence on a screen built for
+published journalism and hand it to an LLM to summarise on top of that.
+
+That test alone was not enough, which review found and this ADR originally
+got wrong. Clusters are MIXED: emails and articles go into one
+`build_stories` call, which is the whole reason the `Item` schema is shared,
+so a colleague writing about a story the wire also carried is in the same
+cluster as the article. The cluster passed on the article's strength and
+every member was then read — so the personal message's sender, subject and
+timestamp were serialised into `sources[]`, and in a newsletter-backed
+cluster (where every member is `EMAIL`, so `authority_sorted` falls through
+to "whoever reported it first") that message could be the canonical whose
+body went to the model and whose subject line became the headline.
+
+So the rule is per MEMBER, not per cluster: `digest_members` is the single
+filter every read of a cluster goes through — `sources[]`, the item the
+summariser gets, the headline fallback, the source names in the prompt, and
+which refs may deep-link the story. That last one is the subtle case:
+`_build_source_refs` gives a personal email a ref carrying its cluster id, so
+without the filter the inbox turn reading out that colleague's message marked
+the newsletter's story `covered_in_audio` and became its deep-link. Cluster-
+level coverage is still right — a turn about the Reuters report covers the
+story three newsletters also wrote about — but only the members the screen
+shows may vote for it.
+
+### Degradation
+
+- A failed enrichment pass costs the summaries, never the briefing and never
+  the browse surface (rule 7 applied to a screen).
+- A digest that will not write is logged and the briefing still publishes.
+  The manifest plus the audio is the briefing; a secondary object must not be
+  able to withhold it. (Only `R2Storage` did this at first; the local backend
+  raised, so a full disk cost the briefing rather than the screen.)
+- **The stored digest was built from the stored manifest, or there is none.**
+  `--force` reuses the briefing id, so a digest surviving from an earlier run
+  for the same day carries `turn_index` values addressing THAT run's turn
+  list: a browse screen whose taps land in audio the bucket no longer holds,
+  wrong in the way that looks like it worked. Both backends therefore
+  withdraw the previous digest whenever a new one is not published — a failed
+  write, or no digest this run — and withdraw the new one if the manifest
+  then fails to land. If the previous one cannot be removed the run FAILS
+  rather than publishing over it, on the same argument the stale-audio branch
+  in `R2Storage.save` already makes: the old manifest and the old digest are
+  a consistent pair, so the user keeps the briefing they already had.
+- The local digest is written through a temporary file and renamed.
+  `write_text` truncates first, and the API serves the same directory the
+  generator writes to, so a regeneration made the digest read as absent for
+  as long as the write took.
+- A missing digest is an ordinary 404 on both read paths. Every briefing
+  generated before this existed has none, so the client shows an empty state,
+  and the audio is unaffected.
+- `schema_version: 1` from day one, so a future shape can be refused by an
+  older client rather than silently rendered as an empty list — a screen that
+  says nothing and looks like "no newsletters today".
+
+**Rejected:**
+
+- **Extending `BriefingManifest`.** Above: every player launch pays for it.
+- **An extractive snippet as the summary fallback.** It is the raw body with a
+  smaller word count, which is the thing rule 5 forbids. Null is honest.
+- **Summarising from titles alone, to avoid sending bodies to the model.** A
+  summary written without the source is the model guessing what an article
+  probably said, which is a rule 3 failure dressed as a privacy win. The
+  bodies already go to Gemini to write the script; the digest adds no
+  recipient.
+- **Capping how many stories appear.** That is the one thing the feature is
+  for. Bounding the enrichment costs a summary; bounding the desk costs the
+  answer to the question that was asked.

@@ -18,7 +18,12 @@ from datetime import UTC, datetime
 import pytest
 
 from app.cli import main
-from app.core.schemas import BriefingManifest, Turn
+from app.core.schemas import (
+    BriefingDigest,
+    BriefingManifest,
+    DigestNewsletter,
+    Turn,
+)
 from app.synthesis.storage import (
     LocalFilesystemStorage,
     briefing_id_from_key,
@@ -39,6 +44,23 @@ def _manifest(briefing_id: str) -> BriefingManifest:
         sources=[],
     )
 
+
+def _digest(briefing_id: str) -> BriefingDigest:
+    """A digest with a real newsletter in it — the point of the test below is
+    that a record of who mailed the user survives nothing."""
+    return BriefingDigest(
+        briefing_id=briefing_id,
+        generated_at=datetime.now(UTC),
+        newsletters=[
+            DigestNewsletter(
+                id="nl_1",
+                source_name="Stratechery",
+                sender="ben@stratechery.com",
+                subject="The Gemini Moat",
+                received_at=datetime.now(UTC),
+            )
+        ],
+    )
 
 def _storage_with(tmp_path, *briefing_ids: str) -> LocalFilesystemStorage:
     storage = LocalFilesystemStorage(base_dir=tmp_path)
@@ -220,6 +242,35 @@ def test_delete_briefing_removes_every_object_for_that_briefing(tmp_path):
 
     assert sorted(p.name for p in tmp_path.iterdir()) == []
 
+
+def test_retention_removes_the_digest_too(tmp_path):
+    """A digest left behind by retention is an orphaned record of someone's
+    inbox — every newsletter that arrived that morning, who sent it and
+    when — sitting in the bucket after the briefing it belonged to is gone.
+    That is a different and worse failure than the 10GB one the sweep was
+    written for, so it gets its own regression test rather than relying on
+    the general "every object" case above.
+
+    `delete_briefing` needed no change: it already sweeps every key whose
+    prefix is the briefing id. This exists so a future refactor back to an
+    explicit key list cannot quietly reintroduce it — stubbing
+    `LocalFilesystemStorage.delete_briefing` down to
+    `_manifest_path` + KNOWN_AUDIO_FORMATS fails here and nowhere else.
+    """
+    storage = LocalFilesystemStorage(base_dir=tmp_path)
+    storage.save(
+        "2026-01-01", b"audio bytes", "wav", _manifest("2026-01-01"),
+        _digest("2026-01-01"),
+    )
+    digest_path = tmp_path / "2026-01-01.digest.json"
+    assert digest_path.exists(), "the fixture never wrote a digest"
+    assert "Stratechery" in digest_path.read_text()
+
+    prune_briefings(storage, retention_days=30, today_id=TODAY)
+
+    assert not digest_path.exists()
+    assert storage.load_digest("2026-01-01") is None
+    assert sorted(p.name for p in tmp_path.iterdir()) == []
 
 def test_a_failed_delete_is_not_reported_as_deleted(tmp_path, monkeypatch):
     """prune returns what it deleted, and the caller logs that list. A

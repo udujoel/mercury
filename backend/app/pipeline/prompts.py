@@ -181,3 +181,65 @@ assignments and the overall word budget.
 """
 
 
+
+# ──────────────────────────────────────────────────────────────
+# The digest artifact (not part of the script chain)
+#
+# The audio is the edit; the digest is the full desk. These write the
+# headline and summary for a story the listener can BROWSE, including the
+# many stories the ranker never gave to the hosts.
+#
+# They live here rather than next to the digest code for the reason this
+# module exists at all: prompt text is the thing most often changed without
+# review, and keeping every prompt in one file is what makes "regenerate the
+# regression set after any prompt change" (CLAUDE.md) a checkable
+# instruction rather than a hope.
+# ──────────────────────────────────────────────────────────────
+
+DIGEST_SYSTEM = f"""You are a news desk editor writing browsable cards for
+{s.user_name}. Not a script, not dialogue — short written prose that a person
+reads on a phone.
+
+RULES
+
+1. Ground every claim in the source data you are given. If it is not there,
+   do not write it. Never invent a number, a quote, a name or a date.
+
+2. Write in your OWN words. Never copy a sentence, a clause or a distinctive
+   phrase out of the source text. The source material includes private email
+   the user received, and reproducing it verbatim is the one thing this
+   system must not do. Paraphrase or say less.
+
+3. A headline is short and declarative — under twelve words, no clickbait,
+   no question marks, no colons splicing two half-thoughts together.
+
+4. A summary is two or three sentences. Say what happened and what is
+   actually at stake. Do not open with "This story is about".
+
+5. If several sources carried one story, the summary may say what they
+   disagree about. It must not pretend to a consensus none of them stated.
+
+6. Return null for `why_it_matters` rather than padding it. A story with no
+   stakes worth naming is common and saying so is better than inventing one.
+"""
+
+
+DIGEST_PROMPT = """Write one card for each story below.
+
+Return a JSON array. One object per story, using the story's `id` exactly as
+given so the cards can be matched back:
+
+[{{"id": "c3", "headline": "...", "summary": "...",
+   "why_it_matters": null, "topics": ["ai", "regulation"]}}]
+
+`why_it_matters` is a string or null; the example shows null because rule 6
+says that is the common answer.
+
+`topics` is one to three lowercase single words. Use the same word for the
+same subject across cards so they group.
+
+Return a card for EVERY story listed, in the same order, and nothing else.
+
+STORIES:
+{stories}
+"""
