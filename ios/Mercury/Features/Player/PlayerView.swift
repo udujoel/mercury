@@ -87,6 +87,11 @@ struct PlayerView: View {
                     }
                     .accessibilityLabel("Show notes")
                     .accessibilityHint("Lists every source this briefing used")
+                    // Every entry deep-links into the audio, so it carries
+                    // the same hazard as the chapter ribbon: with nothing
+                    // loaded, an offset from a restored briefing would be
+                    // applied to today's.
+                    .disabled(!appState.isPlaybackLoaded)
                 }
             }
         }

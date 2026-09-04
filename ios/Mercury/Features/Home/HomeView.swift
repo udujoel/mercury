@@ -58,7 +58,12 @@ struct HomeView: View {
                         summary: BriefingDigest.summary(for: appState.manifest),
                         isPlaying: appState.playback.isPlaying,
                         onPlay: play,
-                        onRetry: play
+                        // NOT `play`. Retry follows a failed fetch, and
+                        // `togglePlayback` would pause or resume whatever
+                        // audio happens to be loaded instead of trying the
+                        // fetch again — which is the one thing the button
+                        // says it does.
+                        onRetry: { Task { await appState.playBriefing() } }
                     )
 
                     if !rows.isEmpty {

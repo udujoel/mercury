@@ -314,14 +314,20 @@ final class AppState {
             let manifest = try await api.fetchManifest(briefingId: id)
             let audioURL = try await api.downloadAudio(briefingId: id)
             await persist(manifest, audioPath: audioURL.path)
-            // Never swap the manifest out from under audio that is already
-            // loaded. The engine would keep playing last night's briefing
+            // Never swap the manifest out from under audio that is STILL
+            // GOING. The engine would keep playing last night's briefing
             // while the scrubber, the chapter ribbon and the transcript all
             // described a different one — the displayed duration and the
-            // real audio silently belonging to different mornings.
+            // real audio silently belonging to different mornings. It is
+            // persisted either way, so the next play picks it up.
             //
-            // It is persisted either way, so the next play picks it up.
-            if !playback.isLoaded { self.manifest = manifest }
+            // A finished briefing is a different case and must not be held
+            // onto: `finish()` keeps the file so it can be replayed, so
+            // without unloading it the new briefing could never be
+            // published and the next tap replayed yesterday's.
+            if playback.isLoaded && !playback.hasFinished { return true }
+            playback.unload()
+            self.manifest = manifest
             return true
         } catch {
             print("[Mercury] Background prefetch for briefing \(id) failed: \(error)")
