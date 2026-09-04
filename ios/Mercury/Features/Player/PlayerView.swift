@@ -21,10 +21,32 @@ struct PlayerView: View {
                 .fill(MercuryColor.accent.color)
                 .frame(height: 2)
 
-            TranscriptView(turn: playback.currentTurn)
-                .frame(maxHeight: .infinity)
+            TranscriptView(
+                // `renderedTurns`, not `turns`. A turn whose TTS failed keeps
+                // sentinel timings and is excluded from the audio, so showing
+                // it puts a line in the script that is never spoken — and
+                // tapping it seeks to -1, which starts the briefing over.
+                turns: manifest?.renderedTurns ?? [],
+                activeTurn: playback.currentTurn,
+                isFinished: playback.hasFinished,
+                isEnabled: appState.isPlaybackCurrent,
+                onSelect: { turn in
+                    Task { await appState.play(fromMs: turn.startMs) }
+                }
+            )
+            .frame(maxHeight: .infinity)
 
             VStack(spacing: MercurySpace.comfortable) {
+                // Where you are, centred, directly under the script — the
+                // place the eye leaves the text.
+                SegmentIndicator(
+                    label: playback.currentSegment?.label,
+                    position: TranscriptScript.position(
+                        ofSegment: playback.currentSegment?.id,
+                        in: manifest?.segments ?? []
+                    )
+                )
+
                 Rectangle()
                     .fill(MercuryColor.hairline.color)
                     .frame(height: 1)
@@ -32,7 +54,7 @@ struct PlayerView: View {
                 ScrubBar(
                     positionMs: playback.positionMs,
                     durationMs: manifest?.durationMs ?? 0,
-                    isEnabled: appState.isPlaybackLoaded,
+                    isEnabled: appState.isPlaybackCurrent,
                     onSeek: { appState.seek(toMs: $0) }
                 )
                 .mercuryGutter()
@@ -40,7 +62,7 @@ struct PlayerView: View {
                 TransportControls(
                     isPlaying: playback.isPlaying,
                     rate: playback.rate,
-                    isEnabled: appState.isPlaybackLoaded,
+                    isEnabled: appState.isPlaybackCurrent,
                     onTogglePlay: togglePlay,
                     onSkip: { delta in
                         appState.seek(toMs: PlayerTransport.skipTarget(
@@ -56,7 +78,7 @@ struct PlayerView: View {
                 ChapterTabs(
                     segments: manifest?.segments ?? [],
                     activeSegmentID: playback.currentSegment?.id,
-                    isEnabled: appState.isPlaybackLoaded,
+                    isEnabled: appState.isPlaybackCurrent,
                     // Plays rather than merely seeking: a chapter tab is a
                     // request to hear that chapter.
                     onSelect: { segment in
@@ -91,7 +113,7 @@ struct PlayerView: View {
                     // the same hazard as the chapter ribbon: with nothing
                     // loaded, an offset from a restored briefing would be
                     // applied to today's.
-                    .disabled(!appState.isPlaybackLoaded)
+                    .disabled(!appState.isPlaybackCurrent)
                 }
             }
         }

@@ -65,6 +65,15 @@ final class PlaybackCoordinator {
     /// disagreed about reality. This is the reality.
     var isLoaded: Bool { file != nil }
 
+    /// Which briefing the loaded audio belongs to.
+    ///
+    /// `isLoaded` alone is not enough for anything that seeks by offset.
+    /// `playBriefing` assigns `AppState.manifest` and then AWAITS the audio
+    /// download, so for the length of that download the new transcript is on
+    /// screen while the engine still holds the previous briefing — and an
+    /// offset from one applied to the other lands anywhere.
+    var loadedBriefingId: String? { file == nil ? nil : manifest?.briefingId }
+
     private var file: AVAudioFile?
     private var displayLink: CADisplayLink?
     private let nowPlaying = NowPlayingService()
