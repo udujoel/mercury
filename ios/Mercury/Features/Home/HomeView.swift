@@ -142,8 +142,15 @@ struct HomeView: View {
     /// hint said it plays this part of the briefing.
     private func open(at row: BriefingDigest.Row) {
         guard let ms = row.seekMs else { return }
-        showPlayer = true
-        Task { await appState.play(fromMs: ms) }
+        Task {
+            await appState.play(fromMs: ms)
+            // Navigate only once there is something to navigate TO. Setting
+            // this first meant an offline tap landed the user on a player
+            // with every control disabled, while the error explaining why
+            // stayed behind on Home.
+            guard appState.isPlaybackLoaded else { return }
+            showPlayer = true
+        }
     }
 }
 
