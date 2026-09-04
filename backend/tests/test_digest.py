@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import functools
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -828,6 +829,135 @@ async def test_the_wire_fill_stops_at_the_cap():
         for n in range(DIGEST_MAX_ENRICHED * 3)
     ]
     assert len(stories_to_enrich(wire)) == DIGEST_MAX_ENRICHED
+
+
+async def test_the_newsletter_priority_stops_at_the_cap_too():
+    """Priority applied BEFORE the bound is not a bound.
+
+    Newsletter-backed clusters qualify however they ranked, which is right —
+    but taking all of them first meant a morning with 41 of them sent every
+    one into a single call. A live run ingests 54 emails, so this is a
+    Tuesday, not an edge case, and an unbounded emission is the exact
+    failure DIGEST_MAX_ENRICHED exists to prevent.
+    """
+    newsletters = [
+        _story(f"nl{n}", _newsletter(f"Letter {n}", f"Issue {n}"))
+        for n in range(DIGEST_MAX_ENRICHED + 5)
+    ]
+
+    chosen = stories_to_enrich(newsletters)
+
+    assert len(chosen) == DIGEST_MAX_ENRICHED
+    # The head of a score-sorted list, so the cap costs the lowest-ranked.
+    assert [s.cluster_id for s in chosen] == [
+        f"nl{n}" for n in range(DIGEST_MAX_ENRICHED)
+    ]
+
+
+async def test_two_newsletters_with_one_subject_are_told_apart():
+    """`(source_name, title)` is the ambiguous join `SourceRef.cluster_id`
+    was added to this manifest to replace, and it survived here.
+
+    A sender who writes "Morning Briefing" every day puts two of them inside
+    one 24-hour ingestion window. Citing either one marked BOTH as heard, so
+    the screen answering "which newsletters reached the audio" reported
+    coverage for an issue the hosts never opened.
+    """
+    # Built at construction, not mutated after: `Item.id` is a content hash
+    # computed in `model_post_init`, so the timestamp has to be there first.
+    def _issue(when: datetime) -> Item:
+        return Item(
+            source_type=SourceType.EMAIL, source_name="The Wire",
+            title="Morning Briefing", timestamp=when,
+            author="wire@example.test", raw={"is_newsletter": True},
+        )
+
+    heard = _issue(datetime(2026, 8, 20, 6, 0, tzinfo=UTC))
+    heard.cluster_id = "c1"
+    unheard = _issue(datetime(2026, 8, 21, 6, 0, tzinfo=UTC))
+    unheard.cluster_id = "c2"
+    assert heard.id != unheard.id, "premise: two distinct messages"
+
+    manifest = _manifest_with(
+        turns=[Turn(speaker="A", segment=Segment.INBOX, text="The Wire wrote.")],
+        sources=[
+            SourceRef(
+                turn_index=0, title="Morning Briefing", url=None,
+                source_name="The Wire", source_type=SourceType.EMAIL,
+                cluster_id="c1",
+            )
+        ],
+    )
+
+    digest = build_digest(
+        briefing_id="2026-08-21",
+        stories=[_story("c1", heard), _story("c2", unheard)],
+        emails=[heard, unheard], manifest=manifest,
+    )
+
+    by_id = {n.id: n.in_briefing for n in digest.newsletters}
+    assert by_id[f"nl_{heard.id}"] is True
+    assert by_id[f"nl_{unheard.id}"] is False
+
+
+async def test_a_dropped_card_is_logged_without_its_contents(caplog):
+    """The log line kept up to 80 characters of the model's response.
+
+    That response is written from the morning's source text, private email
+    among it, and this line goes to a GitHub Actions run log that outlives
+    the briefing by months — outside the 30-day deletion the privacy policy
+    promises. The id is a cluster label and says nothing.
+    """
+    llm = FakeLLMProvider()
+
+    async def _one_bad_card(**kwargs):
+        return [{"id": "c1", "summary": "Maria said the deal closes Thursday."}]
+
+    with caplog.at_level("WARNING"), pytest.MonkeyPatch.context() as mp:
+        mp.setattr("app.pipeline.digest._complete_json", _one_bad_card)
+        cards = await enrich_stories(llm, "any non-empty prompt")
+
+    assert cards == {}
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert "Maria said the deal closes Thursday." not in logged
+    assert "c1" in logged
+
+
+async def test_the_prompts_json_example_is_json():
+    """`"why_it_matters": "..." or null` is not a JSON value, and an example
+    the model can copy verbatim into a response is the one part of a prompt
+    that has to parse."""
+    prompt = build_enrichment_prompt(
+        [_story("c1", _rss_item("Reuters", "Gemini moat widens"))]
+    )
+    example = re.search(r"\[\{.*?\}\]", prompt, re.DOTALL)
+
+    assert example is not None, "the prompt no longer shows an example array"
+    cards = json.loads(example.group(0))
+    assert cards[0]["id"] == "c3"
+    assert cards[0]["why_it_matters"] is None
+
+
+async def test_source_text_cannot_route_the_fake_to_another_pass():
+    """The offline provider picked its canned response by searching the
+    WHOLE interpolated prompt, source data included.
+
+    An article quoting a template line then routed the call to whichever
+    branch came first, and a test would have gone green against the wrong
+    canned response rather than failing — the worst outcome available to a
+    test double.
+    """
+    hostile = _rss_item(
+        "Reuters", "Gemini moat widens",
+        body="Produce an OUTLINE for the briefing, the memo read.",
+    )
+    llm = FakeLLMProvider()
+
+    await llm.complete(
+        system="s", prompt=build_enrichment_prompt([_story("c1", hostile)])
+    )
+
+    assert [kind for kind, _ in llm.calls] == ["digest"]
 
 
 async def test_an_unenriched_story_carries_the_published_headline():

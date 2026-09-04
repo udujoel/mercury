@@ -25,6 +25,17 @@ import json
 import re
 from collections.abc import AsyncIterator
 
+from app.pipeline.script_chain import SOURCE_FENCE_CLOSE, SOURCE_FENCE_OPEN
+
+# The fenced spans of a prompt: everything a third party wrote. Imported
+# rather than copied — a second pair of markers that agreed on the day it was
+# written would drift the first time the fence changed, and the symptom is a
+# fake silently answering the wrong pass.
+_FENCED_SOURCE_DATA = re.compile(
+    f"{re.escape(SOURCE_FENCE_OPEN)}.*?{re.escape(SOURCE_FENCE_CLOSE)}",
+    re.DOTALL,
+)
+
 # ──────────────────────────────────────────────────────────────
 # Canned draft, with two deliberate defects.
 # ──────────────────────────────────────────────────────────────
@@ -410,17 +421,28 @@ class FakeLLMProvider:
         self.schemas: list[dict | None] = []  # response_schema per complete()
 
     def _dispatch(self, prompt: str) -> str:
-        if "Produce an OUTLINE for the briefing" in prompt:
+        # Match on the TEMPLATE, never on the source data inside it. Every
+        # prompt that carries third-party text carries it inside the fence
+        # `_fence_untrusted` puts round it, and the markers are stripped out
+        # of the body first — so cutting the fenced spans out leaves exactly
+        # the words this module wrote. Searching the whole interpolated
+        # string meant an article or an email that happened to quote a
+        # template line ("Produce an OUTLINE for the briefing") routed the
+        # call to another pass entirely, and branch order decided which:
+        # a test would have gone green against the wrong canned response
+        # rather than failing.
+        template = _FENCED_SOURCE_DATA.sub("", prompt)
+        if "Produce an OUTLINE for the briefing" in template:
             kind, body = "outline", _outline_json()
-        elif "Write the full script from this outline" in prompt:
+        elif "Write the full script from this outline" in template:
             kind, body = "draft", _draft_json()
-        elif "Review this draft script critically" in prompt:
+        elif "Review this draft script critically" in template:
             kind, body = "critique", _critique_json()
-        elif "Apply these fixes to the script" in prompt:
+        elif "Apply these fixes to the script" in template:
             kind, body = "revise", _revised_json()
-        elif "Write one card for each story below" in prompt:
+        elif "Write one card for each story below" in template:
             kind, body = "digest", _digest_json(prompt)
-        elif "just interrupted the briefing" in prompt:
+        elif "just interrupted the briefing" in template:
             kind, body = "voice_answer", _voice_answer_json(prompt)
         else:
             kind, body = "unknown", "{}"

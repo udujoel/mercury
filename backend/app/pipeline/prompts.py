@@ -230,7 +230,10 @@ Return a JSON array. One object per story, using the story's `id` exactly as
 given so the cards can be matched back:
 
 [{{"id": "c3", "headline": "...", "summary": "...",
-   "why_it_matters": "..." or null, "topics": ["ai", "regulation"]}}]
+   "why_it_matters": null, "topics": ["ai", "regulation"]}}]
+
+`why_it_matters` is a string or null; the example shows null because rule 6
+says that is the common answer.
 
 `topics` is one to three lowercase single words. Use the same word for the
 same subject across cards so they group.

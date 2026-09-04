@@ -39,6 +39,7 @@ and `build_digest` itself never touches `Item.body` at all.
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from datetime import UTC, datetime
 from typing import Any
 
@@ -172,13 +173,21 @@ def stories_to_enrich(stories: list[Story]) -> list[Story]:
     The rest of the budget goes to the highest-scoring remainder. `stories`
     arrives sorted by `ranking.score_stories`, so that is just the head of
     what is left.
+
+    "Always" stops at the cap, though, or the cap is not one. A morning with
+    41 newsletter-backed clusters is not exotic — a live run ingested 54
+    emails — and priority applied before the bound sent every one of them
+    into a single call, which is the unbounded emission DIGEST_MAX_ENRICHED
+    exists to prevent. Because `stories` is score-sorted, the slice keeps the
+    highest-scoring newsletter clusters; the rest are still on the desk with
+    the publication's own headline, which is what the bound has always cost.
     """
     newsletter_backed = [
         story
         for story in stories
         if any(_is_newsletter(member) for member in story.members)
     ]
-    chosen = list(newsletter_backed)
+    chosen = list(newsletter_backed[:DIGEST_MAX_ENRICHED])
     seen = {story.cluster_id for story in chosen}
     for story in stories:
         if len(chosen) >= DIGEST_MAX_ENRICHED:
@@ -298,7 +307,16 @@ async def enrich_stories(
         try:
             out[str(card["id"])] = StoryCard.model_validate(card)
         except Exception:
-            log.warning("dropping an unusable digest card: %.80s", card)
+            # The id and the field names, never the values. A card that
+            # failed validation is still model output written from the
+            # morning's source text — private email among it — and this line
+            # goes to a GitHub Actions run log that outlives the briefing by
+            # months and is not covered by the 30-day deletion the privacy
+            # policy promises. The id is a cluster label and says nothing.
+            log.warning(
+                "dropping an unusable digest card for %s (fields: %s)",
+                card.get("id"), ", ".join(sorted(map(str, card))) or "none",
+            )
     return out
 
 
@@ -447,7 +465,27 @@ def build_digest(
     # was read out in the INBOX segment rather than as a world story. Both
     # routes reach the audio and the user asked which ones did, not by which
     # path.
-    cited = {(ref.source_name, ref.title) for ref in manifest.sources}
+    #
+    # Guarded by uniqueness, because (source_name, title) is the same
+    # ambiguous join `SourceRef.cluster_id` was added to this manifest to
+    # replace, and leaving it here left the bug half-fixed: a sender who
+    # writes "Morning Briefing" every day puts two of them in one 24-hour
+    # window, and citing either marked BOTH as heard. Where the pair names
+    # one newsletter the join is exact. Where it names two, nothing in a
+    # `SourceRef` can tell them apart — and nothing needs to, because
+    # `_build_source_refs` copies `em.cluster_id` onto every email ref, so
+    # the cluster route above answers the same question exactly.
+    incoming = [item for item in emails if _is_newsletter(item)]
+    ambiguous = {
+        subject
+        for subject, count in Counter(
+            (item.source_name, item.title) for item in incoming
+        ).items()
+        if count > 1
+    }
+    cited = {
+        (ref.source_name, ref.title) for ref in manifest.sources
+    } - ambiguous
 
     out_newsletters = [
         DigestNewsletter(
@@ -467,8 +505,7 @@ def build_digest(
                 or (item.source_name, item.title) in cited
             ),
         )
-        for item in emails
-        if _is_newsletter(item)
+        for item in incoming
     ]
 
     log.info(
