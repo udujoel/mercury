@@ -23,6 +23,15 @@ final class PlaybackCoordinator {
     /// claiming to play silence until the app was killed.
     private(set) var hasFinished = false
 
+    /// Options for the playback audio session. Deliberately empty.
+    ///
+    /// A named constant rather than a literal at the call site, so a test can
+    /// assert the value the app actually configures. The first version of that
+    /// test set the category itself and then asserted on its own call — it
+    /// passed with the bug restored, which is the tautology this repo keeps
+    /// catching itself writing.
+    static let playbackCategoryOptions: AVAudioSession.CategoryOptions = []
+
     /// Playback speeds exposed by the transport control (PRD 3.4, Zone 3).
     static let availableRates: [Float] = [1.0, 1.25, 1.5, 2.0]
 
@@ -160,8 +169,27 @@ final class PlaybackCoordinator {
         engine.connect(timePitch, to: engine.mainMixerNode,
                        format: file.processingFormat)
 
+        // No options. `.allowBluetooth` was here, and it broke playback on
+        // every physical device while working perfectly in the simulator.
+        //
+        // That constant is Hands-Free Profile — the SDK header deprecates it
+        // in favour of `.allowBluetoothHFP` and documents it as changing
+        // whether a paired HFP device is available "for INPUT". `.playback`
+        // has no input, so the pair is meaningless, and a real audio session
+        // rejects it: `SessionCore.mm:717 Failed to set properties, error:
+        // 4294967246` — that is -50, paramErr, as an unsigned int. setCategory
+        // then throws, load() throws with it, and the briefing surfaces as
+        // "Cached audio could not be loaded, NSOSStatusErrorDomain Code=-50".
+        // The simulator's session does not enforce the combination, which is
+        // why the whole suite and every simulator run passed over it.
+        //
+        // Removing it rather than swapping to `.allowBluetoothHFP`: HFP is the
+        // narrow-band mono profile for phone calls. Forcing it would have made
+        // a spoken-word briefing sound worse on the exact devices most likely
+        // to play it. `.playback` already routes to A2DP — the stereo profile
+        // — by default, which is what this wanted all along.
         try AVAudioSession.sharedInstance().setCategory(
-            .playback, mode: .spokenAudio, options: [.allowBluetooth]
+            .playback, mode: .spokenAudio, options: Self.playbackCategoryOptions
         )
         try AVAudioSession.sharedInstance().setActive(true)
         if !engine.isRunning {

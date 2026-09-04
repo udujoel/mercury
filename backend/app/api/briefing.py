@@ -4,6 +4,7 @@ Briefing API.
     POST /briefing/generate          run the pipeline, return the manifest
     GET  /briefing/{briefing_id}     the stored manifest
     GET  /briefing/{briefing_id}/audio   the audio file, correct media type
+    GET  /briefing/{briefing_id}/digest  the browse surface, if there is one
 
 Generation is long-running (minutes, live; seconds, offline with fakes), so
 the POST endpoint simply awaits the run and returns the finished manifest —
@@ -25,7 +26,7 @@ from app.api import jobs
 from app.core.auth import require_api_token
 from app.core.config import get_settings
 from app.core.providers import EmbeddingProvider, build_embedding_provider
-from app.core.schemas import BriefingLength, BriefingManifest
+from app.core.schemas import BriefingDigest, BriefingLength, BriefingManifest
 from app.pipeline.generate import generate_briefing
 from app.providers.fake import FakeLLMProvider
 from app.providers.fake_tts import FakeTTSProvider
@@ -252,6 +253,30 @@ async def get_manifest(briefing_id: str) -> BriefingManifest:
             status_code=404, detail=f"briefing {briefing_id!r} not found"
         )
     return manifest
+
+
+@router.get("/{briefing_id}/digest", response_model=BriefingDigest)
+async def get_digest(briefing_id: str) -> BriefingDigest:
+    """The browsable half of a briefing: every newsletter that arrived and
+    every story that clustered, including the ones the ranker dropped.
+
+    Here as well as in the Worker because the Worker exists to speak these
+    exact routes back to an unchanged client (see worker/src/index.js). A
+    read surface implemented on only one of the two halves is a difference
+    that shows up as "it works on my laptop and not in production", which is
+    the class of defect ADR-008's split already makes easy to create.
+
+    404 is the ORDINARY answer for a briefing generated before the digest
+    existed, and for one whose enrichment failed — the client shows an empty
+    state, and the audio is unaffected either way.
+    """
+    storage = build_storage()
+    digest = await asyncio.to_thread(storage.load_digest, briefing_id)
+    if digest is None:
+        raise HTTPException(
+            status_code=404, detail=f"digest for {briefing_id!r} not found"
+        )
+    return digest
 
 
 @router.get("/{briefing_id}/audio")

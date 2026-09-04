@@ -655,6 +655,7 @@ def _build_source_refs(
                     source_name=member.source_name,
                     source_type=member.source_type,
                     cluster_size=story.cluster_size,
+                    cluster_id=story.cluster_id,
                 )
                 for member in story.members
             )
@@ -680,6 +681,14 @@ def _build_source_refs(
                         url=em.url,
                         source_name=em.source_name,
                         source_type=SourceType.EMAIL,
+                        # Set by `cluster_items`/`_singleton` on the way
+                        # through `build_stories`, so an inbox email that is
+                        # also a member of a browsable story marks that story
+                        # as covered even when the turn matched the EMAIL
+                        # rather than the story. None when nothing was
+                        # clustered this run (no embedding provider, or no
+                        # clusterable items at all).
+                        cluster_id=em.cluster_id,
                     )
                 )
 
@@ -894,6 +903,7 @@ async def _complete_json(
     what: str,
     validate: Any = None,
     repair_check: Any = None,
+    system: str = HOST_SYSTEM,
 ) -> Any:
     """Run one pass and parse it, retrying on anything the parser or the
     shape check rejects.
@@ -915,7 +925,7 @@ async def _complete_json(
 
     for attempt in range(1, _JSON_ATTEMPTS + 1):
         raw = await llm.complete(
-            HOST_SYSTEM,
+            system,
             attempt_prompt,
             temperature=attempt_temperature,
             json_mode=True,

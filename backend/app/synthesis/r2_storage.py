@@ -30,7 +30,7 @@ import logging
 from functools import cached_property
 
 from app.core.config import get_settings
-from app.core.schemas import BriefingManifest
+from app.core.schemas import BriefingDigest, BriefingManifest
 from app.synthesis.storage import (
     AUDIO_MEDIA_TYPES,
     KNOWN_AUDIO_FORMATS,
@@ -102,6 +102,13 @@ class R2Storage:
         return f"{briefing_id}.manifest.json"
 
     @staticmethod
+    def _digest_key(briefing_id: str) -> str:
+        # Must stay "{id}.digest.json": `briefing_id_from_key` reads the id
+        # back off the prefix, and that is what makes retention find and
+        # delete this object without knowing it exists.
+        return f"{briefing_id}.digest.json"
+
+    @staticmethod
     def _audio_key(briefing_id: str, audio_format: str) -> str:
         return f"{briefing_id}.{audio_format}"
 
@@ -116,6 +123,7 @@ class R2Storage:
         audio_bytes: bytes,
         audio_format: str,
         manifest: BriefingManifest,
+        digest: BriefingDigest | None = None,
     ) -> None:
         audio_key = self._audio_key(briefing_id, audio_format)
         self._client.put_object(
@@ -175,19 +183,102 @@ class R2Storage:
                     stale, audio_format, exc_info=True,
                 )
 
+        # Also before the manifest. The invariant is that the stored digest
+        # is the one built from the stored MANIFEST, or nothing at all —
+        # see `_publish_digest`.
+        self._publish_digest(briefing_id, digest)
+
         # Manifest LAST, deliberately. It is what the client polls for, so
         # writing it only after the audio is durably stored means the phone
         # can never see a briefing whose audio is still uploading.
-        self._client.put_object(
-            Bucket=self._bucket,
-            Key=self._manifest_key(briefing_id),
-            Body=manifest.model_dump_json(indent=2).encode(),
-            ContentType="application/json",
-        )
+        try:
+            self._client.put_object(
+                Bucket=self._bucket,
+                Key=self._manifest_key(briefing_id),
+                Body=manifest.model_dump_json(indent=2).encode(),
+                ContentType="application/json",
+            )
+        except Exception:
+            # The other half of the same invariant. The digest just uploaded
+            # describes turns in a manifest that never landed, and the
+            # manifest still being served is the PREVIOUS run's — so leaving
+            # it would pair old audio with new deep-links. Removing it costs
+            # the browse screen and keeps the pair the user already had.
+            if digest is not None:
+                try:
+                    self._delete(self._digest_key(briefing_id))
+                except Exception:
+                    log.exception(
+                        "the manifest for %s failed to publish and its "
+                        "digest could not be withdrawn; the browse screen "
+                        "will deep-link into the previous run's audio",
+                        briefing_id,
+                    )
+            raise
         log.info(
             "stored briefing %s in R2: %s (%d bytes) + manifest",
             briefing_id, audio_key, len(audio_bytes),
         )
+
+    def _publish_digest(
+        self, briefing_id: str, digest: BriefingDigest | None
+    ) -> None:
+        """Replace the stored digest, or remove it. Never leaves a stale one.
+
+        A failure to UPLOAD is not fatal. The digest is the browse surface;
+        the manifest plus the audio is the briefing, and refusing to publish
+        a working briefing because a secondary object would not upload
+        trades the product for one of its screens (rule 7).
+
+        A failure to REMOVE what is there already IS fatal, for the same
+        reason the stale-audio branch above is. `--force` reuses the
+        briefing id, so a digest left over from an earlier run for this day
+        carries `turn_index` values addressing that run's turn list;
+        publishing a new manifest over it hands the phone deep-links into
+        audio that no longer exists — wrong in a way that looks like it
+        worked, and permanent until the next run. The old manifest and that
+        old digest are a consistent pair, so the run fails and leaves the
+        user the briefing they already had.
+
+        `digest is None` takes the same removal path, and not as a nicety:
+        an enrichment failure or a run with nothing browsable produces no
+        digest at all, and that is exactly a morning where yesterday's would
+        otherwise stay on the screen labelled as today's.
+
+        Nothing is deleted, and so nothing can fail, unless there is an
+        object under the key. Most runs with no digest are a first run or a
+        day the enrichment failed twice, and issuing a delete on a key that
+        was never written would turn an under-scoped token into a lost
+        briefing over an object that does not exist.
+        """
+        key = self._digest_key(briefing_id)
+        if digest is not None:
+            try:
+                self._client.put_object(
+                    Bucket=self._bucket,
+                    Key=key,
+                    Body=digest.model_dump_json(indent=2).encode(),
+                    ContentType="application/json",
+                )
+                return
+            except Exception:
+                log.exception(
+                    "could not store the digest for %s; publishing the "
+                    "briefing without it (the app shows an empty browse "
+                    "state, the audio is unaffected)", briefing_id,
+                )
+
+        if self._get(key) is None:
+            return
+        try:
+            self._delete(key)
+        except Exception:
+            log.error(
+                "could not remove the previous digest for %s; refusing to "
+                "publish a manifest whose deep-links it would answer with "
+                "another run's turns", briefing_id,
+            )
+            raise
 
     def load_manifest(self, briefing_id: str) -> BriefingManifest | None:
         raw = self._get(self._manifest_key(briefing_id))
@@ -205,6 +296,21 @@ class R2Storage:
                 f"the manifest object for {briefing_id} in R2 is not a "
                 "readable BriefingManifest"
             ) from exc
+
+    def load_digest(self, briefing_id: str) -> BriefingDigest | None:
+        raw = self._get(self._digest_key(briefing_id))
+        if raw is None:
+            return None
+        try:
+            return BriefingDigest.model_validate(json.loads(raw))
+        except Exception:
+            # Unlike the manifest, this does NOT raise. Nothing depends on
+            # the digest to play a briefing, so there is no operator decision
+            # riding on telling corrupt apart from absent — and the client
+            # already has to render "no digest for this briefing" for every
+            # day generated before the digest existed.
+            log.exception("the digest for %s in R2 is unreadable", briefing_id)
+            return None
 
     def load_audio(self, briefing_id: str) -> tuple[bytes, str] | None:
         for fmt in KNOWN_AUDIO_FORMATS:

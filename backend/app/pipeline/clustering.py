@@ -107,12 +107,16 @@ def cluster_items(
     return stories
 
 
-def _pick_canonical(members: list[Item]) -> Item:
-    """
-    The representative item for a cluster.
+def authority_sorted(members: list[Item]) -> list[Item]:
+    """A cluster's members, most authoritative first.
 
-    Prefer higher-authority source types, then earliest timestamp (whoever
-    reported it first), then the most complete body.
+    Public because the digest renders `sources[]` in exactly this order with
+    the canonical at the top, and it has to be the SAME order rather than a
+    second implementation that agrees today. A copy in the digest module
+    would drift the first time AUTHORITY_ORDER changed, and the symptom —
+    show notes and the browsable story crediting a different publication as
+    the source of one claim — is not something a test of either module alone
+    would notice.
     """
     def rank(item: Item) -> tuple:
         try:
@@ -121,7 +125,17 @@ def _pick_canonical(members: list[Item]) -> Item:
             authority = len(AUTHORITY_ORDER)
         return (authority, _as_utc(item.timestamp), -len(item.body))
 
-    return sorted(members, key=rank)[0]
+    return sorted(members, key=rank)
+
+
+def _pick_canonical(members: list[Item]) -> Item:
+    """
+    The representative item for a cluster.
+
+    Prefer higher-authority source types, then earliest timestamp (whoever
+    reported it first), then the most complete body.
+    """
+    return authority_sorted(members)[0]
 
 
 def _as_utc(dt: datetime) -> datetime:

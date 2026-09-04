@@ -2,9 +2,10 @@
  * Mercury read Worker — serves briefings from a private R2 bucket.
  *
  * The iOS client speaks FastAPI routes (`/briefing/{id}`,
- * `/briefing/{id}/audio`) while R2 stores flat object keys
- * (`{id}.manifest.json`, `{id}.m4a`). This translates between them so the
- * client needs no changes — only a different API_HOST.
+ * `/briefing/{id}/audio`, `/briefing/{id}/digest`) while R2 stores flat
+ * object keys (`{id}.manifest.json`, `{id}.m4a`, `{id}.digest.json`). This
+ * translates between them so the client needs no changes — only a different
+ * API_HOST.
  *
  * The bucket stays private. Only this Worker holds the binding, which is why
  * it exists rather than simply making the bucket public: the manifest and
@@ -197,6 +198,24 @@ export default {
       const id = safeDecode(audio[1]);
       if (id === null) return json({ detail: "Invalid briefing id." }, 400);
       return serveAudio(request, env, id);
+    }
+
+    // The browse surface: every newsletter that arrived and every story that
+    // clustered, including the ones the ranker never gave to the hosts. A
+    // SIBLING of the manifest, not part of it — the manifest is what the
+    // player downloads to start playing audio, and folding ~100KB of browse
+    // data into it would make every launch pay for a screen the user may
+    // never open.
+    //
+    // Behind the same token check as everything else above, which is the
+    // point of putting it here rather than in its own handler: this is a
+    // list of who mails the user and when, which is at least as personal as
+    // the transcript.
+    const digest = url.pathname.match(/^\/briefing\/([^/]+)\/digest$/);
+    if (digest) {
+      const id = safeDecode(digest[1]);
+      if (id === null) return json({ detail: "Invalid briefing id." }, 400);
+      return serveDigest(request, env, id);
     }
 
     const manifest = url.pathname.match(/^\/briefing\/([^/]+)$/);
@@ -440,15 +459,22 @@ function notModified(object) {
   });
 }
 
-async function serveManifest(request, env, id) {
+/**
+ * One JSON object out of the bucket, conditional-GET and all.
+ *
+ * Shared by the manifest and the digest deliberately. They differ only in
+ * the key and the 404 wording, and a second copy of this is a second place
+ * for `cache-control` or the 304 handling to be got wrong — the digest is
+ * the private browse record of an inbox, so it is exactly the response that
+ * must not end up in a shared cache because someone forgot a header.
+ */
+async function serveJsonObject(request, env, id, key, missingDetail) {
   if (!validBriefingId(id)) return json({ detail: "Invalid briefing id." }, 400);
 
   // Handing R2 the request headers lets it evaluate If-None-Match itself,
   // rather than this code hand-parsing etag lists and weak validators.
-  const object = await env.BRIEFINGS.get(`${id}.manifest.json`, {
-    onlyIf: request.headers,
-  });
-  if (!object) return json({ detail: `No briefing for ${id}.` }, 404);
+  const object = await env.BRIEFINGS.get(key, { onlyIf: request.headers });
+  if (!object) return json({ detail: missingDetail }, 404);
   if (isNotModified(object)) return notModified(object);
 
   return new Response(object.body, {
@@ -458,6 +484,26 @@ async function serveManifest(request, env, id) {
       etag: object.httpEtag,
     },
   });
+}
+
+function serveManifest(request, env, id) {
+  return serveJsonObject(
+    request, env, id, `${id}.manifest.json`, `No briefing for ${id}.`,
+  );
+}
+
+/**
+ * 404 here is ORDINARY, not an error.
+ *
+ * Every briefing generated before the digest existed has no digest object,
+ * and a run whose enrichment failed still ships one — so the client shows an
+ * explanatory empty state rather than an error, and an old briefing stays
+ * playable with no browse screen behind it.
+ */
+function serveDigest(request, env, id) {
+  return serveJsonObject(
+    request, env, id, `${id}.digest.json`, `No digest for ${id}.`,
+  );
 }
 
 async function serveAudio(request, env, id) {

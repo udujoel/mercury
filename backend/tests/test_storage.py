@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from app.core.schemas import BriefingManifest
+from app.core.schemas import BriefingDigest, BriefingManifest, DigestNewsletter
 from app.synthesis.storage import AUDIO_MEDIA_TYPES, LocalFilesystemStorage
 
 
@@ -155,3 +155,148 @@ def test_a_storage_outage_is_not_a_corrupt_manifest(tmp_path, monkeypatch):
     path.write_text("not json at all")
     with pytest.raises(UnreadableManifestError):
         storage.load_manifest("2026-08-30")
+
+
+# ──────────────────────────────────────────────────────────────
+# The digest and the manifest are published as one generation
+#
+# The invariant: what `load_digest` returns was built from what
+# `load_manifest` returns, or there is no digest. `--force` reuses the
+# briefing id, so a digest surviving from an earlier run for the same day
+# carries `turn_index` values addressing THAT run's turn list — a browse
+# screen whose taps land in audio the bucket no longer holds, wrong in a way
+# that looks like it worked.
+# ──────────────────────────────────────────────────────────────
+
+
+def _digest(briefing_id: str = "2026-08-21", subject: str = "Today") -> BriefingDigest:
+    return BriefingDigest(
+        briefing_id=briefing_id,
+        generated_at=datetime.now(UTC),
+        newsletters=[
+            DigestNewsletter(
+                id="nl_1",
+                source_name="Stratechery",
+                sender="ben@stratechery.com",
+                subject=subject,
+                received_at=datetime.now(UTC),
+            )
+        ],
+    )
+
+
+def test_a_digest_that_will_not_write_does_not_lose_the_briefing(
+    tmp_path, monkeypatch
+):
+    """Rule 7, which this side did not apply. `R2Storage.save` has caught a
+    failed digest upload since the digest landed; here the exception
+    propagated out of `save`, so a full disk cost the whole briefing — the
+    audio was already written and orphaned — rather than one screen."""
+    storage = LocalFilesystemStorage(base_dir=tmp_path)
+    real_write_text = Path.write_text
+
+    def _fail_on_digest(self, data, *args, **kwargs):
+        if ".digest.json" in self.name:
+            raise OSError(28, "No space left on device")
+        return real_write_text(self, data, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", _fail_on_digest)
+
+    storage.save("2026-08-21", b"AUDIO", "m4a", _manifest(), _digest())
+
+    monkeypatch.undo()
+    assert storage.load_manifest("2026-08-21") is not None
+    assert storage.load_audio("2026-08-21") is not None
+    assert storage.load_digest("2026-08-21") is None
+
+
+def test_a_regeneration_with_no_digest_withdraws_the_previous_one(tmp_path):
+    """An enrichment failure, or a morning with nothing browsable, produces
+    no digest at all — and that is exactly a morning on which yesterday's
+    would otherwise stay on the screen labelled as today's."""
+    storage = LocalFilesystemStorage(base_dir=tmp_path)
+    storage.save("2026-08-21", b"AUDIO", "m4a", _manifest(), _digest())
+
+    storage.save("2026-08-21", b"AUDIO2", "m4a", _manifest(), None)
+
+    assert storage.load_digest("2026-08-21") is None
+
+
+def test_a_digest_that_will_not_write_does_not_leave_the_last_one_behind(
+    tmp_path, monkeypatch
+):
+    """The failure that survives the rule 7 catch. Shipping the briefing
+    without its digest is right; shipping it with the PREVIOUS run's is not,
+    and one `except` that only logs does both."""
+    storage = LocalFilesystemStorage(base_dir=tmp_path)
+    storage.save("2026-08-21", b"AUDIO", "m4a", _manifest(), _digest(subject="Old"))
+    real_write_text = Path.write_text
+
+    def _fail_on_digest(self, data, *args, **kwargs):
+        if ".digest.json" in self.name:
+            raise OSError(28, "No space left on device")
+        return real_write_text(self, data, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", _fail_on_digest)
+
+    storage.save("2026-08-21", b"AUDIO", "m4a", _manifest(), _digest(subject="New"))
+
+    monkeypatch.undo()
+    assert storage.load_manifest("2026-08-21") is not None
+    assert storage.load_digest("2026-08-21") is None
+
+
+def test_a_manifest_that_will_not_write_takes_its_digest_with_it(
+    tmp_path, monkeypatch
+):
+    """The digest goes down first, so a manifest write that then fails leaves
+    the PREVIOUS manifest being served beside the NEW digest — every deep-link
+    addressing a turn list nobody can fetch."""
+    storage = LocalFilesystemStorage(base_dir=tmp_path)
+    storage.save("2026-08-21", b"AUDIO", "m4a", _manifest(), _digest(subject="Old"))
+    real_write_text = Path.write_text
+
+    def _fail_on_manifest(self, data, *args, **kwargs):
+        if ".manifest.json" in self.name:
+            raise OSError(28, "No space left on device")
+        return real_write_text(self, data, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", _fail_on_manifest)
+
+    with pytest.raises(OSError):
+        storage.save("2026-08-21", b"AUDIO", "m4a", _manifest(), _digest(subject="New"))
+
+    monkeypatch.undo()
+    assert storage.load_manifest("2026-08-21") is not None
+    assert storage.load_digest("2026-08-21") is None
+
+
+def test_a_reader_never_sees_the_digest_half_written(tmp_path, monkeypatch):
+    """`write_text` truncates the live file before it writes it.
+
+    The API and the generator share this directory, so a `--force`
+    regeneration made `GET /briefing/{id}/digest` answer 404 — `load_digest`
+    reading invalid JSON and reporting absent — for a briefing that was
+    sitting there complete, for as long as the write took. The observation
+    below is taken from inside the write, which is the only place the window
+    exists.
+    """
+    storage = LocalFilesystemStorage(base_dir=tmp_path)
+    storage.save("2026-08-21", b"AUDIO", "m4a", _manifest(), _digest(subject="Old"))
+    seen = []
+
+    def _observed_write_text(self, data, *args, **kwargs):
+        if ".digest.json" not in self.name:
+            return Path(self).open("w").write(data)
+        with open(self, "w") as handle:          # truncate, as write_text does
+            seen.append(storage.load_digest("2026-08-21"))
+            handle.write(data)
+        return len(data)
+
+    monkeypatch.setattr(Path, "write_text", _observed_write_text)
+
+    storage.save("2026-08-21", b"AUDIO", "m4a", _manifest(), _digest(subject="New"))
+
+    monkeypatch.undo()
+    assert [d and d.newsletters[0].subject for d in seen] == ["Old"]
+    assert storage.load_digest("2026-08-21").newsletters[0].subject == "New"

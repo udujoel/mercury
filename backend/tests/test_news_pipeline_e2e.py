@@ -439,13 +439,16 @@ ACQUISITION_BODY = (
 
 
 async def _world(emails, articles, length=BriefingLength.STANDARD):
-    return await _build_world_stories(
+    # Drops the third return value — every clustered story, which the digest
+    # needs and these gate tests do not.
+    world, inbox, _all = await _build_world_stories(
         emails=emails,
         articles=articles,
         events=[],
         embeddings=FakeEmbeddingProvider(),
         length=length,
     )
+    return world, inbox
 
 
 async def test_a_story_only_newsletters_covered_is_still_read_out_once():
