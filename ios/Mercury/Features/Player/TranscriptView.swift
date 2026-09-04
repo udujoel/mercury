@@ -1,50 +1,64 @@
 import SwiftUI
 
-/// Player Zone 1 (top 60%): full-bleed ambient background derived from the
-/// current segment, with the currently spoken sentence as large centred
-/// text that cross-fades on change — 220ms ease, never a hard cut.
+/// The sentence being spoken, and the speaker mark under it.
+///
+/// PRD 3.4's argument survives ADR-012 intact: the text *is* the visual
+/// composition, which is what makes the screen feel designed rather than
+/// functional. What changed is the execution — a serif line set ragged-right
+/// against a wide margin, the way a printed pull-quote is set, instead of
+/// large centred sans over a full-bleed ambient wash. Centring earns its place
+/// when the text floats in a dark field with nothing to align to; it stops
+/// earning it the moment there is a margin.
+///
+/// The ambient background went with it. On paper the composition is the type
+/// and the white space around it, and a coloured wash behind a serif pull
+/// quote is the register we are leaving.
 struct TranscriptView: View {
-    let segment: BriefingSegment?
+    @Environment(\.mercuryMotion) private var motion
+
     let turn: Turn?
-    let isPlaying: Bool
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
-            AmbientBackground(seed: segment?.id ?? "briefing", family: .derived)
+        VStack(alignment: .leading, spacing: MercurySpace.gutter) {
+            Spacer(minLength: 0)
 
-            if isPlaying {
-                WaveformPill()
-                    .padding(16)
+            Text(turn?.text ?? "")
+                .font(MercuryType.transcript)
+                // Ragged right, per ADR-012.
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .lineSpacing(MercuryType.voiceLineSpacing)
+                .foregroundStyle(MercuryColor.ink.color)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let speaker = turn?.speaker {
+                Text("— \(speaker)")
+                    .font(MercuryType.eyebrow)
+                    .textCase(.uppercase)
+                    .tracking(0.6)
+                    .foregroundStyle(MercuryColor.inkFaint.color)
+                    .accessibilityLabel("Host \(speaker)")
             }
 
-            VStack {
-                Spacer()
-                Text(turn?.text ?? " ")
-                    .font(MercuryType.transcript)
-                    // Ragged right, per ADR-012 — the one modifier that
-                    // made Typography's docstring a claim rather than a
-                    // description. Centred text has no left edge for the eye
-                    // to return to, which is fine for a poster and wrong for
-                    // something read line by line while the audio moves.
-                    .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .lineSpacing(6)
-                    .foregroundStyle(MercuryColor.textPrimary)
-                    .padding(.horizontal, 28)
-                    .id(turn?.id)
-                    .transition(.opacity.animation(.easeInOut(duration: 0.22)))
-                Spacer()
-            }
+            Spacer(minLength: 0)
         }
+        .mercuryGutter()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // 220ms, never a hard cut (PRD 3.4). A cross-fade is already
+        // motion-free, so `resolve` passes it through unchanged rather than
+        // substituting for it — see `MercuryMotion.resolved`.
+        .id(turn?.id)
+        .transition(.opacity)
+        .animation(motion.resolve(MercuryMotion.crossfade), value: turn?.id)
+        .accessibilityElement(children: .combine)
     }
 }
 
 #Preview {
     TranscriptView(
-        segment: BriefingSegment(id: "inbox", label: "Your inbox", startMs: 0),
         turn: Turn(speaker: "A", segment: "inbox",
-                   text: "Priya sent over the Q3 planning doc — she wants eyes on it before Thursday.",
-                   startMs: 0, endMs: 4000),
-        isPlaying: true
+                   text: "And a bit of personal celebration, too — Akpet's birthday.",
+                   startMs: 0, endMs: 4000)
     )
+    .background(MercuryColor.surface.color)
 }

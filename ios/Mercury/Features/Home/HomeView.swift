@@ -1,67 +1,292 @@
 import SwiftUI
 
+/// Home, in the editorial register (ADR-012).
+///
+/// What this replaces: a 3D fanned deck of four cards, three of which were
+/// filled with invented content. The deck was a dark-ambient device — it read
+/// as depth because luminous cards floated on black — and on warm off-white
+/// paper four white cards overlapping at 18pt offsets read as a misaligned
+/// stack, with the content you came for hidden behind a drag gesture you had
+/// to discover. `CardDeck.swift` is deleted rather than retuned; see ADR-012
+/// for why that is a deletion and not a sizing fix.
+///
+/// The replacement is a page: a masthead, a greeting, one primary action, and
+/// a list. The day's accent appears exactly twice — the masthead rule and the
+/// play glyph — and everything else is ink on paper.
 struct HomeView: View {
     @Environment(AppState.self) private var appState
-    @State private var frontIndex = 0
+    @Environment(\.dynamicTypeSize) private var typeSize
+
     @State private var showPlayer = false
+
+    private var rows: [BriefingDigest.Row] { BriefingDigest.rows(for: appState.manifest) }
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                MercuryColor.canvas.ignoresSafeArea()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    Masthead(date: .now)
 
-                CardDeck(cardCount: 4, frontIndex: $frontIndex) { index in
-                    switch index {
-                    case 0:
-                        BriefingCard(isPlaying: appState.playback.isPlaying) {
-                            Task {
-                                await appState.playBriefing()
-                                if case .ready = appState.loadState {
-                                    showPlayer = true
-                                }
-                            }
-                        }
-                    case 1:
-                        WeatherCard()
-                    case 2:
-                        CalendarCard()
-                    default:
-                        InboxCard()
+                    Text("Good morning")
+                        .font(MercuryType.greeting)
+                        .foregroundStyle(MercuryColor.ink.color)
+                        .padding(.top, MercurySpace.generous)
+                        .padding(.bottom, MercurySpace.generous)
+                        // The date is already in the masthead directly above;
+                        // VoiceOver reading it twice in a row is noise.
+                        .accessibilityAddTraits(.isHeader)
+
+                    TodaysBriefingCard(
+                        state: appState.loadState,
+                        summary: BriefingDigest.summary(for: appState.manifest),
+                        isPlaying: appState.playback.isPlaying,
+                        onPlay: play,
+                        onRetry: play
+                    )
+
+                    if !rows.isEmpty {
+                        SectionLabel("In today's briefing")
+                            .padding(.top, MercurySpace.section)
+                            .padding(.bottom, MercurySpace.snug)
+
+                        BriefingRows(rows: rows, onSelect: open(at:))
                     }
                 }
-
-                if case .loading = appState.loadState {
-                    ProgressView()
-                        .tint(.white)
-                        .padding(24)
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
-                }
-
-                if case .failed(let message) = appState.loadState {
-                    VStack {
-                        Spacer()
-                        Text(message)
-                            .font(MercuryType.caption)
-                            .foregroundStyle(.red)
-                            .padding()
-                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-                            .padding(.horizontal)
-                            .padding(.bottom, 40)
-                    }
+                .mercuryGutter()
+                .padding(.top, MercurySpace.snug)
+                .padding(.bottom, MercurySpace.section)
+            }
+            .background(MercuryColor.surface.color.ignoresSafeArea())
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                // Only when there is something to return to. This is the fix
+                // for the standing complaint that leaving the player
+                // restarted the briefing: it did, because the only way back
+                // in was the greeting card, which called `playBriefing()` and
+                // reloaded the coordinator from zero. The bar navigates
+                // instead of loading.
+                if let manifest = appState.manifest {
+                    MiniPlayerBar(
+                        manifest: manifest,
+                        playback: appState.playback,
+                        onOpen: { showPlayer = true }
+                    )
                 }
             }
             .navigationDestination(isPresented: $showPlayer) {
                 PlayerView()
             }
-            // Covers playback started outside a direct tap on the greeting
-            // card — the wake notification's "Play" action or tapping the
-            // notification itself (PRD F-17), which drive
-            // `AppState.playPrefetched` directly rather than going through
-            // this view's own button handler.
+            // Covers playback started outside a direct tap on the card — the
+            // wake notification's "Play" action or tapping the notification
+            // itself (PRD F-17), which drive `AppState.playPrefetched`
+            // directly rather than going through this view's handler.
             .onChange(of: appState.playback.isPlaying) { _, isPlaying in
                 if isPlaying { showPlayer = true }
             }
         }
+    }
+
+    private func play() {
+        Task {
+            await appState.playBriefing()
+            if case .ready = appState.loadState { showPlayer = true }
+        }
+    }
+
+    /// Tapping a row goes to the player *at that chapter*. If the briefing is
+    /// not loaded into the coordinator yet the seek is harmless — `seek` on a
+    /// coordinator with no file schedules nothing — and the play path takes
+    /// over from the card.
+    private func open(at row: BriefingDigest.Row) {
+        guard let ms = row.seekMs else { return }
+        appState.playback.seek(toMs: ms)
+        showPlayer = true
+    }
+}
+
+// MARK: - Masthead
+
+/// The date, then a 2pt rule in the day's accent. One of exactly two places
+/// colour appears on this screen.
+struct Masthead: View {
+    let date: Date
+
+    /// "SATURDAY, 4 SEPTEMBER". Uppercased by `textCase`, not by baking caps
+    /// into the string, so VoiceOver still reads it as words rather than
+    /// spelling it.
+    private var line: String {
+        date.formatted(.dateTime.weekday(.wide).day().month(.wide))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MercurySpace.snug) {
+            Text(line)
+                .font(MercuryType.eyebrow)
+                .textCase(.uppercase)
+                .tracking(0.6)
+                .foregroundStyle(MercuryColor.inkFaint.color)
+
+            Rectangle()
+                .fill(MercuryColor.accent.color)
+                .frame(height: 2)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(line)
+    }
+}
+
+// MARK: - Section label
+
+struct SectionLabel: View {
+    private let text: String
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text)
+            .font(MercuryType.eyebrow)
+            .textCase(.uppercase)
+            .tracking(0.6)
+            .foregroundStyle(MercuryColor.inkFaint.color)
+            .accessibilityAddTraits(.isHeader)
+    }
+}
+
+// MARK: - The rows
+
+/// Editorial rows: hairline separated, no card chrome, no gradients, no
+/// shadows. Each row is one line of the briefing's own contents page.
+struct BriefingRows: View {
+    let rows: [BriefingDigest.Row]
+    let onSelect: (BriefingDigest.Row) -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Rectangle()
+                .fill(MercuryColor.hairline.color)
+                .frame(height: 1)
+            ForEach(rows) { row in
+                BriefingRowView(row: row) { onSelect(row) }
+                Rectangle()
+                    .fill(MercuryColor.hairline.color)
+                    .frame(height: 1)
+            }
+        }
+    }
+}
+
+struct BriefingRowView: View {
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    let row: BriefingDigest.Row
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            content
+                // 44pt is the floor, not the height: the row grows with the
+                // type. Every control on this screen clears it.
+                .frame(minHeight: 44)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, MercurySpace.snug)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!row.isInBriefing)
+        .accessibilityLabel("\(row.label), \(row.detail)")
+        .accessibilityHint(row.isInBriefing ? "Plays this part of the briefing" : "")
+        .accessibilityAddTraits(row.isInBriefing ? .isButton : .isStaticText)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        // At accessibility sizes a label, a detail and a chevron on one line
+        // truncate to nothing. Stack them instead of shrinking them.
+        if typeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: MercurySpace.tight) {
+                HStack(spacing: MercurySpace.snug) {
+                    label
+                    Spacer(minLength: 0)
+                    chevron
+                }
+                detail
+            }
+        } else {
+            HStack(spacing: MercurySpace.base) {
+                label
+                Spacer(minLength: MercurySpace.snug)
+                detail
+                chevron
+            }
+        }
+    }
+
+    private var label: some View {
+        Text(row.label)
+            .font(MercuryType.cardBody)
+            .foregroundStyle(row.isInBriefing
+                             ? MercuryColor.ink.color
+                             : MercuryColor.inkMuted.color)
+    }
+
+    private var detail: some View {
+        Text(row.detail)
+            .font(MercuryType.figureCaption)
+            .foregroundStyle(MercuryColor.inkMuted.color)
+            .multilineTextAlignment(.leading)
+    }
+
+    @ViewBuilder
+    private var chevron: some View {
+        // No chevron on a row that goes nowhere. An affordance pointing at
+        // an action that does not exist is the same defect as the player's
+        // dead Share button.
+        if row.isInBriefing {
+            Image(systemName: "chevron.right")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(MercuryColor.inkFaint.color)
+        }
+    }
+}
+
+// MARK: - Error presentation
+
+/// Turns `LoadState.failed`'s string into something a person can read.
+///
+/// The string is `error.localizedDescription`, and `APIError` builds it for
+/// the log rather than for a reader: `.transport` yields "Network error:
+/// Error Domain=NSURLErrorDomain Code=-1009 …" and `.decoding` yields the
+/// whole `DecodingError` dump. Home rendered that verbatim, in red, at
+/// caption size.
+///
+/// The proper fix is a `userFacingMessage` on `APIError` itself, which lives
+/// in `Core/` and is not this task's to change — so this presents rather than
+/// parses. The single exception is the `Backend returned 404: ` prefix, which
+/// `AppState.fetchTodayOrGenerate` constructs deliberately with a sentence
+/// written for the user; promoting that one is honouring a contract with a
+/// known producer, not scraping.
+enum HomeErrorPresentation: Equatable {
+    case readable(headline: String, detail: String?)
+
+    private static let promotablePrefix = "Backend returned 404: "
+
+    static func present(_ message: String) -> HomeErrorPresentation {
+        if message.hasPrefix(promotablePrefix) {
+            let body = String(message.dropFirst(promotablePrefix.count))
+            if !body.isEmpty { return .readable(headline: body, detail: nil) }
+        }
+        return .readable(
+            headline: "Today's briefing didn't load.",
+            detail: message.isEmpty ? nil : message
+        )
+    }
+
+    var headline: String {
+        if case .readable(let headline, _) = self { return headline }
+        return ""
+    }
+
+    var detail: String? {
+        if case .readable(_, let detail) = self { return detail }
+        return nil
     }
 }
 
