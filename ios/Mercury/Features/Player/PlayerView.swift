@@ -21,10 +21,27 @@ struct PlayerView: View {
                 .fill(MercuryColor.accent.color)
                 .frame(height: 2)
 
-            TranscriptView(turn: playback.currentTurn)
-                .frame(maxHeight: .infinity)
+            TranscriptView(
+                turns: manifest?.turns ?? [],
+                activeTurn: playback.currentTurn,
+                isEnabled: appState.isPlaybackLoaded,
+                onSelect: { turn in
+                    Task { await appState.play(fromMs: turn.startMs) }
+                }
+            )
+            .frame(maxHeight: .infinity)
 
             VStack(spacing: MercurySpace.comfortable) {
+                // Where you are, centred, directly under the script — the
+                // place the eye leaves the text.
+                SegmentIndicator(
+                    label: playback.currentSegment?.label,
+                    position: TranscriptScript.position(
+                        ofSegment: playback.currentSegment?.id,
+                        in: manifest?.segments ?? []
+                    )
+                )
+
                 Rectangle()
                     .fill(MercuryColor.hairline.color)
                     .frame(height: 1)
