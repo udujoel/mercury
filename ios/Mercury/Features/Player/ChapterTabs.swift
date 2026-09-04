@@ -21,6 +21,17 @@ struct ChapterTabs: View {
 
     let segments: [BriefingSegment]
     let activeSegmentID: String?
+    /// False until there is audio in the engine — the same rule the scrubber
+    /// and the skip buttons follow.
+    ///
+    /// Two things went wrong while it was always enabled. On a restored
+    /// briefing from an earlier day, `play(fromMs:)` falls back to fetching
+    /// TODAY's briefing and then applies the old briefing's offset, so the
+    /// pill you tapped and the audio you heard were from different mornings.
+    /// And tapping a second pill while the first tap's download was still in
+    /// flight dropped the offset entirely, because the guard inside
+    /// `play(fromMs:)` returns on a load already in progress.
+    var isEnabled: Bool = true
     let onSelect: (BriefingSegment) -> Void
 
     var body: some View {
@@ -61,6 +72,8 @@ struct ChapterTabs: View {
                 await Task.yield()
                 scroll(proxy, to: activeSegmentID)
             }
+            .disabled(!isEnabled)
+            .opacity(isEnabled ? 1 : 0.4)
         }
     }
 

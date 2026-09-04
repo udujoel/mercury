@@ -198,6 +198,39 @@ enum BriefingDigest {
         return "\(source.title)\u{0}\(source.sourceName)"
     }
 
+    // MARK: - Which day this briefing is for
+
+    /// "Today's briefing", or "Thursday's briefing" when what is on the
+    /// device is older than today.
+    ///
+    /// Keyed on `briefingId`, NOT on `generatedAt`. `generatedAt` is when the
+    /// artifact was made, and ADR-001 makes it overnight: a briefing for the
+    /// 4th with a 60-minute lead is generated at 23:30 on the 3rd, so
+    /// comparing timestamps labels the morning's own briefing as yesterday's.
+    /// `briefingId` is the date the briefing is FOR, derived in the same
+    /// timezone the cron is scheduled in.
+    ///
+    /// `generatedAt` is still what names the day, because the weekday it
+    /// wants is only in a `Date` — and for anything but today the two agree.
+    static func title(briefingId: String?, generatedAt: Date?, now: Date = .now) -> String {
+        guard let briefingId, briefingId != dayId.string(from: now),
+              let generatedAt
+        else { return "Today's briefing" }
+        return "\(generatedAt.formatted(.dateTime.weekday(.wide)))'s briefing"
+    }
+
+    /// Fixed locale and calendar: this formats a machine identifier, and a
+    /// user on a non-Gregorian calendar would otherwise produce a string the
+    /// backend never wrote.
+    private static let dayId: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.calendar = Calendar(identifier: .gregorian)
+        f.timeZone = .current
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
     // MARK: - Lengths
 
     /// "6 min", or seconds below a minute so a 40-second segment does not

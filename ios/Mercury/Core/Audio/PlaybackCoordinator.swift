@@ -56,6 +56,15 @@ final class PlaybackCoordinator {
     private let player = AVAudioPlayerNode()
     private let timePitch = AVAudioUnitTimePitch()
     private var manifest: BriefingManifest?
+    /// Whether there is audio in the engine to command.
+    ///
+    /// `AppState.loadState` cannot answer this: it describes the last FETCH,
+    /// not the engine. A prefetch replaces the manifest without loading, and
+    /// a failed `playPrefetched` sets `.failed` over a briefing that is still
+    /// loaded and playing — in both cases the transport and the flag
+    /// disagreed about reality. This is the reality.
+    var isLoaded: Bool { file != nil }
+
     private var file: AVAudioFile?
     private var displayLink: CADisplayLink?
     private let nowPlaying = NowPlayingService()

@@ -42,6 +42,19 @@ enum PlayerTransport {
     /// `durationMs` is a manifest field and `Int.max` decodes from JSON
     /// perfectly happily, so both are a crash on the screen whose entire job
     /// is to render a number for a briefing that came out wrong.
+    /// The left-hand timecode, clamped to the duration.
+    ///
+    /// The engine's position can run past `manifest.durationMs`: the stitched
+    /// file is as long as the audio actually came out, and the manifest
+    /// records what the timings were computed against. Unclamped, the two
+    /// ends of the scrubber row contradicted each other — "6:01" on the left
+    /// beside the "−0:00" that `remainingLabel` already clamps to.
+    static func elapsedLabel(positionMs: Int, durationMs: Int) -> String {
+        let position = max(positionMs, 0)
+        guard durationMs > 0 else { return timecode(ms: position) }
+        return timecode(ms: min(position, durationMs))
+    }
+
     static func remainingLabel(positionMs: Int, durationMs: Int) -> String {
         let duration = max(durationMs, 0)
         let position = min(max(positionMs, 0), duration)

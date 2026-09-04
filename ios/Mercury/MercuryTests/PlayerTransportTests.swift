@@ -202,6 +202,30 @@ final class PlayerTransportTests: XCTestCase {
         XCTAssertEqual(PlayerTransport.timecode(ms: 3_000_000_000_000), "50000000:00")
     }
 
+    // MARK: - The two ends of the row agree
+
+    /// The engine can report a position past the manifest's duration: the
+    /// stitched file is as long as the audio came out, and the manifest
+    /// records what the timings were computed against. The row used to read
+    /// "6:01" beside "−0:00".
+    func testElapsedNeverExceedsTheDurationTheOtherEndReports() {
+        XCTAssertEqual(
+            PlayerTransport.elapsedLabel(positionMs: 361_000, durationMs: 360_000), "6:00")
+        XCTAssertEqual(
+            PlayerTransport.remainingLabel(positionMs: 361_000, durationMs: 360_000), "−0:00")
+    }
+
+    func testElapsedIsUnchangedInsideTheBriefing() {
+        XCTAssertEqual(
+            PlayerTransport.elapsedLabel(positionMs: 134_000, durationMs: 360_000), "2:14")
+    }
+
+    /// No manifest yet means no duration to clamp against, and the position
+    /// is still worth showing.
+    func testElapsedWithoutADurationStillCounts() {
+        XCTAssertEqual(PlayerTransport.elapsedLabel(positionMs: 5_000, durationMs: 0), "0:05")
+    }
+
     // MARK: - Accessibility
 
     func testTheScrubberAnnouncesAPositionAPersonCanAct() {

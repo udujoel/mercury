@@ -98,7 +98,7 @@ struct ScrubBar: View {
 
     private var timecodes: some View {
         HStack {
-            Text(PlayerTransport.timecode(ms: shownMs))
+            Text(PlayerTransport.elapsedLabel(positionMs: shownMs, durationMs: durationMs))
             Spacer()
             Text(PlayerTransport.remainingLabel(positionMs: shownMs, durationMs: durationMs))
         }

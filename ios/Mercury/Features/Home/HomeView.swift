@@ -29,20 +29,12 @@ struct HomeView: View {
     /// section labelled "In today's briefing". Four true-looking statements
     /// about the wrong day.
     ///
-    /// `generatedAt`, not `briefingId`: the id is a date string the backend
-    /// derives in the SERVER's timezone. PlayerView's masthead carries the
-    /// same note.
-    private var briefingDay: Date? { appState.manifest?.generatedAt }
-
-    private var isFromToday: Bool {
-        guard let briefingDay else { return true }
-        return Calendar.current.isDateInToday(briefingDay)
-    }
-
-    /// "Today's briefing", or "Thursday's briefing" when it is older.
+    /// "Today's briefing", or the actual day when what is on the device is
+    /// older — see `BriefingDigest.title`, which owns the comparison so the
+    /// overnight-generation case can be tested rather than reasoned about.
     private var briefingTitle: String {
-        guard let briefingDay, !isFromToday else { return "Today's briefing" }
-        return "\(briefingDay.formatted(.dateTime.weekday(.wide)))'s briefing"
+        BriefingDigest.title(briefingId: appState.manifest?.briefingId,
+                             generatedAt: appState.manifest?.generatedAt)
     }
 
     var body: some View {
@@ -74,7 +66,13 @@ struct HomeView: View {
                             .padding(.top, MercurySpace.section)
                             .padding(.bottom, MercurySpace.snug)
 
+                        // Disabled mid-load: a second tap would call
+                        // `play(fromMs:)` while `playBriefing` is still in
+                        // flight, and the guard inside it would return
+                        // having silently dropped the chapter the user asked
+                        // for.
                         BriefingRows(rows: rows, onSelect: open(at:))
+                            .disabled(appState.loadState == .loading)
                     }
                 }
                 .mercuryGutter()
@@ -122,7 +120,11 @@ struct HomeView: View {
     private func play() {
         Task {
             await appState.togglePlayback()
-            if case .ready = appState.loadState { showPlayer = true }
+            // Only when something is actually playing. `loadState` stays
+            // `.ready` through a pause, so testing it navigated the user off
+            // Home for pressing pause — which is the same class of mistake
+            // as the restart this method was fixing.
+            if appState.playback.isPlaying { showPlayer = true }
         }
     }
 

@@ -152,10 +152,13 @@ final class AppState {
     /// having scheduled nothing. So on that path the scrubber, the chapter
     /// ribbon and every Home row moved no audio and reported no error.
     ///
-    /// `.ready` is set only after `playback.load` has succeeded, which makes
-    /// it the one honest proxy for "there is a file in the engine".
+    /// Asked of the coordinator rather than inferred from `loadState`.
+    /// `loadState` describes the last fetch and drifts from the engine in
+    /// both directions: `prefetchBriefing` swaps the manifest without
+    /// loading, and a failed `playPrefetched` sets `.failed` while the
+    /// previous briefing is still loaded and playing.
     @MainActor
-    var isPlaybackLoaded: Bool { loadState == .ready }
+    var isPlaybackLoaded: Bool { playback.isLoaded }
 
     /// Play, pause, or fetch — whichever the current state calls for.
     ///
@@ -185,7 +188,13 @@ final class AppState {
         if !isPlaybackLoaded { await playBriefing() }
         guard isPlaybackLoaded else { return }
         playback.seek(toMs: ms)
-        if !playback.isPlaying { playback.play() }
+        // `seek` past the real end of the audio calls `finish()`, and `play()`
+        // reads `hasFinished` as a request to replay from zero — so a chapter
+        // whose `startMs` sits beyond the stitched file would have restarted
+        // the entire briefing. A seek that landed at the end is already where
+        // it was asked to go.
+        guard !playback.hasFinished, !playback.isPlaying else { return }
+        playback.play()
     }
 
     /// Move the playhead without changing whether audio is running.
@@ -305,7 +314,14 @@ final class AppState {
             let manifest = try await api.fetchManifest(briefingId: id)
             let audioURL = try await api.downloadAudio(briefingId: id)
             await persist(manifest, audioPath: audioURL.path)
-            self.manifest = manifest
+            // Never swap the manifest out from under audio that is already
+            // loaded. The engine would keep playing last night's briefing
+            // while the scrubber, the chapter ribbon and the transcript all
+            // described a different one — the displayed duration and the
+            // real audio silently belonging to different mornings.
+            //
+            // It is persisted either way, so the next play picks it up.
+            if !playback.isLoaded { self.manifest = manifest }
             return true
         } catch {
             print("[Mercury] Background prefetch for briefing \(id) failed: \(error)")

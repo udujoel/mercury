@@ -79,6 +79,46 @@ final class BriefingDigestTests: XCTestCase {
                   itemId: itemId)
     }
 
+    // MARK: - Which day the briefing is for
+
+    private func day(_ s: String) -> Date {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.calendar = Calendar(identifier: .gregorian)
+        f.timeZone = .current
+        f.dateFormat = "yyyy-MM-dd HH:mm"
+        return f.date(from: s)!
+    }
+
+    /// The regression this exists for. ADR-001 generates overnight, so the
+    /// briefing FOR the 4th is made at 23:30 on the 3rd. Comparing
+    /// `generatedAt` to the calendar day labels the morning's own briefing
+    /// "Thursday's" — the bug this labelling was added to fix, one field over.
+    func testABriefingGeneratedLastNightIsStillTodaysBriefing() {
+        XCTAssertEqual(
+            BriefingDigest.title(briefingId: "2026-09-04",
+                                 generatedAt: day("2026-09-03 23:30"),
+                                 now: day("2026-09-04 07:00")),
+            "Today's briefing")
+    }
+
+    func testAnOlderBriefingIsNamedByItsDay() {
+        XCTAssertEqual(
+            BriefingDigest.title(briefingId: "2026-09-03",
+                                 generatedAt: day("2026-09-02 23:30"),
+                                 now: day("2026-09-04 07:00")),
+            "Wednesday's briefing")
+    }
+
+    /// Nothing on the device yet: the card invites you to today's, because
+    /// that is what tapping it fetches.
+    func testNoManifestReadsAsToday() {
+        XCTAssertEqual(
+            BriefingDigest.title(briefingId: nil, generatedAt: nil,
+                                 now: day("2026-09-04 07:00")),
+            "Today's briefing")
+    }
+
     // MARK: - Two meetings with the same name are two meetings
 
     /// `_build_source_refs` matches a calendar event BY TITLE, and every

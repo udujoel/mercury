@@ -56,8 +56,9 @@ struct PlayerView: View {
                 ChapterTabs(
                     segments: manifest?.segments ?? [],
                     activeSegmentID: playback.currentSegment?.id,
-                    // Loads first when nothing is loaded, and plays: a
-                    // chapter tab is a request to hear that chapter.
+                    isEnabled: appState.isPlaybackLoaded,
+                    // Plays rather than merely seeking: a chapter tab is a
+                    // request to hear that chapter.
                     onSelect: { segment in
                         Task { await appState.play(fromMs: segment.startMs) }
                     }
