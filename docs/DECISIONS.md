@@ -669,24 +669,70 @@ asked for, and a pure score rule would spend the budget on wire copy while
 the newsletter the ranker dropped — precisely the one the user opened the app
 to find — got a bare subject line.
 
+"Always" stops at 40, though, or the bound is not one. Review caught that the
+priority was applied BEFORE the cap, so a morning with 41 newsletter-backed
+clusters sent every one of them into a single call — the unbounded emission
+this whole section exists to prevent, on a day the inbox is busiest. A live
+run ingests 54 emails, so that is a Tuesday. The slice is taken off the
+score-sorted list, so the cap costs the lowest-ranked newsletters their
+summary and nothing their place on the desk.
+
 The call runs concurrently with TTS, so it costs no wall clock against a
 71-second live run, and it is cancelled when synthesis raises rather than
 left holding the loop open for a briefing that no longer exists.
 
-### Personal email is not a story
+### Personal email is not a story, and not part of one either
 
 A cluster reaches the digest only if it contains a newsletter or an RSS
 article. An ordinary message from a colleague is neither, and rendering it as
 a browsable "story" would put private correspondence on a screen built for
 published journalism and hand it to an LLM to summarise on top of that.
 
+That test alone was not enough, which review found and this ADR originally
+got wrong. Clusters are MIXED: emails and articles go into one
+`build_stories` call, which is the whole reason the `Item` schema is shared,
+so a colleague writing about a story the wire also carried is in the same
+cluster as the article. The cluster passed on the article's strength and
+every member was then read — so the personal message's sender, subject and
+timestamp were serialised into `sources[]`, and in a newsletter-backed
+cluster (where every member is `EMAIL`, so `authority_sorted` falls through
+to "whoever reported it first") that message could be the canonical whose
+body went to the model and whose subject line became the headline.
+
+So the rule is per MEMBER, not per cluster: `digest_members` is the single
+filter every read of a cluster goes through — `sources[]`, the item the
+summariser gets, the headline fallback, the source names in the prompt, and
+which refs may deep-link the story. That last one is the subtle case:
+`_build_source_refs` gives a personal email a ref carrying its cluster id, so
+without the filter the inbox turn reading out that colleague's message marked
+the newsletter's story `covered_in_audio` and became its deep-link. Cluster-
+level coverage is still right — a turn about the Reuters report covers the
+story three newsletters also wrote about — but only the members the screen
+shows may vote for it.
+
 ### Degradation
 
 - A failed enrichment pass costs the summaries, never the briefing and never
   the browse surface (rule 7 applied to a screen).
-- A digest that will not upload is logged and the briefing still publishes.
+- A digest that will not write is logged and the briefing still publishes.
   The manifest plus the audio is the briefing; a secondary object must not be
-  able to withhold it.
+  able to withhold it. (Only `R2Storage` did this at first; the local backend
+  raised, so a full disk cost the briefing rather than the screen.)
+- **The stored digest was built from the stored manifest, or there is none.**
+  `--force` reuses the briefing id, so a digest surviving from an earlier run
+  for the same day carries `turn_index` values addressing THAT run's turn
+  list: a browse screen whose taps land in audio the bucket no longer holds,
+  wrong in the way that looks like it worked. Both backends therefore
+  withdraw the previous digest whenever a new one is not published — a failed
+  write, or no digest this run — and withdraw the new one if the manifest
+  then fails to land. If the previous one cannot be removed the run FAILS
+  rather than publishing over it, on the same argument the stale-audio branch
+  in `R2Storage.save` already makes: the old manifest and the old digest are
+  a consistent pair, so the user keeps the briefing they already had.
+- The local digest is written through a temporary file and renamed.
+  `write_text` truncates first, and the API serves the same directory the
+  generator writes to, so a regeneration made the digest read as absent for
+  as long as the write took.
 - A missing digest is an ordinary 404 on both read paths. Every briefing
   generated before this existed has none, so the client shows an empty state,
   and the audio is unaffected.
