@@ -567,6 +567,79 @@ async def test_a_personal_email_is_not_rendered_as_a_browsable_story():
     assert [s.cluster_id for s in digest_stories(stories)] == ["c2"]
 
 
+async def test_a_personal_email_in_a_mixed_cluster_is_not_one_of_the_sources():
+    """Clusters are mixed, and excluding email-ONLY clusters does not help.
+
+    Everything goes into one `build_stories` call — that is the whole reason
+    the `Item` schema is shared — so a colleague writing about a story the
+    wire also carried lands in the same cluster as the article. The cluster
+    then passes `is_digest_story` on the article's strength and every member
+    was serialised into `sources[]`, putting that colleague's name, subject
+    line and the time they wrote onto a screen of published journalism.
+    """
+    personal = _email("Maria Chen", "Re: the Gemini thing", "Are you free?")
+    article = _rss_item("Reuters", "Gemini moat widens")
+    story = _story("c1", article, personal)
+
+    digest = build_digest(
+        briefing_id="2026-08-21", stories=[story], emails=[personal],
+        manifest=_manifest_with(turns=[], sources=[]),
+    )
+
+    rendered = digest.stories[0]
+    assert [s.source_name for s in rendered.sources] == ["Reuters"]
+    assert rendered.source_count == 1
+    serialised = rendered.model_dump_json()
+    assert "Maria Chen" not in serialised
+    assert "Re: the Gemini thing" not in serialised
+
+
+async def test_a_personal_email_is_never_the_item_the_summariser_reads():
+    """The narrower half of the same defect, and the only route to it.
+
+    RSS outranks EMAIL in AUTHORITY_ORDER, so a personal email can only be
+    the canonical of a cluster that has no article in it — a NEWSLETTER-backed
+    one, where both members are EMAIL and `authority_sorted` falls through to
+    "whoever reported it first". An overnight message from a colleague
+    usually did. `build_enrichment_prompt` then sent that message's body to
+    be summarised and offered its subject line as the published headline.
+    """
+    personal = _email("Maria Chen", "Re: the acquisition", "Can we talk Thursday?")
+    personal.timestamp = datetime(2026, 8, 21, 3, 0, tzinfo=UTC)
+    newsletter = _newsletter(
+        "Stratechery", "The Gemini Moat", "The acquisition closes a gap."
+    )
+    newsletter.timestamp = datetime(2026, 8, 21, 5, 0, tzinfo=UTC)
+    story = _story("c1", personal, newsletter)
+    assert story.members[0] is personal, "premise: the email sorts first"
+
+    prompt = build_enrichment_prompt([story])
+
+    assert "Can we talk Thursday?" not in prompt
+    assert "Re: the acquisition" not in prompt
+    assert "Maria Chen" not in prompt
+    assert "headline as published: The Gemini Moat" in prompt
+    assert "covered by 1 source(s): Stratechery" in prompt
+
+
+async def test_an_unenriched_mixed_story_falls_back_to_a_published_headline():
+    """`headline` fell back to `story.canonical.title`, which in a
+    newsletter-backed cluster can be a colleague's subject line — persisted,
+    and rendered as the headline of a browsable story."""
+    personal = _email("Maria Chen", "Re: the acquisition", "Can we talk?")
+    personal.timestamp = datetime(2026, 8, 21, 3, 0, tzinfo=UTC)
+    newsletter = _newsletter("Stratechery", "The Gemini Moat", "It closes a gap.")
+    newsletter.timestamp = datetime(2026, 8, 21, 5, 0, tzinfo=UTC)
+    story = _story("c1", personal, newsletter)
+
+    digest = build_digest(
+        briefing_id="2026-08-21", stories=[story], emails=[personal, newsletter],
+        manifest=_manifest_with(turns=[], sources=[]), cards={},
+    )
+
+    assert digest.stories[0].headline == "The Gemini Moat"
+
+
 async def test_sources_are_ordered_by_authority_with_the_canonical_first():
     """ADR-003: primary reporting beats commentary, and the canonical item
     is the one the show notes link to. The digest must render the SAME

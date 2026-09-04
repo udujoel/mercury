@@ -116,6 +116,32 @@ def _is_newsletter(item: Item) -> bool:
     )
 
 
+def digest_members(story: Story) -> list[Item]:
+    """The members of a cluster that belong on the browse surface.
+
+    Published journalism only: an RSS article, or a newsletter the user
+    subscribed to. Everything that reads the cluster goes through here, and
+    that is the point — clusters are MIXED. Clustering is done on embedded
+    title and body across every source at once (`generate._build_world_stories`
+    puts emails and articles into one `build_stories` call, which is the
+    whole reason the `Item` schema is shared), so a colleague writing about
+    a story the wire also carried lands in the same cluster as the article.
+
+    Excluding email-only clusters — which is all `is_digest_story` did —
+    does not touch that case. The personal message was still the cluster's
+    `canonical` whenever it outranked the article, so its body went to the
+    LLM to be summarised and its subject line became the story's headline;
+    and even when it did not, its sender and subject were serialised into
+    `sources[]` for the browse screen to render. Private correspondence on a
+    journalism screen, which is a rule 5 argument before it is a taste one.
+    """
+    return [
+        member
+        for member in story.members
+        if member.source_type is SourceType.RSS or _is_newsletter(member)
+    ]
+
+
 def is_digest_story(story: Story) -> bool:
     """Does this cluster belong on the browse surface at all?
 
@@ -127,10 +153,7 @@ def is_digest_story(story: Story) -> bool:
     hand it to an LLM for summarising on top. Neither is what the user asked
     for and the second is a rule 5 argument as well as a taste one.
     """
-    return any(
-        member.source_type is SourceType.RSS or _is_newsletter(member)
-        for member in story.members
-    )
+    return bool(digest_members(story))
 
 
 def digest_stories(stories: list[Story]) -> list[Story]:
@@ -188,12 +211,22 @@ def build_enrichment_prompt(stories: list[Story]) -> str:
     """
     blocks = []
     for story in stories:
-        item = story.canonical
-        sources = ", ".join(story.source_names)
+        # NOT `story.canonical`, and not `story.source_names` either. Both
+        # answer for the whole cluster, and a cluster can hold a personal
+        # email — see `digest_members`. Whenever that email outranked the
+        # article (`authority_sorted` prefers the earliest report, and an
+        # overnight email usually is), its body was the source text sent to
+        # be summarised and its sender's name was in the list of who covered
+        # the story.
+        members = authority_sorted(digest_members(story))
+        if not members:
+            continue
+        item = members[0]
+        names = sorted({member.source_name for member in members})
         lines = [
             f"- id: {story.cluster_id}",
             f"  headline as published: {item.title}",
-            f"  covered by {len(story.source_names)} source(s): {sources}",
+            f"  covered by {len(names)} source(s): {', '.join(names)}",
         ]
         body = item.body[:_STORY_BODY_CHARS].strip()
         if body:
@@ -354,7 +387,13 @@ def build_digest(
     out_stories: list[DigestStory] = []
     for story in browsable:
         card = cards.get(story.cluster_id)
-        members = authority_sorted(story.members)
+        # The published members only. `sources[]` is rendered on the browse
+        # screen, so a personal email clustered with an article put a
+        # colleague's name, subject line and the time they wrote onto a
+        # screen of journalism — and `is_digest_story` did not stop it,
+        # because it only ever asked whether the cluster had a published
+        # member at all. See `digest_members`.
+        members = authority_sorted(digest_members(story))
         turn_index = covered.get(story.cluster_id)
         # A ref pointing past the end of the turns it was remapped onto is
         # not a deep-link, it is a crash on the client. It should be
@@ -374,8 +413,11 @@ def build_digest(
                 id=_story_id(story.cluster_id),
                 # The published headline when nothing was written for this
                 # story. Real, human-written, and already persisted in
-                # `SourceRef` today — never an extract from the body.
-                headline=(card.headline if card else story.canonical.title),
+                # `SourceRef` today — never an extract from the body. From
+                # `members[0]` rather than `story.canonical` for the reason
+                # above: the cluster's canonical can be a personal email,
+                # and its subject line is not a headline.
+                headline=(card.headline if card else members[0].title),
                 summary=card.summary if card else None,
                 why_it_matters=card.why_it_matters if card else None,
                 topics=list(card.topics) if card else [],
