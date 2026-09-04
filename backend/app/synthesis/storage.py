@@ -257,18 +257,75 @@ class LocalFilesystemStorage:
         # is what every reader polls to decide a briefing exists, so anything
         # written after it is briefly visible as a 404 on a briefing that
         # already reads as ready.
-        if digest is not None:
-            self._digest_path(briefing_id).write_text(
-                digest.model_dump_json(indent=2)
-            )
+        #
+        # The invariant the three branches below hold is that the stored
+        # digest is the one built from the stored MANIFEST, or nothing.
+        # `--force` reuses the briefing id, so any digest left over from an
+        # earlier run for this day carries `turn_index` values addressing
+        # that run's turn list — deep-links into audio that no longer
+        # exists, which is worse than the documented empty browse state
+        # because it looks like it worked. See `_publish_digest`.
+        self._publish_digest(briefing_id, digest)
 
         manifest_path = self._manifest_path(briefing_id)
-        manifest_path.write_text(manifest.model_dump_json(indent=2))
+        try:
+            manifest_path.write_text(manifest.model_dump_json(indent=2))
+        except Exception:
+            # The other half of the same invariant. The digest just written
+            # describes turns in a manifest that never landed, and the
+            # manifest still being served is the PREVIOUS run's — so leaving
+            # it would pair old audio with new deep-links. Removing it costs
+            # the browse screen and keeps the pair the user already had.
+            self._digest_path(briefing_id).unlink(missing_ok=True)
+            raise
 
         log.info(
             "stored briefing %s: %s (%d bytes), manifest %s",
             briefing_id, audio_path, len(audio_bytes), manifest_path,
         )
+
+    def _publish_digest(
+        self, briefing_id: str, digest: BriefingDigest | None
+    ) -> None:
+        """Replace the stored digest, or remove it. Never leaves a stale one.
+
+        A failure to WRITE is not fatal: the digest is the browse surface,
+        and the manifest plus the audio is the briefing. Refusing to publish
+        a working briefing because a secondary object would not write trades
+        the product for one of its screens (rule 7). `R2Storage.save` has
+        said so since the digest landed; this side raised instead, so a full
+        disk lost the briefing rather than the screen.
+
+        A failure to REMOVE what is there already is fatal, and for the same
+        reason the stale-audio branch in `R2Storage.save` is: publishing the
+        manifest over a digest belonging to an earlier run hands the phone
+        deep-links into audio it no longer has. The old manifest and the old
+        digest are a consistent pair, so the run fails and leaves the user
+        the briefing they already had.
+
+        Written through a temporary file and renamed. `write_text` truncates
+        the live file before it writes, and `load_digest` reads whatever is
+        there — so a regeneration made `GET /briefing/{id}/digest` answer 404
+        for a briefing that was sitting there complete, for as long as the
+        write took.
+        """
+        path = self._digest_path(briefing_id)
+        if digest is None:
+            path.unlink(missing_ok=True)
+            return
+
+        temp = path.with_name(f"{path.name}.tmp")
+        try:
+            temp.write_text(digest.model_dump_json(indent=2))
+            temp.replace(path)
+        except Exception:
+            log.exception(
+                "could not store the digest for %s; publishing the briefing "
+                "without it (the app shows an empty browse state, the audio "
+                "is unaffected)", briefing_id,
+            )
+            temp.unlink(missing_ok=True)
+            path.unlink(missing_ok=True)
 
     def load_manifest(self, briefing_id: str) -> BriefingManifest | None:
         path = self._manifest_path(briefing_id)
