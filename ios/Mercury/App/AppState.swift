@@ -143,6 +143,72 @@ final class AppState {
             defaults.object(forKey: Self.wakeTimeKey) as? Int ?? Self.defaultWakeTimeMinutes
     }
 
+    /// True once the coordinator actually holds audio.
+    ///
+    /// A manifest is not enough, and that distinction is the whole bug behind
+    /// three separate findings on this PR. `restoreLastBriefing` decodes a
+    /// transcript from disk and sets `manifest` without loading anything into
+    /// the engine; `PlaybackCoordinator.seek(toMs:)` with no file returns
+    /// having scheduled nothing. So on that path the scrubber, the chapter
+    /// ribbon and every Home row moved no audio and reported no error.
+    ///
+    /// Asked of the coordinator rather than inferred from `loadState`.
+    /// `loadState` describes the last fetch and drifts from the engine in
+    /// both directions: `prefetchBriefing` swaps the manifest without
+    /// loading, and a failed `playPrefetched` sets `.failed` while the
+    /// previous briefing is still loaded and playing.
+    @MainActor
+    var isPlaybackLoaded: Bool { playback.isLoaded }
+
+    /// Play, pause, or fetch — whichever the current state calls for.
+    ///
+    /// Every control that starts playback goes through here. Tapping the Home
+    /// card while a briefing was already playing called `playBriefing()`
+    /// unconditionally, which re-fetched the manifest, re-downloaded the
+    /// audio and restarted from zero — so the card drew a pause affordance
+    /// and pressing it began the briefing again.
+    @MainActor
+    func togglePlayback() async {
+        guard isPlaybackLoaded else {
+            await playBriefing()
+            return
+        }
+        playback.isPlaying ? playback.pause() : playback.play()
+    }
+
+    /// Jump to a point in the briefing and play from there, loading first if
+    /// the engine is empty.
+    ///
+    /// This is what a chapter tab and a Home row do, and both tell VoiceOver
+    /// they play that part of the briefing. A bare seek honoured neither
+    /// half: on a restored manifest it did nothing at all, and on a paused
+    /// one it moved the playhead and left the audio stopped.
+    @MainActor
+    func play(fromMs ms: Int) async {
+        if !isPlaybackLoaded { await playBriefing() }
+        guard isPlaybackLoaded else { return }
+        playback.seek(toMs: ms)
+        // `seek` past the real end of the audio calls `finish()`, and `play()`
+        // reads `hasFinished` as a request to replay from zero — so a chapter
+        // whose `startMs` sits beyond the stitched file would have restarted
+        // the entire briefing. A seek that landed at the end is already where
+        // it was asked to go.
+        guard !playback.hasFinished, !playback.isPlaying else { return }
+        playback.play()
+    }
+
+    /// Move the playhead without changing whether audio is running.
+    ///
+    /// The scrubber's contract, as distinct from `play(fromMs:)`: dragging
+    /// while paused leaves you paused. Callers must check `isPlaybackLoaded`
+    /// first — this deliberately does NOT fetch, because a drag is not a
+    /// request to start downloading a briefing.
+    @MainActor
+    func seek(toMs ms: Int) {
+        guard isPlaybackLoaded else { return }
+        playback.seek(toMs: ms)
+    }
+
     /// Tapping the greeting card is the primary action of the entire app.
     ///
     /// FETCHES FIRST, generates only as a fallback. Per ADR-001 the phone
@@ -248,6 +314,19 @@ final class AppState {
             let manifest = try await api.fetchManifest(briefingId: id)
             let audioURL = try await api.downloadAudio(briefingId: id)
             await persist(manifest, audioPath: audioURL.path)
+            // Never swap the manifest out from under audio that is STILL
+            // GOING. The engine would keep playing last night's briefing
+            // while the scrubber, the chapter ribbon and the transcript all
+            // described a different one — the displayed duration and the
+            // real audio silently belonging to different mornings. It is
+            // persisted either way, so the next play picks it up.
+            //
+            // A finished briefing is a different case and must not be held
+            // onto: `finish()` keeps the file so it can be replayed, so
+            // without unloading it the new briefing could never be
+            // published and the next tap replayed yesterday's.
+            if playback.isLoaded && !playback.hasFinished { return true }
+            playback.unload()
             self.manifest = manifest
             return true
         } catch {

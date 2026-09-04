@@ -32,9 +32,9 @@ def _email(title: str, sender: str) -> Item:
     )
 
 
-def _event(title: str) -> CalendarEvent:
+def _event(title: str, event_id: str | None = None) -> CalendarEvent:
     return CalendarEvent(
-        id=title,
+        id=event_id or title,
         title=title,
         start=datetime(2026, 8, 21, 16, 0, tzinfo=UTC),
         end=datetime(2026, 8, 21, 17, 0, tzinfo=UTC),
@@ -242,3 +242,40 @@ def test_an_accented_title_word_does_not_match_its_ascii_fragment():
         "Réunion budget",
         "Someone Else",
     )
+
+
+# ── every ref carries the id of the thing it points at ────────
+
+
+def test_every_ref_carries_the_id_of_the_item_it_points_at():
+    """The client's only way to tell two refs apart.
+
+    Without it the digest keys on (title, source_name), and every calendar
+    ref has a `source_name` of "Calendar" — so two events sharing a title
+    were indistinguishable and Home counted them as one.
+    """
+    turns = [_turn("Standup at ten, then the Q3 planning doc from Priya.")]
+    emails = [_email("Q3 planning doc", "Priya Shah")]
+    events = [_event("Standup", event_id="ev-standup")]
+
+    refs = _build_source_refs(turns, emails, events)
+
+    by_title = {r.title: r for r in refs}
+    assert by_title["Standup"].item_id == "ev-standup"
+    assert by_title["Q3 planning doc"].item_id == emails[0].id
+
+
+def test_two_events_sharing_a_title_produce_two_distinguishable_refs():
+    """`_mentions` matches a calendar event BY TITLE, so both of these match
+    the same turn. Recurring meetings make this ordinary: two "1:1"s on one
+    day is a normal calendar, not a pathological one."""
+    turns = [_turn("You have two 1:1 slots today.")]
+    events = [
+        _event("1:1", event_id="ev-morning"),
+        _event("1:1", event_id="ev-afternoon"),
+    ]
+
+    refs = [r for r in _build_source_refs(turns, [], events) if r.title == "1:1"]
+
+    assert len(refs) == 2
+    assert {r.item_id for r in refs} == {"ev-morning", "ev-afternoon"}

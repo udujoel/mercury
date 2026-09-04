@@ -56,6 +56,15 @@ final class PlaybackCoordinator {
     private let player = AVAudioPlayerNode()
     private let timePitch = AVAudioUnitTimePitch()
     private var manifest: BriefingManifest?
+    /// Whether there is audio in the engine to command.
+    ///
+    /// `AppState.loadState` cannot answer this: it describes the last FETCH,
+    /// not the engine. A prefetch replaces the manifest without loading, and
+    /// a failed `playPrefetched` sets `.failed` over a briefing that is still
+    /// loaded and playing — in both cases the transport and the flag
+    /// disagreed about reality. This is the reality.
+    var isLoaded: Bool { file != nil }
+
     private var file: AVAudioFile?
     private var displayLink: CADisplayLink?
     private let nowPlaying = NowPlayingService()
@@ -127,6 +136,34 @@ final class PlaybackCoordinator {
     }
 
     // MARK: - Loading
+
+    /// Drop the loaded briefing so the next play starts from a load.
+    ///
+    /// `finish()` deliberately KEEPS the file — replaying a briefing you just
+    /// heard is a normal thing to want, and `play()` reads `hasFinished` as a
+    /// request to do exactly that. But a briefing that has both finished and
+    /// been superseded by a newly prefetched one must not be what the next
+    /// tap plays, and without this it was: `isLoaded` stayed true, so the
+    /// prefetch could not publish and the toggle replayed yesterday.
+    func unload() {
+        guard file != nil else { return }
+        // Bump before stopping, for the reason `load` documents: `stop()`
+        // fires the pending completion handler, and it must not be read as
+        // this briefing having ended.
+        scheduleGeneration &+= 1
+        player.stop()
+        stopTicking()
+        file = nil
+        manifest = nil
+        hasScheduled = false
+        hasFinished = false
+        isPlaying = false
+        positionMs = 0
+        scheduleBaseMs = 0
+        lastPersistedMs = 0
+        currentTurn = nil
+        currentSegment = nil
+    }
 
     func load(manifest: BriefingManifest, audioURL: URL) throws {
         // Loading a second briefing into an already-loaded coordinator: stop

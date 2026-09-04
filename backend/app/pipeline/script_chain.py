@@ -656,6 +656,7 @@ def _build_source_refs(
                     source_type=member.source_type,
                     cluster_size=story.cluster_size,
                     cluster_id=story.cluster_id,
+                    item_id=member.id,
                 )
                 for member in story.members
             )
@@ -669,6 +670,7 @@ def _build_source_refs(
                         url=None,
                         source_name="Calendar",
                         source_type=SourceType.CALENDAR,
+                        item_id=ev.id,
                     )
                 )
 
@@ -689,6 +691,7 @@ def _build_source_refs(
                         # clustered this run (no embedding provider, or no
                         # clusterable items at all).
                         cluster_id=em.cluster_id,
+                        item_id=em.id,
                     )
                 )
 

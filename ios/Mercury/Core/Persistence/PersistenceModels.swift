@@ -86,14 +86,20 @@ final class SourceRefEntity {
     var url: URL?
     var sourceName: String
     var sourceType: String
+    /// Optional, which is also what makes this a lightweight migration: a
+    /// store written by an earlier build has no column for it and reads back
+    /// as nil rather than failing to open.
+    var itemId: String?
     var clusterSize: Int       // how many outlets carried it
 
-    init(turnIndex: Int, title: String, url: URL?, sourceName: String, sourceType: String, clusterSize: Int) {
+    init(turnIndex: Int, title: String, url: URL?, sourceName: String,
+         sourceType: String, clusterSize: Int, itemId: String? = nil) {
         self.turnIndex = turnIndex
         self.title = title
         self.url = url
         self.sourceName = sourceName
         self.sourceType = sourceType
+        self.itemId = itemId
         self.clusterSize = clusterSize
     }
 }

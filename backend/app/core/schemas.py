@@ -186,6 +186,16 @@ class SourceRef(BaseModel):
     # a story into the wrong story's turn. None for calendar refs, which
     # belong to no cluster.
     cluster_id: str | None = None
+    # The id of the item or event this ref points at.
+    #
+    # Without it the client has only (title, source_name) to tell two refs
+    # apart, and `_mentions` matches a calendar event BY TITLE — so two
+    # events called "1:1" on the same day are indistinguishable there and
+    # counted as one. Recurring meetings make that the common case, not the
+    # exotic one.
+    #
+    # Nullable because every manifest already in R2 predates the field.
+    item_id: str | None = None
 
 
 class BriefingManifest(BaseModel):
