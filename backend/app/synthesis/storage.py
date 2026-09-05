@@ -161,6 +161,19 @@ class BriefingStorage(Protocol):
         """Returns (audio_bytes, media_type), or None if not found."""
         ...
 
+    def audio_exists(self, briefing_id: str) -> bool:
+        """Whether there is PLAYABLE audio for this briefing.
+
+        Separate from `load_audio` because the archive index asks this of
+        every briefing it lists, and loading thirty three-megabyte files to
+        find out whether they exist is not a check, it is a download.
+
+        Size, not existence: a zero-byte object is an upload that died
+        mid-flight, and it read as playable for a whole day the last time
+        that mattered.
+        """
+        ...
+
     def list_briefing_ids(self) -> list[str]:
         """Every briefing id this storage holds anything for, sorted.
 
@@ -367,6 +380,13 @@ class LocalFilesystemStorage:
                 media_type = AUDIO_MEDIA_TYPES.get(fmt, "application/octet-stream")
                 return path.read_bytes(), media_type
         return None
+
+    def audio_exists(self, briefing_id: str) -> bool:
+        return any(
+            (path := self._audio_path(briefing_id, fmt)).exists()
+            and path.stat().st_size >= MIN_PLAYABLE_AUDIO_BYTES
+            for fmt in KNOWN_AUDIO_FORMATS
+        )
 
     def delete_audio(self, briefing_id: str) -> None:
         for fmt in KNOWN_AUDIO_FORMATS:

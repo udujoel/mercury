@@ -147,7 +147,8 @@ final class APIClient: APIClientProtocol {
 
     func fetchDigest(briefingId: String) async throws -> Digest? {
         do {
-            return try await request(.digest(briefingId: briefingId)) as Digest
+            let digest: Digest = try await request(.digest(briefingId: briefingId))
+            return digest
         } catch APIError.badStatus(404, _) {
             // Not an error. Every briefing from before ADR-013 has no digest
             // object, and a run whose enrichment failed still ships one — so

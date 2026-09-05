@@ -63,7 +63,10 @@ struct StoryDetailView: View {
                     // A publisher's CDN refusing a hotlink is ordinary. The
                     // story reads perfectly well without its picture, so the
                     // space closes up rather than showing a broken frame.
-                    Color.clear.frame(height: 0)
+                    // `EmptyView`, not a zero-height Color: the latter still
+                    // participates in layout and leaves the frame's spacing
+                    // behind it.
+                    EmptyView()
                 default:
                     MercuryColor.accent.color.opacity(0.12)
                 }
@@ -133,21 +136,30 @@ struct StoryDetailView: View {
         .accessibilityHint("Plays the briefing from where this story is discussed")
     }
 
+    @ViewBuilder
     private var sources: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            SectionLabel(story.sourceCount == 1 ? "1 source" : "\(story.sourceCount) sources")
+        // Counted from what is actually RENDERED, not from `source_count`.
+        // A legacy story with a count of 3 and an empty array said
+        // "3 sources" above nothing at all, which implies coverage exists
+        // and is being withheld. The section disappears instead.
+        if !story.sources.isEmpty {
+            VStack(alignment: .leading, spacing: 0) {
+                SectionLabel(
+                    story.sources.count == 1 ? "1 source" : "\(story.sources.count) sources"
+                )
                 .padding(.bottom, MercurySpace.tight)
 
-            ForEach(story.sources) { source in
-                SourceRow(source: source) { openURL = $0 }
-                if source.id != story.sources.last?.id {
-                    Rectangle()
-                        .fill(MercuryColor.hairline.color)
-                        .frame(height: 1)
+                ForEach(story.sources) { source in
+                    SourceRow(source: source) { openURL = $0 }
+                    if source.id != story.sources.last?.id {
+                        Rectangle()
+                            .fill(MercuryColor.hairline.color)
+                            .frame(height: 1)
+                    }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

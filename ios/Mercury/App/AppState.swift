@@ -66,6 +66,9 @@ final class AppState {
 
     /// Briefing ids still on the server, newest first. Empty until asked for.
     var archive: [String] = []
+    /// Whether the last archive request failed, as distinct from returning
+    /// nothing. The two look the same in `archive` and mean opposite things.
+    var archiveFailed = false
     let playback = PlaybackCoordinator()
 
     /// SwiftData persistence (PRD 3.7), handed over by `MercuryApp` from the
@@ -241,23 +244,45 @@ final class AppState {
     /// the briefing still plays.
     @MainActor
     func loadDigest() async {
-        guard let id = manifest?.briefingId else { return }
+        guard let id = manifest?.briefingId else {
+            digest = nil
+            return
+        }
         if digest?.briefingId == id { return }
+
+        // Cleared BEFORE the request, not after it fails. Otherwise the
+        // previous morning's cards stay on screen under the new briefing —
+        // and their `turnIndex` values address a manifest that is no longer
+        // loaded, so tapping one seeks today's audio to yesterday's offset.
+        digest = nil
+
         do {
-            digest = try await api.fetchDigest(briefingId: id)
+            let fetched = try await api.fetchDigest(briefingId: id)
+            // Recheck after the await. Two loads can overlap — a restore
+            // finishing while a tap starts today's — and without this the
+            // slower one wins whichever briefing it belonged to.
+            guard manifest?.briefingId == id else { return }
+            digest = fetched
         } catch {
             // Not surfaced. There is no action the user could take, and the
-            // play button is unaffected.
+            // play button is unaffected. Rule 7 at the level of a screen.
             print("[Mercury] digest for \(id) did not load: \(error)")
         }
     }
 
     /// The mornings still on the server, for the archive screen.
+    ///
+    /// `archiveFailed` exists because an empty list and a failed request are
+    /// different facts that look identical: without it the archive says
+    /// "Nothing earlier yet" when the server was simply unreachable, which
+    /// is a confident lie about the user's own data.
     @MainActor
     func loadArchive() async {
+        archiveFailed = false
         do {
             archive = try await api.fetchBriefingIndex()
         } catch {
+            archiveFailed = true
             print("[Mercury] archive index did not load: \(error)")
         }
     }
@@ -280,10 +305,18 @@ final class AppState {
             await persist(manifest, audioPath: audioURL.path)
             try playback.load(manifest: manifest, audioURL: audioURL)
             loadState = .ready
-            digest = nil
+            // `startPlayback`, not a bare `play()`. It re-wires
+            // `onPositionPersist` and `onFinished` to THIS briefing id —
+            // without it, pausing or finishing the archive briefing saved
+            // progress against whichever one was played before, and could
+            // mark that earlier briefing complete.
+            await startPlayback(of: manifest)
             await loadDigest()
         } catch {
-            loadState = .failed(String(describing: error))
+            // `localizedDescription`, matching `playBriefing`. The other
+            // spelling put "Error Domain=NSURLErrorDomain Code=-1004" on
+            // the card where the user reads it.
+            loadState = .failed(error.localizedDescription)
         }
     }
 

@@ -19,16 +19,31 @@ struct ArchiveView: View {
     /// already looking at rather than letting you tap it and see nothing
     /// change.
     let currentId: String?
+    /// True when the last request FAILED, as distinct from returning
+    /// nothing. Empty and unreachable look identical in `ids` and mean
+    /// opposite things, and saying "nothing earlier yet" about a server you
+    /// could not reach is a confident lie about the user's own data.
+    var failed: Bool = false
     let onSelect: (String) -> Void
+    /// Retry. The failure state tells you to pull down, so there has to be
+    /// something to pull.
+    var onRefresh: () async -> Void = {}
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                if ids.isEmpty { empty } else { list }
+                if !ids.isEmpty {
+                    list
+                } else if failed {
+                    unreachable
+                } else {
+                    empty
+                }
             }
             .mercuryGutter()
             .padding(.vertical, MercurySpace.comfortable)
         }
+        .refreshable { await onRefresh() }
         .background(MercuryColor.surface.color.ignoresSafeArea())
         .navigationTitle("Earlier")
         .navigationBarTitleDisplayMode(.inline)
@@ -51,7 +66,10 @@ struct ArchiveView: View {
     }
 
     private func row(_ id: String) -> some View {
-        Button { onSelect(id) } label: {
+        // Inert when it is the one already loaded. Selecting it again would
+        // re-download the audio and reset playback to zero — the same
+        // restart-on-tap complaint the mini player bar exists to fix.
+        Button { if id != currentId { onSelect(id) } } label: {
             HStack(spacing: MercurySpace.snug) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(Self.display(id))
@@ -76,8 +94,22 @@ struct ArchiveView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(id == currentId)
         .accessibilityElement(children: .combine)
-        .accessibilityHint("Loads this morning's briefing")
+        .accessibilityHint(
+            id == currentId ? "Already loaded" : "Loads this morning's briefing")
+    }
+
+    private var unreachable: some View {
+        VStack(alignment: .leading, spacing: MercurySpace.snug) {
+            Text("Could not reach the server")
+                .font(MercuryType.cardTitle)
+                .foregroundStyle(MercuryColor.ink.color)
+            Text("Your earlier briefings are still there. Pull down to try again.")
+                .font(MercuryType.cardBody)
+                .foregroundStyle(MercuryColor.inkMuted.color)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private var empty: some View {

@@ -326,3 +326,29 @@ def test_an_em_dash_opening_a_sentence_survives_when_it_is_not_a_bullet():
     assert StoryCard(headline="h", points=["—and then it closed"]).points == [
         "—and then it closed"
     ]
+
+
+# ── the archive index, and dev/prod parity ────────────────────
+
+
+def test_the_index_route_lists_only_briefings_with_playable_audio(tmp_path):
+    """Mirrors `serveBriefingList` in the Worker, including the filter.
+
+    The route exists at all because the client has ONE code path for the
+    Worker and the local backend: without it a fresh checkout against
+    localhost got a 404 and the archive read as empty — a screen that looks
+    built and does nothing.
+    """
+    from app.synthesis.storage import MIN_PLAYABLE_AUDIO_BYTES, LocalFilesystemStorage
+
+    storage = LocalFilesystemStorage(base_dir=tmp_path)
+
+    (tmp_path / "2026-09-04.m4a").write_bytes(b"x" * (MIN_PLAYABLE_AUDIO_BYTES + 1))
+    # An upload that died mid-flight. `exists()` is true and it is not audio.
+    (tmp_path / "2026-09-03.m4a").write_bytes(b"")
+    # A regeneration that failed after deleting the old file.
+    (tmp_path / "2026-09-02.manifest.json").write_text("{}")
+
+    assert storage.audio_exists("2026-09-04") is True
+    assert storage.audio_exists("2026-09-03") is False
+    assert storage.audio_exists("2026-09-02") is False

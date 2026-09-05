@@ -297,6 +297,41 @@ async def status(briefing_id: str) -> StatusResponse:
     )
 
 
+# Mounted separately in `main.py` at "/briefings" (plural), because this
+# router lives under "/briefing" and the Worker serves the list at the
+# plural path. The two MUST agree: the client has one code path for both,
+# and a local backend answering 404 here would make the archive read as
+# empty on every fresh checkout — a screen that looks built and does
+# nothing, which is the failure mode this project keeps meeting.
+class BriefingIndexResponse(BaseModel):
+    """Same shape the Worker returns, so the client has one code path."""
+
+    briefings: list[str]
+    count: int
+
+
+index_router = APIRouter(dependencies=[Depends(require_api_token)])
+
+
+@index_router.get("", response_model=BriefingIndexResponse)
+async def list_briefings() -> BriefingIndexResponse:
+    """Which mornings are still stored, newest first.
+
+    Mirrors `serveBriefingList` in the Worker, including the filter: a
+    briefing is listed only when it has audio, because an archive row that
+    cannot be played is a date that does nothing when tapped.
+    """
+    storage = build_storage()
+    ids = await asyncio.to_thread(storage.list_briefing_ids)
+    playable = [
+        briefing_id
+        for briefing_id in ids
+        if await asyncio.to_thread(storage.audio_exists, briefing_id)
+    ]
+    playable.sort(reverse=True)
+    return BriefingIndexResponse(briefings=playable, count=len(playable))
+
+
 @router.get("/{briefing_id}", response_model=BriefingManifest)
 async def get_manifest(briefing_id: str) -> BriefingManifest:
     storage = build_storage()

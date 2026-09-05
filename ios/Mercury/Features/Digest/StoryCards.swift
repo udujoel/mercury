@@ -120,10 +120,18 @@ struct StoryCard: View {
         }
     }
 
+    /// Named when there is one and it can be named; counted otherwise.
+    ///
+    /// Counted from `sources`, not `source_count`. A legacy story carrying a
+    /// count with an empty array made the card claim a source it could not
+    /// show — the detail view is honest about that, and the card should not
+    /// contradict it.
     private var sourceLine: String {
-        story.sourceCount == 1
-            ? story.sources.first?.sourceName ?? "1 source"
-            : "\(story.sourceCount) sources"
+        switch story.sources.count {
+        case 0: return ""
+        case 1: return story.sources[0].sourceName
+        default: return "\(story.sources.count) sources"
+        }
     }
 
     private var accessibilityLabel: String {
