@@ -20,9 +20,17 @@ struct RegenerationStatus: Decodable, Equatable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        // Optional, and only this one. The 429 and 409 bodies carry the
+        // counts but no id, because refusing a regeneration does not name a
+        // briefing.
         briefingId = try c.decodeIfPresent(String.self, forKey: .briefingId) ?? ""
-        used = try c.decodeIfPresent(Int.self, forKey: .used) ?? 0
-        limit = try c.decodeIfPresent(Int.self, forKey: .limit) ?? 0
+        // REQUIRED. These defaulted to 0, which decoded any object at all —
+        // `{}` included — into a status reading "no rebuilds left today",
+        // silently disabling the button on a malformed response instead of
+        // surfacing it as the decoding failure it is. Every shape the Worker
+        // returns for this route carries both.
+        used = try c.decode(Int.self, forKey: .used)
+        limit = try c.decode(Int.self, forKey: .limit)
     }
 
     init(briefingId: String, used: Int, limit: Int) {

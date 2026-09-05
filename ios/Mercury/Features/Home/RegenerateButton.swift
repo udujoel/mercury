@@ -43,7 +43,7 @@ struct RegenerateButton: View {
             Button("Rebuild", role: .destructive, action: onConfirm)
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text(explanation)
+            Text(confirmationMessage)
         }
         .accessibilityHint(
             isRunning ? "A rebuild is already running" : "Asks before starting")
@@ -51,16 +51,26 @@ struct RegenerateButton: View {
 
     /// Names the cost, the wait and what is left — in that order, because
     /// that is the order the questions occur to someone about to press it.
-    private var explanation: String {
+    ///
+    /// Not private, so a test can assert on the sentence the user actually
+    /// reads rather than on a flag that is supposed to produce it.
+    var confirmationMessage: String {
         var lines = [
             "This re-reads your mail and calendar now and makes a new "
             + "briefing. It takes a few minutes and costs a full generation.",
         ]
+        // The count arrives with the first response of the day, so the
+        // FIRST press — the one where someone is deciding whether this is a
+        // thing they can undo — is exactly the press that had no number.
+        // Saying nothing read as "unlimited"; this says the shape of the
+        // limit without inventing a figure the server owns.
         if let remaining {
             lines.append(
                 remaining == 1
                     ? "One rebuild left today."
                     : "\(remaining) rebuilds left today.")
+        } else {
+            lines.append("Only a few are allowed each day.")
         }
         return lines.joined(separator: "\n\n")
     }

@@ -114,7 +114,14 @@ struct HomeView: View {
                                     _ = try await appState.regenerateToday()
                                     regenerateNote = Self.startedNote
                                 } catch {
-                                    regenerateNote = error.localizedDescription
+                                    // Through the same presenter the load
+                                    // errors use. Without it a transport
+                                    // failure printed "Network error:
+                                    // Error Domain=NSURLErrorDomain…" onto
+                                    // the page, under a masthead.
+                                    regenerateNote = HomeErrorPresentation
+                                        .present(error.localizedDescription)
+                                        .sentence
                                 }
                             }
                         }
@@ -512,6 +519,14 @@ enum HomeErrorPresentation: Equatable {
     var detail: String? {
         if case .readable(_, let detail) = self { return detail }
         return nil
+    }
+
+    /// Both halves, for the places that have one line rather than a card.
+    /// `TodaysBriefingCard` sets them as separate views; the rebuild note
+    /// under the button is a single `Text`.
+    var sentence: String {
+        guard let detail else { return headline }
+        return "\(headline)\n\(detail)"
     }
 }
 

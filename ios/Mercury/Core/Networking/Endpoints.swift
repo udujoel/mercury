@@ -71,7 +71,11 @@ enum Endpoint {
     /// never has to live on the phone.
     case voices
     /// Rebuild today's briefing from mail that has arrived since.
-    /// POST, and the only route here that costs money to call.
+    ///
+    /// POST, and it spends a full generation — Gemini and ElevenLabs — on
+    /// every call. So does `.generate`; this one is capped and confirmed
+    /// because it is the one a PERSON presses, repeatedly, on a morning
+    /// where the news keeps moving.
     case regenerate
     // Week 11 addition: hands the APNs device token to the backend so the
     // server cron can send the PRIMARY-layer silent push (ADR-001, PRD 3.6).

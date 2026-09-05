@@ -204,6 +204,22 @@ final class AppState {
             await playBriefing()
             return
         }
+        // A rebuild we asked for may have landed since this audio loaded.
+        //
+        // Home tells the user the new briefing "appears the next time you
+        // press play", and for anyone who had already pressed play that was
+        // simply false: the loaded file was resumed forever and the rebuilt
+        // audio was never fetched. `playBriefing` revalidates by ETag, so
+        // this costs a conditional request and resumes from the saved
+        // position when the rebuild has not landed yet.
+        //
+        // Only while STOPPED. Interrupting playback to swap the file under
+        // a listener is the thing `prefetchBriefing` refuses to do, and
+        // pressing pause is not a request for a different briefing.
+        if rebuild != nil, !playback.isPlaying {
+            await playBriefing()
+            return
+        }
         playback.isPlaying ? playback.pause() : playback.play()
     }
 
@@ -294,27 +310,87 @@ final class AppState {
         try await api.saveSettings(settings)
     }
 
-    /// Whether a regeneration this app asked for is still running.
-    var isRegenerating = false
+    /// A rebuild this app asked for, from dispatch until it is seen to land.
+    ///
+    /// The Worker answers as soon as GitHub accepts the dispatch, which is
+    /// seconds; the generation behind it takes minutes. So "did the request
+    /// succeed" and "is a rebuild running" are different questions, and an
+    /// earlier cut answered the second with the first — `defer` cleared the
+    /// flag the moment the POST returned, re-enabling a button that spends
+    /// real money while the previous run was still going.
+    struct PendingRebuild: Equatable {
+        let requestedAt: Date
+        /// The `generatedAt` of the briefing on screen when this was asked
+        /// for. Anything newer IS the rebuild — the id cannot say so,
+        /// because a forced run deliberately reuses the same one.
+        let supersedes: Date?
+    }
+
+    private(set) var rebuild: PendingRebuild?
+
+    /// How long to believe in a rebuild nobody has confirmed.
+    ///
+    /// A real run took 423 seconds, and a job can fail on the server without
+    /// any way to tell the phone. Without a ceiling, one failed generation
+    /// would disable the button until the app was killed.
+    static let rebuildWindow: TimeInterval = 20 * 60
+
+    /// Whether a regeneration this app asked for is still plausibly running.
+    var isRegenerating: Bool {
+        guard let rebuild else { return false }
+        return Date().timeIntervalSince(rebuild.requestedAt) < Self.rebuildWindow
+    }
+
     /// The last thing the server said about the day's allowance, so the
     /// screen can say "two left" rather than letting someone find the limit
     /// by hitting it.
-    var regeneration: RegenerationStatus?
+    private var lastRegeneration: RegenerationStatus?
+
+    /// That status, but only while it is still about TODAY.
+    ///
+    /// An app left open overnight kept yesterday's `remaining == 0` and
+    /// disabled a button whose allowance had reset hours earlier. The id is
+    /// the day, so comparing it is the whole check.
+    var regeneration: RegenerationStatus? {
+        guard let status = lastRegeneration else { return nil }
+        let today = AppDelegate.briefingId(for: .now)
+        return status.briefingId == today ? status : nil
+    }
 
     /// Ask the server to rebuild today's briefing from mail that has
     /// arrived since.
     ///
-    /// Deliberately does NOT touch what is playing. The new briefing takes
+    /// Deliberately does NOT touch what is PLAYING. The new briefing takes
     /// several minutes and reuses today's id, so swapping it in mid-listen
     /// would replace the audio under the user — the same rule
-    /// `prefetchBriefing` follows. It is picked up on the next play.
+    /// `prefetchBriefing` follows. It is picked up on the next play, which
+    /// `togglePlayback` now makes true rather than merely promising.
     @MainActor
     func regenerateToday() async throws -> RegenerationStatus {
-        isRegenerating = true
-        defer { isRegenerating = false }
-        let status = try await api.requestRegeneration()
-        regeneration = status
-        return status
+        let previous = manifest?.generatedAt
+        do {
+            let status = try await api.requestRegeneration()
+            lastRegeneration = status
+            rebuild = PendingRebuild(requestedAt: Date(), supersedes: previous)
+            return status
+        } catch {
+            // Nothing was dispatched, so nothing is pending. Clearing here
+            // rather than in a `defer` is the difference between the two
+            // questions above.
+            rebuild = nil
+            throw error
+        }
+    }
+
+    /// Called wherever a freshly fetched manifest is adopted.
+    ///
+    /// A manifest generated after the rebuild was requested IS the rebuild,
+    /// so the button comes back and the next play stops refetching.
+    private func noteRebuildLanded(_ manifest: BriefingManifest) {
+        guard let rebuild else { return }
+        if let supersedes = rebuild.supersedes,
+           manifest.generatedAt <= supersedes { return }
+        self.rebuild = nil
     }
 
     /// The voice library, for the picker.
@@ -446,6 +522,7 @@ final class AppState {
         do {
             let manifest = try await fetchTodayOrGenerate()
             self.manifest = manifest
+            noteRebuildLanded(manifest)
             // Persist the transcript before touching the audio: it is worth
             // keeping even if the download fails.
             await persist(manifest, audioPath: nil)
@@ -535,6 +612,7 @@ final class AppState {
             // onto: `finish()` keeps the file so it can be replayed, so
             // without unloading it the new briefing could never be
             // published and the next tap replayed yesterday's.
+            noteRebuildLanded(manifest)
             if playback.isLoaded && !playback.hasFinished { return true }
             playback.unload()
             self.manifest = manifest

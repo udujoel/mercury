@@ -183,4 +183,37 @@ final class RegenerationStatusTests: XCTestCase {
         XCTAssertEqual(
             RegenerationStatus(briefingId: "x", used: 9, limit: 3).remaining, 0)
     }
+
+    /// A response with no counts is a broken response.
+    ///
+    /// These used to default to zero, so `{}` — or an error page, or a
+    /// truncated body — decoded into a perfectly valid-looking status
+    /// reading "no rebuilds left today". The button then disabled itself
+    /// for the rest of the day and nothing anywhere said why.
+    func testAMissingCountIsARejection() {
+        for body in [#"{}"#, #"{"used":1}"#, #"{"limit":3}"#] {
+            XCTAssertThrowsError(
+                try JSONDecoder().decode(
+                    RegenerationStatus.self, from: Data(body.utf8)),
+                "decoded \(body) instead of rejecting it")
+        }
+    }
+
+    /// The confirmation must not go quiet about the limit just because the
+    /// server has not named a number yet — the first press of the day is
+    /// the one where it matters most.
+    @MainActor
+    func testTheDialogAlwaysSaysTheLimitIsBounded() {
+        let unknown = RegenerateButton(
+            isRunning: false, remaining: nil, onConfirm: {})
+        XCTAssertTrue(
+            unknown.confirmationMessage.contains("few are allowed each day"),
+            unknown.confirmationMessage)
+
+        let known = RegenerateButton(
+            isRunning: false, remaining: 2, onConfirm: {})
+        XCTAssertTrue(
+            known.confirmationMessage.contains("2 rebuilds left today"),
+            known.confirmationMessage)
+    }
 }
