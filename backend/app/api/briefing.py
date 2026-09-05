@@ -89,22 +89,35 @@ def _tts_configured(s) -> bool:
         # A key of " " passed raw truthiness here, so auto-mode started a
         # LIVE run and the provider then refused to construct — a crash
         # where the whole point of this function is to choose fixtures.
-        if not all(
+        elevenlabs_ready = all(
             (value or "").strip()
             for value in (
                 s.elevenlabs_api_key,
                 s.elevenlabs_voice_a,
                 s.elevenlabs_voice_b,
             )
-        ):
-            return False
-        if not google_ready:
-            logging.getLogger(__name__).warning(
-                "TTS_PROVIDER=elevenlabs with no Google credentials — there is "
-                "no fallback provider, so an ElevenLabs outage mid-run will "
-                "cost the whole briefing rather than just the voice."
-            )
-        return True
+        )
+        if elevenlabs_ready:
+            if not google_ready:
+                logging.getLogger(__name__).warning(
+                    "TTS_PROVIDER=elevenlabs with no Google credentials — "
+                    "there is no fallback provider, so an ElevenLabs outage "
+                    "mid-run will cost the whole briefing, not just the voice."
+                )
+            return True
+
+        # EITHER provider, not only the configured one. `build_tts_provider`
+        # falls back to Google when ElevenLabs cannot be built, so a
+        # deployment with Google credentials and no ElevenLabs key still
+        # produces a REAL briefing — in the old voice, logged loudly.
+        #
+        # Demanding the configured provider specifically sent that
+        # deployment to `FakeTTSProvider`, shipping fixture tones behind a
+        # real manifest and a push notification: the exact failure this
+        # function exists to prevent. It became reachable the moment
+        # ElevenLabs became the default, so EVERY existing Google-only
+        # install would have hit it on upgrade.
+        return google_ready
 
     return google_ready
 

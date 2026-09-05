@@ -41,6 +41,8 @@ protocol APIClientProtocol {
     /// Saves settings for the GENERATION JOB to read. Not `UserDefaults` —
     /// the cron runs on a machine that cannot see the phone.
     func saveSettings(_ settings: UserSettings) async throws
+    /// The ElevenLabs voice library, with a playable sample per voice.
+    func fetchVoices() async throws -> VoiceList
     /// Registers (or refreshes) this device's APNs token with the backend
     /// so the server cron can wake it with a silent push. Mirrors
     /// `POST /devices/register` in `backend/app/api/devices.py`.
@@ -168,6 +170,10 @@ final class APIClient: APIClientProtocol {
     func fetchBriefingIndex() async throws -> [String] {
         let index: BriefingIndex = try await request(.briefingIndex)
         return index.briefings
+    }
+
+    func fetchVoices() async throws -> VoiceList {
+        try await request(.voices)
     }
 
     func fetchSettings() async throws -> UserSettings? {

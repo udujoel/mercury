@@ -210,7 +210,11 @@ Audio and voice — a chain, each step needs the last:
       briefing still ships.
 - [x] 2. Word timings in the manifest. Schema version bump; the client must
       tolerate their absence, since every briefing already in R2 lacks them.
-- [ ] 3. Music as a track element in the stitcher. Intro, outro, inter-segment
+- [~] 3. Music as a track element in the stitcher. **Assets exist** —
+      nine tracks in `assets/music/`, three sets of intro/outro/interlude,
+      generated 2026-09-05 and committed. The set is a saved setting with a
+      picker. What remains is the stitcher itself, and the offset rule is
+      the whole job. Intro, outro, inter-segment
       stings, royalty-free and committed as assets. Acceptance: a manifest
       generated with music and one without differ *only* by the offset, and
       every deep-link still lands on the right sentence.
@@ -271,7 +275,7 @@ Added 2026-09-04, after the ElevenLabs go-ahead:
       and the key stays on the server. The screen takes voice ids as text
       and says so rather than pretending to be a picker. Finishing this
       means a Worker route that proxies the voice list.
-- [ ] 12b. **A real voice picker.** What remains of 12 once 11a landed: the
+- [x] 12b. **A real voice picker.** What remains of 12 once 11a landed: the
       screen takes voice ids as text, which means going to elevenlabs.io,
       finding a voice and copying an opaque string. A picker needs the voice
       library from `GET /v1/voices`, which needs the API key — and the key

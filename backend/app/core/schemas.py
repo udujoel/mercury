@@ -353,6 +353,11 @@ class DigestNewsletter(BaseModel):
 
 SETTINGS_SCHEMA_VERSION = 1
 
+# The music sets under `assets/music/`. "none" is a real choice, not an
+# absence: a user who wants no music should be able to say so rather than
+# having it mean "use the default".
+MUSIC_SETS = ("paper", "broadsheet", "first-light", "none")
+
 # The storage key. Deliberately not `YYYY-MM-DD.`-prefixed: `_BRIEFING_KEY`
 # only matches that shape, so retention cannot mistake the settings for a
 # briefing and sweep them after thirty days.
@@ -390,6 +395,16 @@ class UserSettings(BaseModel):
 
     # Voice
     tts_provider: str | None = None
+    # Which music set the briefing is topped and tailed with. One of the
+    # directories under `assets/music/`, or "none" for silence. Null means
+    # the server's default.
+    #
+    # Stored even though the stitcher does not read it yet (ROADMAP task 3):
+    # the assets exist, the picker exists, and a setting that is saved and
+    # honoured later is different from one that is offered and never
+    # honoured — the artifact carries no field the pipeline will not
+    # eventually read, and this one has a task number.
+    music_set: str | None = None
     voice_a: str | None = None
     voice_b: str | None = None
 

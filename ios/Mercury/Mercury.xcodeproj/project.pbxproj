@@ -38,6 +38,7 @@
 		6E38AE5587434B588E7B8A0D /* PersistenceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = E01D07D57B1949F79CBF64F5 /* PersistenceModels.swift */; };
 		73F0CF0CBC4D411A8D0441EF /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A75D66FD46884F8C8C9FF9E2 /* HomeView.swift */; };
 		F3C7574A474743039C3FAF0D /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9364DCB20F734BD9A714829B /* SettingsView.swift */; };
+		85B50362008444919C203549 /* VoicePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4558860A034463B95C6E585 /* VoicePicker.swift */; };
 		9695A139C8F440429BBB599D /* ArchiveView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71543CF72C0A4219A8DCDE3F /* ArchiveView.swift */; };
 		396AAC77AABF462C85365D5C /* StoryDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66E662F71C2A42E181965E12 /* StoryDetailView.swift */; };
 		21BEBB0EF0364119812F4D00 /* StoryCards.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22AEAAD7312E47F6B0FC77BC /* StoryCards.swift */; };
@@ -112,6 +113,7 @@
 		A500086096BB4F5DACCE0474 /* BriefingStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BriefingStore.swift; sourceTree = "<group>"; };
 		A75D66FD46884F8C8C9FF9E2 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		9364DCB20F734BD9A714829B /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		E4558860A034463B95C6E585 /* VoicePicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoicePicker.swift; sourceTree = "<group>"; };
 		71543CF72C0A4219A8DCDE3F /* ArchiveView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArchiveView.swift; sourceTree = "<group>"; };
 		66E662F71C2A42E181965E12 /* StoryDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryDetailView.swift; sourceTree = "<group>"; };
 		22AEAAD7312E47F6B0FC77BC /* StoryCards.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryCards.swift; sourceTree = "<group>"; };
@@ -217,6 +219,7 @@
 			isa = PBXGroup;
 			children = (
 				9364DCB20F734BD9A714829B /* SettingsView.swift */,
+				E4558860A034463B95C6E585 /* VoicePicker.swift */,
 			);
 			path = Settings;
 			sourceTree = "<group>";
@@ -511,6 +514,7 @@
 				30A383EE10954F759510B5F1 /* Typography.swift in Sources */,
 				73F0CF0CBC4D411A8D0441EF /* HomeView.swift in Sources */,
 				F3C7574A474743039C3FAF0D /* SettingsView.swift in Sources */,
+				85B50362008444919C203549 /* VoicePicker.swift in Sources */,
 				9695A139C8F440429BBB599D /* ArchiveView.swift in Sources */,
 				396AAC77AABF462C85365D5C /* StoryDetailView.swift in Sources */,
 				21BEBB0EF0364119812F4D00 /* StoryCards.swift in Sources */,

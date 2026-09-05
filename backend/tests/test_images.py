@@ -600,3 +600,43 @@ def test_the_fetch_time_guard_still_blocks_private_destinations():
     ]:
         with _pytest.raises(BlockedURLError):
             assert_public_url(blocked)
+
+
+def test_a_google_only_deployment_still_runs_live_after_elevenlabs_became_default(
+    monkeypatch, tmp_path
+):
+    """The regression the default change introduced.
+
+    `tts_provider` now defaults to "elevenlabs". A gate that demanded the
+    CONFIGURED provider's credentials sent every existing Google-only
+    install to `FakeTTSProvider` on upgrade — fixture tones behind a real
+    manifest and a real push notification, which is precisely what
+    `_credentials_configured` exists to prevent.
+
+    `build_tts_provider` falls back to Google, so the gate has to ask
+    whether EITHER provider can work.
+    """
+    from app.api import briefing as briefing_api
+    from app.core.config import get_settings
+
+    tts_key = tmp_path / "gcp-tts.json"
+    tts_key.write_text("{}")
+    token = tmp_path / "token.json"
+    token.write_text("{}")
+
+    monkeypatch.setenv("GEMINI_API_KEY", "a-key")
+    monkeypatch.setenv("GOOGLE_TTS_CREDENTIALS", str(tts_key))
+    monkeypatch.setenv("GOOGLE_TOKEN_FILE", str(token))
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "")
+    get_settings.cache_clear()
+
+    assert get_settings().tts_provider == "elevenlabs"
+    assert briefing_api._credentials_configured() is True
+
+    # And with NEITHER provider configured it still refuses, which is the
+    # half of the check that must not be lost while relaxing the other.
+    monkeypatch.setenv("GOOGLE_TTS_CREDENTIALS", str(tmp_path / "missing.json"))
+    get_settings.cache_clear()
+    assert briefing_api._credentials_configured() is False
+
+    get_settings.cache_clear()

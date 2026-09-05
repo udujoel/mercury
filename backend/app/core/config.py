@@ -56,6 +56,12 @@ def apply_to_environment(user_settings) -> None:
     get_settings.cache_clear()
 
 
+# Brian — deep, resonant and comforting. Host A.
+DEFAULT_ELEVENLABS_VOICE_A = "nPczCjzI2devNBz1zQrb"
+# A poised British woman. Host B.
+DEFAULT_ELEVENLABS_VOICE_B = "3Drdg7QWqr45nZmYpXRP"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
@@ -73,13 +79,22 @@ class Settings(BaseSettings):
     embedding_model: str = "gemini-embedding-001"
 
     # TTS
-    tts_provider: str = "google"
+    # ElevenLabs by default. `build_tts_provider` falls back to Google and
+    # logs loudly when the key is missing or ElevenLabs is unreachable, so a
+    # deployment with no ElevenLabs key still ships a briefing — it just
+    # ships in the old voice. Defaulting the other way meant a key on its
+    # own did nothing, and the difference was invisible.
+    tts_provider: str = "elevenlabs"
     google_tts_credentials: str = "./credentials/gcp-tts.json"
     tts_voice_host_a: str = "en-US-Neural2-D"
     tts_voice_host_b: str = "en-US-Neural2-F"
     elevenlabs_api_key: str = ""
-    elevenlabs_voice_a: str = ""
-    elevenlabs_voice_b: str = ""
+    # Two voices that sound like a pair rather than two strangers: a deep,
+    # resonant male and a poised British female. Defaults rather than
+    # required, so the API key alone is enough to get the intended show —
+    # overridable from Settings, and from the environment.
+    elevenlabs_voice_a: str = DEFAULT_ELEVENLABS_VOICE_A
+    elevenlabs_voice_b: str = DEFAULT_ELEVENLABS_VOICE_B
 
     # Google OAuth
     google_client_id: str = ""

@@ -294,6 +294,12 @@ final class AppState {
         try await api.saveSettings(settings)
     }
 
+    /// The voice library, for the picker.
+    @MainActor
+    func fetchVoices() async throws -> VoiceList {
+        try await api.fetchVoices()
+    }
+
     /// The wake time as a `Date`, for a `DatePicker`.
     ///
     /// Stored as minutes since midnight because that is what the scheduler

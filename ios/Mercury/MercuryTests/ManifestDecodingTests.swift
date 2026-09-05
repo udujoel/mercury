@@ -314,6 +314,13 @@ final class RecordingAPI: APIClientProtocol {
         savedSettings.append(settings)
     }
 
+    var voicesResult = VoiceList.empty
+
+    func fetchVoices() async throws -> VoiceList {
+        calls.append("fetchVoices")
+        return voicesResult
+    }
+
     func generateBriefing(length: BriefingLength) async throws -> BriefingManifest {
         calls.append("generateBriefing")
         return ManifestFixtures.minimal

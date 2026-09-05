@@ -17,6 +17,17 @@ import Foundation
 struct UserSettings: Codable, Equatable {
     static let schemaVersion = 1
 
+    /// Mirrors `MUSIC_SETS` in `app/core/schemas.py` and the directories
+    /// under `assets/music/`. "none" is a real choice rather than an
+    /// absence: someone who wants no music should be able to say so, not
+    /// have it mean "use the default".
+    static let musicSets: [(id: String, label: String, note: String)] = [
+        ("paper", "Paper", "Felt piano and upright bass. Warm, unhurried."),
+        ("broadsheet", "Broadsheet", "Muted strings and marimba. Crisper."),
+        ("first-light", "First Light", "Ambient pad. Very quiet, for early."),
+        ("none", "None", "No music at all."),
+    ]
+
     var briefingLength: String?
 
     // NO `disabledSegments`. It was here for one round and is deliberately
@@ -25,6 +36,9 @@ struct UserSettings: Codable, Equatable {
     // stored a preference nothing reads — the exact failure this artifact
     // exists to prevent. ROADMAP task 15.
     var ttsProvider: String?
+    /// Which music set tops and tails the briefing. One of `musicSets`, or
+    /// nil for the server's default.
+    var musicSet: String?
     var voiceA: String?
     var voiceB: String?
     /// Empty means the curated defaults, not "no news". An empty list is what
@@ -34,9 +48,11 @@ struct UserSettings: Codable, Equatable {
     var mutedSenders: [String]
 
     init(briefingLength: String? = nil,
-         ttsProvider: String? = nil, voiceA: String? = nil, voiceB: String? = nil,
+         ttsProvider: String? = nil, musicSet: String? = nil,
+         voiceA: String? = nil, voiceB: String? = nil,
          feeds: [String] = [], mutedSenders: [String] = []) {
         self.briefingLength = briefingLength
+        self.musicSet = musicSet
         self.ttsProvider = ttsProvider
         self.voiceA = voiceA
         self.voiceB = voiceB
@@ -49,6 +65,7 @@ struct UserSettings: Codable, Equatable {
         case updatedAt = "updated_at"
         case briefingLength = "briefing_length"
         case ttsProvider = "tts_provider"
+        case musicSet = "music_set"
         case voiceA = "voice_a"
         case voiceB = "voice_b"
         case feeds
@@ -59,6 +76,7 @@ struct UserSettings: Codable, Equatable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         briefingLength = try c.decodeIfPresent(String.self, forKey: .briefingLength)
         ttsProvider = try c.decodeIfPresent(String.self, forKey: .ttsProvider)
+        musicSet = try c.decodeIfPresent(String.self, forKey: .musicSet)
         voiceA = try c.decodeIfPresent(String.self, forKey: .voiceA)
         voiceB = try c.decodeIfPresent(String.self, forKey: .voiceB)
         feeds = try c.decodeIfPresent([String].self, forKey: .feeds) ?? []
@@ -76,6 +94,7 @@ struct UserSettings: Codable, Equatable {
         try c.encode(ISO8601DateFormatter().string(from: .now), forKey: .updatedAt)
         try c.encodeIfPresent(briefingLength, forKey: .briefingLength)
         try c.encodeIfPresent(ttsProvider, forKey: .ttsProvider)
+        try c.encodeIfPresent(musicSet, forKey: .musicSet)
         try c.encodeIfPresent(voiceA, forKey: .voiceA)
         try c.encodeIfPresent(voiceB, forKey: .voiceB)
         try c.encode(feeds, forKey: .feeds)

@@ -82,24 +82,38 @@ struct SettingsView: View {
                     Text("Google").tag("google")
                     Text("ElevenLabs").tag("elevenlabs")
                 }
-                if settings.ttsProvider == "elevenlabs" {
-                    LabeledContent("Host A") {
-                        TextField("Voice ID", text: voiceBinding(\.voiceA))
-                            .multilineTextAlignment(.trailing)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                    }
-                    LabeledContent("Host B") {
-                        TextField("Voice ID", text: voiceBinding(\.voiceB))
-                            .multilineTextAlignment(.trailing)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                    }
+                if usesElevenLabs {
+                    voiceRow("Host A", \.voiceA)
+                    voiceRow("Host B", \.voiceB)
                 }
             } header: {
                 Text("Voice")
             } footer: {
                 Text(voiceNote)
+            }
+            .disabled(!isEditable)
+
+            Section {
+                Picker("Music", selection: musicBinding) {
+                    Text("Server default").tag(Self.unsetTag)
+                    ForEach(UserSettings.musicSets, id: \.id) { set in
+                        Text(set.label).tag(set.id)
+                    }
+                }
+                if let note = musicNote {
+                    Text(note)
+                        .font(MercuryType.figureCaption)
+                        .foregroundStyle(MercuryColor.inkFaint.color)
+                }
+            } header: {
+                Text("Music")
+            } footer: {
+                // Says plainly that this is stored and not yet used. A
+                // control that quietly does nothing is the thing this whole
+                // artifact exists to avoid; a control that says when it will
+                // start working is a different proposition.
+                Text("Saved now, applied once music is stitched into the "
+                     + "briefing. The choice is remembered either way.")
             }
             .disabled(!isEditable)
 
@@ -154,6 +168,41 @@ struct SettingsView: View {
                 loadState = .failed(error.localizedDescription)
             }
         }
+    }
+
+    // MARK: - Voice
+
+    private var usesElevenLabs: Bool {
+        // Nil counts: ElevenLabs is the server default now, so an unset
+        // provider means the voices are relevant rather than hidden.
+        settings.ttsProvider == nil || settings.ttsProvider == "elevenlabs"
+    }
+
+    /// A row that opens the picker, showing the chosen voice's NAME rather
+    /// than its id once the library has been seen.
+    ///
+    /// An id is not a choice you can read back. Before the list has loaded
+    /// there is nothing to translate it with, so it falls back to the id —
+    /// which is still better than blank.
+    private func voiceRow(
+        _ title: String, _ key: WritableKeyPath<UserSettings, String?>
+    ) -> some View {
+        NavigationLink {
+            VoicePicker(
+                title: title,
+                selection: Binding(
+                    get: { settings[keyPath: key] },
+                    set: { value in edit { $0[keyPath: key] = value } }
+                )
+            )
+        } label: {
+            LabeledContent(title, value: voiceLabel(settings[keyPath: key]))
+        }
+    }
+
+    private func voiceLabel(_ id: String?) -> String {
+        guard let id, !id.isEmpty else { return "Default" }
+        return knownVoiceNames[id] ?? id
     }
 
     // MARK: - Sources
@@ -281,6 +330,26 @@ struct SettingsView: View {
     /// who opened settings to mute a sender would have silently pinned the
     /// length and switched the voice back to Google.
     private static let unsetTag = ""
+
+    /// Names for the two defaults, so the rows read as voices rather than
+    /// as identifiers before the picker has ever been opened. Anything else
+    /// shows its id until the library is loaded.
+    private let knownVoiceNames = [
+        "nPczCjzI2devNBz1zQrb": "Brian (default)",
+        "3Drdg7QWqr45nZmYpXRP": "British woman (default)",
+    ]
+
+    private var musicBinding: Binding<String> {
+        Binding(
+            get: { settings.musicSet ?? Self.unsetTag },
+            set: { value in edit { $0.musicSet = value.isEmpty ? nil : value } }
+        )
+    }
+
+    private var musicNote: String? {
+        guard let id = settings.musicSet else { return nil }
+        return UserSettings.musicSets.first { $0.id == id }?.note
+    }
 
     private var lengthBinding: Binding<String> {
         Binding(
