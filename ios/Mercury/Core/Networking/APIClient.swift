@@ -25,6 +25,14 @@ protocol APIClientProtocol {
     func syncServerClock() async
     func fetchManifest(briefingId: String) async throws -> BriefingManifest
     func downloadAudio(briefingId: String) async throws -> URL
+    /// The browse surface for one morning, or nil when there is none.
+    ///
+    /// Nil rather than throwing on 404, because a briefing with no digest is
+    /// the ORDINARY case for anything generated before ADR-013 — the caller
+    /// shows an empty state, not an error, and the briefing stays playable.
+    func fetchDigest(briefingId: String) async throws -> Digest?
+    /// The briefing ids still in the bucket, newest first.
+    func fetchBriefingIndex() async throws -> [String]
     /// Registers (or refreshes) this device's APNs token with the backend
     /// so the server cron can wake it with a silent push. Mirrors
     /// `POST /devices/register` in `backend/app/api/devices.py`.
@@ -135,6 +143,22 @@ final class APIClient: APIClientProtocol {
 
     func fetchManifest(briefingId: String) async throws -> BriefingManifest {
         try await request(.manifest(briefingId: briefingId))
+    }
+
+    func fetchDigest(briefingId: String) async throws -> Digest? {
+        do {
+            return try await request(.digest(briefingId: briefingId)) as Digest
+        } catch APIError.badStatus(404, _) {
+            // Not an error. Every briefing from before ADR-013 has no digest
+            // object, and a run whose enrichment failed still ships one — so
+            // an old briefing stays playable with no browse screen behind it.
+            return nil
+        }
+    }
+
+    func fetchBriefingIndex() async throws -> [String] {
+        let index: BriefingIndex = try await request(.briefingIndex)
+        return index.briefings
     }
 
     /// Downloads the briefing audio to a local temp file and returns its
@@ -476,7 +500,11 @@ final class APIClient: APIClientProtocol {
         }
     }
 
-    private func request(_ endpoint: Endpoint) async throws -> BriefingManifest {
+    /// Generic over the decoded type so the digest and the archive index
+    /// share the manifest's cache posture and error handling rather than
+    /// getting their own copies of it — three copies is how the embedding
+    /// provider bug happened.
+    private func request<T: Decodable>(_ endpoint: Endpoint) async throws -> T {
         var urlRequest = URLRequest(url: endpoint.url())
         urlRequest.httpMethod = endpoint.method
         urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -504,7 +532,7 @@ final class APIClient: APIClientProtocol {
         try Self.validate(response, body: data)
 
         do {
-            return try decoder.decode(BriefingManifest.self, from: data)
+            return try decoder.decode(T.self, from: data)
         } catch {
             throw APIError.decoding(error)
         }

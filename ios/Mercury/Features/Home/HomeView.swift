@@ -17,6 +17,8 @@ struct HomeView: View {
     @Environment(AppState.self) private var appState
 
     @State private var showPlayer = false
+    @State private var selectedStory: DigestStory?
+    @State private var showArchive = false
 
     private var rows: [BriefingDigest.Row] { BriefingDigest.rows(for: appState.manifest) }
 
@@ -66,6 +68,20 @@ struct HomeView: View {
                         onRetry: { Task { await appState.playBriefing() } }
                     )
 
+                    // The desk: the stories themselves. Above the rows
+                    // below, which summarise the same morning by segment.
+                    if let stories = appState.digest?.stories, !stories.isEmpty {
+                        SectionLabel("Today's desk")
+                            .padding(.top, MercurySpace.section)
+                            .padding(.bottom, MercurySpace.snug)
+
+                        StoryCards(stories: ordered(stories)) { selectedStory = $0 }
+                            // Cancels the gutter for this row only: the cards
+                            // must reach the screen edge, or the row stops
+                            // reading as something that scrolls.
+                            .padding(.horizontal, -MercurySpace.gutter)
+                    }
+
                     if !rows.isEmpty {
                         SectionLabel("In \(briefingTitle.lowercased())")
                             .padding(.top, MercurySpace.section)
@@ -79,6 +95,20 @@ struct HomeView: View {
                         BriefingRows(rows: rows, onSelect: open(at:))
                             .disabled(appState.loadState == .loading)
                     }
+
+                    Button { showArchive = true } label: {
+                        HStack(spacing: MercurySpace.tight) {
+                            Text("Earlier briefings")
+                                .font(MercuryType.cardBody)
+                            Image(systemName: "chevron.right").font(.footnote)
+                            Spacer(minLength: 0)
+                        }
+                        .foregroundStyle(MercuryColor.inkMuted.color)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, MercurySpace.section)
                 }
                 .mercuryGutter()
                 .padding(.top, MercurySpace.snug)
@@ -103,6 +133,32 @@ struct HomeView: View {
             .navigationDestination(isPresented: $showPlayer) {
                 PlayerView()
             }
+            .navigationDestination(isPresented: $showArchive) {
+                ArchiveView(
+                    ids: appState.archive,
+                    currentId: appState.manifest?.briefingId,
+                    onSelect: { id in
+                        showArchive = false
+                        Task { await appState.openBriefing(id: id) }
+                    }
+                )
+                .task { await appState.loadArchive() }
+            }
+            .navigationDestination(item: $selectedStory) { story in
+                StoryDetailView(
+                    story: story,
+                    // Absent rather than disabled when the hosts did not
+                    // discuss it: there is no audio to enable it for.
+                    onPlay: story.turnIndex == nil ? nil : { index in
+                        selectedStory = nil
+                        Task { await playStory(turnIndex: index) }
+                    }
+                )
+            }
+            // The digest is a SIBLING of the manifest (ADR-013), fetched
+            // here rather than on the play path — pressing play must never
+            // wait on a screen you may not open.
+            .task(id: appState.manifest?.briefingId) { await appState.loadDigest() }
             // Covers playback started outside a direct tap on the card — the
             // wake notification's "Play" action or tapping the notification
             // itself (PRD F-17), which drive `AppState.playPrefetched`
@@ -140,6 +196,32 @@ struct HomeView: View {
     /// schedules nothing — and on a merely paused briefing it moved the
     /// playhead and left the audio stopped, while the row's own VoiceOver
     /// hint said it plays this part of the briefing.
+    /// Covered stories first, in the order the hosts discussed them, then
+    /// everything the briefing had no time for.
+    ///
+    /// A story you can hear is worth more on this screen than one you can
+    /// only read, and the audio order is the only ordering the morning
+    /// actually has — alphabetical or by source count would both be
+    /// arbitrary.
+    private func ordered(_ stories: [DigestStory]) -> [DigestStory] {
+        let digest = Digest(briefingId: "", stories: stories)
+        return digest.covered + digest.uncovered
+    }
+
+    /// Opens the player at the turn where this story was discussed.
+    ///
+    /// `renderedTurns`, matching what `turn_index` indexes: the backend
+    /// compacts the turn list before writing the manifest, so the raw array
+    /// and the index would disagree by however many turns failed to
+    /// synthesise.
+    private func playStory(turnIndex: Int) async {
+        guard let manifest = appState.manifest,
+              manifest.renderedTurns.indices.contains(turnIndex)
+        else { return }
+        showPlayer = true
+        await appState.play(fromMs: manifest.renderedTurns[turnIndex].startMs)
+    }
+
     private func open(at row: BriefingDigest.Row) {
         guard let ms = row.seekMs else { return }
         Task {

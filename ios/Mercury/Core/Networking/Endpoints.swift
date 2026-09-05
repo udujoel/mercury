@@ -55,6 +55,14 @@ enum Endpoint {
     case manifest(briefingId: String)
     case status(briefingId: String)
     case audio(briefingId: String)
+    /// The browse surface for one morning (ADR-013). A 404 here is ORDINARY:
+    /// every briefing generated before the digest existed has none.
+    case digest(briefingId: String)
+    /// Which mornings are still in the bucket. The window is whatever the
+    /// retention sweep has left, so the archive reads its horizon from the
+    /// data rather than hardcoding a number that can drift from the
+    /// sweeper's.
+    case briefingIndex
     // Week 11 addition: hands the APNs device token to the backend so the
     // server cron can send the PRIMARY-layer silent push (ADR-001, PRD 3.6).
     // See backend/app/api/devices.py — guarded by the same X-Mercury-Token
@@ -72,6 +80,10 @@ enum Endpoint {
             return base.appendingPathComponent("briefing/\(id)/status")
         case .audio(let id):
             return base.appendingPathComponent("briefing/\(id)/audio")
+        case .digest(let id):
+            return base.appendingPathComponent("briefing/\(id)/digest")
+        case .briefingIndex:
+            return base.appendingPathComponent("briefings")
         case .registerDevice:
             return base.appendingPathComponent("devices/register")
         }
@@ -80,7 +92,7 @@ enum Endpoint {
     var method: String {
         switch self {
         case .generate, .registerDevice: return "POST"
-        case .manifest, .audio, .status: return "GET"
+        case .manifest, .audio, .status, .digest, .briefingIndex: return "GET"
         }
     }
 }

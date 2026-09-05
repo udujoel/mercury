@@ -55,6 +55,17 @@ final class AppState {
 
     var manifest: BriefingManifest?
     var loadState: LoadState = .idle
+
+    /// The browse surface for whichever briefing is loaded.
+    ///
+    /// Fetched separately from the manifest and deliberately never awaited by
+    /// the play path: ADR-013 makes the digest a SIBLING of the manifest so
+    /// pressing play never waits on a screen the user may not open. A failure
+    /// here costs the desk, not the briefing.
+    var digest: Digest?
+
+    /// Briefing ids still on the server, newest first. Empty until asked for.
+    var archive: [String] = []
     let playback = PlaybackCoordinator()
 
     /// SwiftData persistence (PRD 3.7), handed over by `MercuryApp` from the
@@ -221,6 +232,59 @@ final class AppState {
     func seek(toMs ms: Int) {
         guard isPlaybackLoaded else { return }
         playback.seek(toMs: ms)
+    }
+
+    /// Loads the digest for the briefing on screen, quietly.
+    ///
+    /// Never throws and never blocks playback. Rule 7 at the level of a
+    /// screen: a digest that will not load costs you the story cards, and
+    /// the briefing still plays.
+    @MainActor
+    func loadDigest() async {
+        guard let id = manifest?.briefingId else { return }
+        if digest?.briefingId == id { return }
+        do {
+            digest = try await api.fetchDigest(briefingId: id)
+        } catch {
+            // Not surfaced. There is no action the user could take, and the
+            // play button is unaffected.
+            print("[Mercury] digest for \(id) did not load: \(error)")
+        }
+    }
+
+    /// The mornings still on the server, for the archive screen.
+    @MainActor
+    func loadArchive() async {
+        do {
+            archive = try await api.fetchBriefingIndex()
+        } catch {
+            print("[Mercury] archive index did not load: \(error)")
+        }
+    }
+
+    /// Loads an earlier briefing — manifest, audio and digest — and plays it.
+    ///
+    /// The audio is loaded rather than only the manifest, because every
+    /// offset-based control is gated on the loaded briefing matching the one
+    /// on screen (`isPlaybackCurrent`). Fetching the manifest alone would
+    /// leave the whole player inert with no explanation.
+    @MainActor
+    func openBriefing(id: String) async {
+        guard loadState != .loading else { return }
+        loadState = .loading
+        do {
+            let manifest = try await api.fetchManifest(briefingId: id)
+            self.manifest = manifest
+            await persist(manifest, audioPath: nil)
+            let audioURL = try await api.downloadAudio(briefingId: id)
+            await persist(manifest, audioPath: audioURL.path)
+            try playback.load(manifest: manifest, audioURL: audioURL)
+            loadState = .ready
+            digest = nil
+            await loadDigest()
+        } catch {
+            loadState = .failed(String(describing: error))
+        }
     }
 
     /// Tapping the greeting card is the primary action of the entire app.
