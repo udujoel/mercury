@@ -108,12 +108,8 @@ struct SettingsView: View {
             } header: {
                 Text("Music")
             } footer: {
-                // Says plainly that this is stored and not yet used. A
-                // control that quietly does nothing is the thing this whole
-                // artifact exists to avoid; a control that says when it will
-                // start working is a different proposition.
-                Text("Saved now, applied once music is stitched into the "
-                     + "briefing. The choice is remembered either way.")
+                Text("Tops and tails the briefing, with a short transition "
+                     + "between segments. Takes effect on the next one.")
             }
             .disabled(!isEditable)
 

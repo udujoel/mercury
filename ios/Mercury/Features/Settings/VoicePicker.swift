@@ -252,6 +252,21 @@ struct VoicePicker: View {
         }
         stopPreview()
 
+        // The category, before anything plays. Without it a fresh install
+        // samples voices through the ambient session, which the Ring/Silent
+        // switch mutes — so the user taps play, hears nothing, and concludes
+        // the voice or the app is broken.
+        //
+        // The same category `PlaybackCoordinator` uses, and set with the
+        // same empty options for the reason PR #19 documents: `.allowBluetooth`
+        // is an INPUT option and pairing it with `.playback` returns -50 on a
+        // physical device.
+        try? AVAudioSession.sharedInstance().setCategory(
+            .playback, mode: .spokenAudio,
+            options: PlaybackCoordinator.playbackCategoryOptions
+        )
+        try? AVAudioSession.sharedInstance().setActive(true)
+
         let player = AVPlayer(url: url)
         self.player = player
         previewing = id

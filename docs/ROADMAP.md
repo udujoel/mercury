@@ -210,7 +210,7 @@ Audio and voice — a chain, each step needs the last:
       briefing still ships.
 - [x] 2. Word timings in the manifest. Schema version bump; the client must
       tolerate their absence, since every briefing already in R2 lacks them.
-- [~] 3. Music as a track element in the stitcher. **Assets exist** —
+- [x] 3. Music as a track element in the stitcher. **Assets exist** —
       nine tracks in `assets/music/`, three sets of intro/outro/interlude,
       generated 2026-09-05 and committed. The set is a saved setting with a
       picker. What remains is the stitcher itself, and the offset rule is
