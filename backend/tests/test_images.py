@@ -523,14 +523,11 @@ async def test_generation_logs_the_settings_it_applied_without_crashing(tmp_path
 
     # Exactly the interpolation `_generate` performs.
     message = (
-        "applied saved settings (length=%s, provider=%s, feeds=%d, "
-        "muted senders=%d)"
-        % (
-            loaded.length_or(BriefingLength.STANDARD).value,
-            loaded.tts_provider or "unset",
-            len(loaded.feeds),
-            len(loaded.muted_senders),
-        )
+        f"applied saved settings "
+        f"(length={loaded.length_or(BriefingLength.STANDARD).value}, "
+        f"provider={loaded.tts_provider or 'unset'}, "
+        f"feeds={len(loaded.feeds)}, "
+        f"muted senders={len(loaded.muted_senders)})"
     )
     assert "express" in message
     assert "muted senders=1" in message
