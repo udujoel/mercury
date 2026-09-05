@@ -701,34 +701,28 @@ async function handleRegenerate(request, env) {
   const id = briefingIdFor(new Date(), resolvedTimeZone(env));
   const key = regenCountKey(id);
 
-  // Counted in R2 rather than in memory: Workers are not one long-lived
-  // process, so an in-memory counter resets whenever the isolate does and
-  // the cap would be no cap at all.
+  // RESERVE, then dispatch, then release if the dispatch failed.
   //
-  // Read-then-write is not atomic and two simultaneous taps could both see
-  // the same count. That is acceptable here — the failure mode is one extra
-  // generation, not an unbounded loop — and the alternative is a Durable
-  // Object for a counter that increments at most a handful of times a day.
-  let used = 0;
-  const existing = await env.BRIEFINGS.get(key);
-  if (existing) {
-    try {
-      used = JSON.parse(await existing.text()).count || 0;
-    } catch {
-      used = 0;
-    }
-  }
-
-  if (used >= MAX_REGENERATIONS_PER_DAY) {
+  // The first cut of this read the count, dispatched, then wrote
+  // `count: used + 1`, with a comment calling the race acceptable because
+  // "the failure mode is one extra generation". Both halves were wrong.
+  // Three simultaneous taps all read 0, all dispatch, and all write
+  // `count: 1` — the write is an OVERWRITE, not an increment, so the
+  // counter never passes 1 and the cap never engages at all. Tapping in
+  // parallel is not exotic on a phone; it is what a double-tap on a slow
+  // network looks like.
+  const reservation = await reserveRegeneration(env, key, id);
+  if (!reservation.ok) {
     return json(
       {
-        detail:
-          `Already regenerated ${used} times today. The limit is ` +
-          `${MAX_REGENERATIONS_PER_DAY} — each one costs a full briefing.`,
-        used,
+        detail: reservation.contended
+          ? "Another regeneration is starting. Try again in a moment."
+          : `Already regenerated ${reservation.used} times today. The limit ` +
+            `is ${MAX_REGENERATIONS_PER_DAY} — each one costs a full briefing.`,
+        used: reservation.used,
         limit: MAX_REGENERATIONS_PER_DAY,
       },
-      429,
+      reservation.contended ? 409 : 429,
     );
   }
 
@@ -738,26 +732,95 @@ async function handleRegenerate(request, env) {
   });
 
   if (!dispatched) {
+    // Give the allowance back. Counting only after a successful dispatch is
+    // what the old order achieved by writing late; holding a reservation
+    // achieves it by writing early and undoing, which is the version that
+    // is also safe under concurrency.
+    await releaseRegeneration(env, key, id, reservation);
     // The reason is in the Worker log — a missing dispatch token, a repo the
     // token cannot see, a GitHub outage. None of them are things the phone
     // can act on, so it gets one honest sentence rather than a guess.
     return json({ detail: "Could not start a regeneration." }, 502);
   }
 
-  // Counted only AFTER a successful dispatch. Counting first would let a
-  // GitHub outage burn the day's allowance without generating anything.
-  await env.BRIEFINGS.put(
-    key,
-    JSON.stringify({ count: used + 1, briefing_id: id }),
-    { httpMetadata: { contentType: "application/json" } },
-  );
-
   return json({
     status: "started",
     briefing_id: id,
-    used: used + 1,
+    used: reservation.used,
     limit: MAX_REGENERATIONS_PER_DAY,
   });
+}
+
+// How many times to re-read and retry when someone else wins the write.
+//
+// Losing the race means the count moved, so the retry re-reads it and is
+// then usually either allowed or over the cap. Four attempts is enough for
+// a handful of concurrent taps and small enough that a pathologically
+// contended key answers 409 rather than looping.
+const RESERVE_ATTEMPTS = 4;
+
+/**
+ * Claim one of the day's regenerations, atomically.
+ *
+ * R2 conditional writes are what make this safe without a Durable Object:
+ * `etagMatches` pins the write to the exact object we read, and
+ * `etagDoesNotMatch: "*"` means "only if it does not exist yet". A `put`
+ * whose precondition fails returns null instead of writing, so a loser
+ * re-reads rather than overwriting the winner.
+ */
+async function reserveRegeneration(env, key, id) {
+  for (let attempt = 0; attempt < RESERVE_ATTEMPTS; attempt += 1) {
+    const existing = await env.BRIEFINGS.get(key);
+    let used = 0;
+    if (existing) {
+      try {
+        used = JSON.parse(await existing.text()).count || 0;
+      } catch {
+        // A corrupt counter must not become an unlimited one, so this is
+        // deliberately NOT `used = 0`: an unreadable object is treated as
+        // the day being spent, and retention clears it overnight.
+        used = MAX_REGENERATIONS_PER_DAY;
+      }
+    }
+
+    if (used >= MAX_REGENERATIONS_PER_DAY) return { ok: false, used };
+
+    const written = await env.BRIEFINGS.put(
+      key,
+      JSON.stringify({ count: used + 1, briefing_id: id }),
+      {
+        httpMetadata: { contentType: "application/json" },
+        onlyIf: existing
+          ? { etagMatches: existing.etag ?? existing.httpEtag }
+          : { etagDoesNotMatch: "*" },
+      },
+    );
+
+    // Only `null` is a failed precondition. A stub or a binding that
+    // returns undefined has written, and treating that as a loss would
+    // spin the loop and refuse a request that actually succeeded.
+    if (written !== null) return { ok: true, used: used + 1, previous: used };
+  }
+
+  return { ok: false, used: MAX_REGENERATIONS_PER_DAY, contended: true };
+}
+
+/** Hand a reservation back after a dispatch that never started. */
+async function releaseRegeneration(env, key, id, reservation) {
+  try {
+    // Written back rather than deleted: R2's `delete` takes no conditional,
+    // so deleting could remove a reservation another request made in the
+    // meantime. The key is `<id>.regenerations.json` either way, so
+    // retention sweeps the object with the briefing.
+    await env.BRIEFINGS.put(
+      key,
+      JSON.stringify({ count: reservation.previous, briefing_id: id }),
+      { httpMetadata: { contentType: "application/json" } },
+    );
+  } catch {
+    // Best effort. Failing to give the allowance back must not turn a 502
+    // into a 500 — the user still needs to be told the dispatch failed.
+  }
 }
 
 async function serveVoices(env) {

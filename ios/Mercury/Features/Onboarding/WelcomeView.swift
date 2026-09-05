@@ -111,11 +111,25 @@ struct DataPromiseView: View {
                         + "script, and discarded. There is no database of your "
                         + "inbox."
                     )
+                    // TWO retention rules, because there are two.
+                    //
+                    // An earlier draft said "all of it is deleted after 30
+                    // days", which is true of the SERVER and false of this
+                    // phone: `BriefingStore.enforceRetention` keeps the last
+                    // seven briefings by count, so a light user can hold a
+                    // transcript locally well past thirty days.
+                    //
+                    // The live privacy policy scopes its 30-day claim to the
+                    // R2 bucket carefully; this screen had dropped that
+                    // scoping and turned an accurate statement into a false
+                    // one. A privacy promise is the last place to round off.
                     promise(
                         "What is kept",
                         "The audio, the script the hosts read, and where each "
                         + "item came from — a sender, a subject line, a link. "
-                        + "All of it is deleted automatically after 30 days."
+                        + "On the server that is deleted automatically after "
+                        + "30 days. This phone keeps the last few briefings "
+                        + "so they play offline, and drops the older ones."
                     )
                 }
 

@@ -21,6 +21,11 @@ import worker from "../src/index.js";
 
 const TOKEN = "x".repeat(40);
 
+// Mirrors `MAX_REGENERATIONS_PER_DAY` in the Worker, which is not exported.
+// If the Worker's number changes and this one does not, the concurrency
+// test fails loudly rather than asserting the wrong ceiling.
+const MAX_PER_DAY = 3;
+
 /**
  * An R2 stub. `objects` maps key -> {json, size, etag}.
  *
@@ -206,14 +211,53 @@ describe("GET /briefings", () => {
 
 describe("settings", () => {
   /** A bucket that also records writes, which `bucket()` does not. */
+  // Read-your-writes, and `onlyIf` on PUT honoured the way R2 honours it.
+  //
+  // Both matter. The regeneration cap reserves its slot with a conditional
+  // write and re-reads on a lost race, so a stub that ignored `onlyIf` — or
+  // that served `get` from the ORIGINAL objects rather than from what was
+  // written — would make the concurrency path untestable and quietly green.
+  // That is the same trap the `onlyIf`-on-GET note above describes.
   function writableBucket(objects = {}) {
     const base = bucket(objects);
     const written = {};
+    let version = 0;
+
+    const etagOf = (key) =>
+      written[key] === undefined ? undefined : `"w-${written[key].version}"`;
+
     return {
       ...base,
-      written,
-      put: async (key, body) => {
-        written[key] = body;
+      // Bodies only, so assertions stay `written[key]` as they were.
+      get written() {
+        return Object.fromEntries(
+          Object.entries(written).map(([k, v]) => [k, v.body]),
+        );
+      },
+      get: async (key, options) => {
+        const mine = written[key];
+        if (mine === undefined) return base.get(key, options);
+        return {
+          etag: `"w-${mine.version}"`,
+          httpEtag: `"w-${mine.version}"`,
+          size: mine.body.length,
+          body: mine.body,
+          text: async () => mine.body,
+          json: async () => JSON.parse(mine.body),
+        };
+      },
+      put: async (key, body, options) => {
+        const onlyIf = options?.onlyIf;
+        const current = etagOf(key);
+        if (onlyIf?.etagDoesNotMatch === "*" && current !== undefined) {
+          return null; // exists, and the caller asked for a create
+        }
+        if (onlyIf?.etagMatches !== undefined && onlyIf.etagMatches !== current) {
+          return null; // someone else wrote since the caller read
+        }
+        version += 1;
+        written[key] = { body, version };
+        return { key, etag: `"w-${version}"` };
       },
     };
   }
@@ -527,9 +571,108 @@ describe("settings", () => {
       );
 
       assert.equal(res.status, 502);
-      // Counted only AFTER a successful dispatch — otherwise a GitHub
-      // outage would spend the allowance without generating anything.
-      assert.equal(Object.keys(env.BRIEFINGS.written).length, 0);
+      // The allowance is what matters, not whether an object exists.
+      //
+      // This used to assert nothing had been written at all, which was true
+      // of the old write-late order and is not true of reserve-then-release
+      // — the counter is written, then written back. Asserting the byte
+      // instead of the behaviour would have failed a fix that preserved
+      // exactly the property the test was named for, so it now asserts the
+      // property: the day still has its full allowance.
+      const counter = JSON.parse(
+        env.BRIEFINGS.written[
+          Object.keys(env.BRIEFINGS.written).find((k) =>
+            k.endsWith(".regenerations.json"),
+          )
+        ],
+      );
+      assert.equal(counter.count, 0);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  test("simultaneous taps cannot dispatch past the cap", async () => {
+    const original = globalThis.fetch;
+    let dispatches = 0;
+    globalThis.fetch = async () => {
+      dispatches += 1;
+      // A dispatch that does not resolve immediately, so every request is
+      // in flight at once. With the old read-check-dispatch-write order all
+      // eight read `used === 0`, all eight dispatch, and all eight write
+      // `count: 1` — the cap never engages and this asserts 3, not 8.
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return new Response(null, { status: 204 });
+    };
+
+    try {
+      const env = { ...envFor({}), GITHUB_DISPATCH_TOKEN: "t", GITHUB_REPO: "o/r" };
+      env.BRIEFINGS = writableBucket({});
+
+      const responses = await Promise.all(
+        Array.from({ length: 8 }, () =>
+          worker.fetch(
+            new Request("https://x/regenerate", {
+              method: "POST",
+              headers: { "x-mercury-token": TOKEN },
+            }),
+            env,
+          ),
+        ),
+      );
+
+      assert.equal(dispatches, MAX_PER_DAY);
+      assert.equal(
+        responses.filter((r) => r.status === 200).length,
+        MAX_PER_DAY,
+      );
+      // Everyone else is refused — 429 over the cap, 409 if they lost the
+      // write race often enough to give up. Neither is a 500 and neither
+      // is a silent success.
+      assert.ok(
+        responses.every((r) => [200, 429, 409].includes(r.status)),
+        responses.map((r) => r.status).join(","),
+      );
+
+      const [key] = Object.keys(env.BRIEFINGS.written);
+      assert.equal(JSON.parse(env.BRIEFINGS.written[key]).count, MAX_PER_DAY);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  test("a corrupt counter is treated as spent, not as zero", async () => {
+    const original = globalThis.fetch;
+    let dispatches = 0;
+    globalThis.fetch = async () => {
+      dispatches += 1;
+      return new Response(null, { status: 204 });
+    };
+
+    try {
+      const env = { ...envFor({}), GITHUB_DISPATCH_TOKEN: "t", GITHUB_REPO: "o/r" };
+      // Whatever wrote this, it is not something to bill a briefing
+      // against. Served for every key, because the handler reads exactly
+      // one and the test does not need to recompute today's id to name it.
+      env.BRIEFINGS = {
+        get: async () => ({
+          etag: '"c"',
+          text: async () => "{ this is not json",
+        }),
+        put: async () => ({ key: "k", etag: '"d"' }),
+        list: async () => ({ objects: [] }),
+      };
+
+      const res = await worker.fetch(
+        new Request("https://x/regenerate", {
+          method: "POST",
+          headers: { "x-mercury-token": TOKEN },
+        }),
+        env,
+      );
+
+      assert.equal(res.status, 429);
+      assert.equal(dispatches, 0);
     } finally {
       globalThis.fetch = original;
     }
