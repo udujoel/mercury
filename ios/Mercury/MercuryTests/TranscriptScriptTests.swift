@@ -214,6 +214,39 @@ final class TranscriptScriptTests: XCTestCase {
         XCTAssertEqual(ranges[2].map { String(text[$0]) }, "two")
     }
 
+    // MARK: - What the sweep does when a word cannot be located
+
+    /// A word missing from the text does not hold the sweep back: later
+    /// words that WERE found still extend it, because the boundary only
+    /// ever sits at a position actually located in the text.
+    func testAnUnlocatableWordDoesNotStopLaterOnesFromExtendingTheSweep() {
+        let turn = Turn(speaker: "Maya", segment: "world", text: "one two four",
+                        startMs: 0, endMs: 9_000,
+                        words: [WordSpan(word: "one", startMs: 0, endMs: 100),
+                                WordSpan(word: "two", startMs: 100, endMs: 200),
+                                WordSpan(word: "three", startMs: 200, endMs: 300),
+                                WordSpan(word: "four", startMs: 300, endMs: 400)])
+
+        XCTAssertEqual(String(turn.text[TranscriptScript.spokenRange(of: turn, atMs: 350)!]),
+                       "one two four")
+    }
+
+    /// When the words that have started cannot be located at all, the sweep
+    /// LAGS at the last confirmed position rather than guessing forward.
+    /// Under-highlighting is a degradation; highlighting the wrong word is
+    /// the bug the feature exists to avoid.
+    func testWhenNothingRecentCanBeLocatedTheSweepLagsRatherThanGuesses() {
+        let turn = Turn(speaker: "Maya", segment: "world", text: "one two",
+                        startMs: 0, endMs: 9_000,
+                        words: [WordSpan(word: "one", startMs: 0, endMs: 100),
+                                WordSpan(word: "two", startMs: 100, endMs: 200),
+                                WordSpan(word: "three", startMs: 200, endMs: 300),
+                                WordSpan(word: "four", startMs: 300, endMs: 400)])
+
+        XCTAssertEqual(String(turn.text[TranscriptScript.spokenRange(of: turn, atMs: 350)!]),
+                       "one two")
+    }
+
     // MARK: - Where you are
 
     private var segments: [BriefingSegment] {

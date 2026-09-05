@@ -109,8 +109,14 @@ enum TranscriptScript {
     /// first em dash onward.
     ///
     /// Each entry is nil when that word could not be found after the
-    /// previous one, which should not happen and must not become a crash or
-    /// a silently shifted highlight if it ever does.
+    /// previous one. That should not happen — the timings came from this
+    /// exact string — and if it ever does, the sweep ends at the last word
+    /// it could both confirm has started AND locate. So it can LAG behind
+    /// the voice, never lead it, and the boundary is always a position that
+    /// was actually found rather than one inferred from a word that was not.
+    /// Under-highlighting is a degradation you might not notice;
+    /// highlighting the wrong word is the bug this whole feature exists to
+    /// avoid.
     static func wordRanges(in text: String, words: [WordSpan]) -> [Range<String.Index>?] {
         var out: [Range<String.Index>?] = []
         var cursor = text.startIndex
