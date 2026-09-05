@@ -32,6 +32,22 @@ struct HomeView: View {
 
     private var rows: [BriefingDigest.Row] { BriefingDigest.rows(for: appState.manifest) }
 
+    /// The exception path, and ONLY it.
+    ///
+    /// Two conditions, both required. The load must have failed with the
+    /// backend's "not generated yet" 404 — not a timeout, not a decode
+    /// failure, not a 500, all of which are ordinary errors with ordinary
+    /// error text. And there must be no manifest on screen: a restored
+    /// briefing from an earlier morning is something to play, so telling
+    /// someone there is nothing while a briefing sits under their thumb
+    /// would be both wrong and rude.
+    private var isWaiting: Bool {
+        guard appState.manifest == nil,
+              case .failed = appState.loadState
+        else { return false }
+        return WaitingRoom.shouldEnter(status: appState.lastFailureStatus)
+    }
+
     /// The day the briefing on screen was made, which is not always today.
     ///
     /// `restoreLastBriefing` puts the last briefing on the device into
@@ -64,6 +80,15 @@ struct HomeView: View {
                         // VoiceOver reading it twice in a row is noise.
                         .accessibilityAddTraits(.isHeader)
 
+                    // The waiting room REPLACES the card, rather than
+                    // sitting under it. Two boxes both explaining that
+                    // nothing is ready is one box too many, and the card's
+                    // play button on that state is a button that cannot
+                    // work.
+                    if isWaiting {
+                        WaitingRoomCard(
+                            onRetry: { Task { await appState.playBriefing() } })
+                    } else {
                     TodaysBriefingCard(
                         title: briefingTitle,
                         state: appState.loadState,
@@ -77,6 +102,7 @@ struct HomeView: View {
                         // says it does.
                         onRetry: { Task { await appState.playBriefing() } }
                     )
+                    }
 
                     // The desk: the stories themselves. Above the rows
                     // below, which summarise the same morning by segment.

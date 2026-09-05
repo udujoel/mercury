@@ -332,8 +332,15 @@ final class RecordingAPI: APIClientProtocol {
         return regenerationResult
     }
 
+    /// What the DEPLOYED backend does: the Worker is read-only and answers
+    /// 405 to any POST, which `fetchTodayOrGenerate` turns into the "not
+    /// generated yet" 404. Without this knob every test that means "there is
+    /// no briefing this morning" quietly got one anyway.
+    var generateError: Error?
+
     func generateBriefing(length: BriefingLength) async throws -> BriefingManifest {
         calls.append("generateBriefing")
+        if let generateError { throw generateError }
         return ManifestFixtures.minimal
     }
 

@@ -714,16 +714,90 @@ describe("settings", () => {
       assert.equal(a.status, 502, "the first dispatch failed");
       assert.equal(b.status, 200, "the second one started");
 
-      // ONE generation is running, so one is spent. The rollback of the
-      // failed request must not give back an allowance the successful one
-      // is holding: written unconditionally it put `count: 0` over the
-      // second request's `count: 2`, and the day got its whole allowance
-      // back despite a paid workflow running.
+      // EXACTLY one generation is running, so exactly one is spent.
+      //
+      // Both failure modes this has had land on this one number, which is
+      // why it is pinned rather than bounded:
+      //   0 — the rollback wrote unconditionally and handed back an
+      //       allowance the successful request was holding.
+      //   2 — the rollback was conditional and simply gave up when the
+      //       precondition failed, leaking the failed request's slot and
+      //       bringing the cap on a request early, every day.
       const [key] = Object.keys(env.BRIEFINGS.written);
       const counter = JSON.parse(env.BRIEFINGS.written[key]);
-      assert.ok(
-        counter.count >= 1,
-        `a running generation must stay counted, got ${counter.count}`,
+      assert.equal(
+        counter.count,
+        1,
+        `one generation started, so one is spent — got ${counter.count}`,
+      );
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  test("a rollback that loses the race retries instead of leaking the slot", async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = async () => new Response("nope", { status: 500 });
+
+    try {
+      const env = { ...envFor({}), GITHUB_DISPATCH_TOKEN: "t", GITHUB_REPO: "o/r" };
+      const bucket = writableBucket({});
+      const key = () =>
+        Object.keys(bucket.written).find((k) =>
+          k.endsWith(".regenerations.json"),
+        );
+
+      // Exactly one interfering write, slipped in between the rollback's
+      // read and its write — which is the only moment at which the
+      // rollback's precondition can fail, and the moment a rollback that
+      // gives up on a failed precondition leaks its slot forever.
+      let interfered = false;
+      env.BRIEFINGS = {
+        ...bucket,
+        get written() {
+          return bucket.written;
+        },
+        get: bucket.get,
+        list: bucket.list,
+        put: async (k, body, options) => {
+          const decrementing =
+            options?.onlyIf?.etagMatches !== undefined &&
+            JSON.parse(body).count === 0;
+          if (decrementing && !interfered) {
+            interfered = true;
+            // Another request reserves. Unconditional, standing in for a
+            // write that has already committed by the time ours is tried.
+            await bucket.put(
+              k,
+              JSON.stringify({ count: 2, briefing_id: "x" }),
+              {},
+            );
+            // Ours is now stale, exactly as R2 would report it.
+            return null;
+          }
+          return bucket.put(k, body, options);
+        },
+      };
+
+      const res = await worker.fetch(
+        new Request("https://x/regenerate", {
+          method: "POST",
+          headers: { "x-mercury-token": TOKEN },
+        }),
+        env,
+      );
+      assert.equal(res.status, 502, "the dispatch failed");
+
+      // The interfering write left 2. Our rollback owns one of those slots
+      // and must give exactly that one back, whatever else happened — so 1.
+      // A rollback that gave up on the failed precondition would leave 2,
+      // charging the day for a generation that never started and bringing
+      // the cap on a request early, cumulatively, every day.
+      const counter = JSON.parse(bucket.written[key()]);
+      assert.equal(
+        counter.count,
+        1,
+        `the rollback must retry, not leak — got ${counter.count}`,
       );
     } finally {
       globalThis.fetch = original;

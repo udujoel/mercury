@@ -736,7 +736,7 @@ async function handleRegenerate(request, env) {
     // what the old order achieved by writing late; holding a reservation
     // achieves it by writing early and undoing, which is the version that
     // is also safe under concurrency.
-    await releaseRegeneration(env, key, id, reservation);
+    await releaseRegeneration(env, key, id);
     // The reason is in the Worker log — a missing dispatch token, a repo the
     // token cannot see, a GitHub outage. None of them are things the phone
     // can act on, so it gets one honest sentence rather than a guess.
@@ -799,18 +799,7 @@ async function reserveRegeneration(env, key, id) {
     // Only `null` is a failed precondition. A stub or a binding that
     // returns undefined has written, and treating that as a loss would
     // spin the loop and refuse a request that actually succeeded.
-    //
-    // The etag of OUR write is carried out so the release can be
-    // conditional on it. Without that the rollback is the one unguarded
-    // write left in this path, and it undoes the whole point of reserving.
-    if (written !== null) {
-      return {
-        ok: true,
-        used: used + 1,
-        previous: used,
-        etag: written?.etag ?? written?.httpEtag,
-      };
-    }
+    if (written !== null) return { ok: true, used: used + 1 };
   }
 
   return { ok: false, used: MAX_REGENERATIONS_PER_DAY, contended: true };
@@ -819,39 +808,55 @@ async function reserveRegeneration(env, key, id) {
 /**
  * Hand a reservation back after a dispatch that never started.
  *
- * CONDITIONAL, on the etag of the reservation being released. The first cut
- * wrote the old count back unconditionally, which reopened the hole the
- * reservation had just closed: if another request reserved a slot in the gap
- * between this dispatch failing and this rollback running, the rollback
- * overwrote THEIR count with the older one and the cap stopped counting
- * again. Two failures in a row could then hand out the day's allowance twice.
+ * DECREMENTS, rather than writing an earlier count back over whatever is
+ * there. Two cuts of this were wrong in opposite directions and the second
+ * was subtler than the first:
  *
- * A precondition that does not match means the counter has moved on and this
- * reservation is no longer the top of it — so there is nothing safe to undo,
- * and leaving it alone costs one generation rather than corrupting the cap.
+ *   1. An unconditional write of `previous` clobbered a reservation another
+ *      request had made in the gap, and handed its allowance back while its
+ *      paid workflow ran.
+ *   2. Making that write conditional stopped the clobbering and started
+ *      LEAKING instead: when the precondition failed there was nothing to
+ *      retry against, so the failed request's slot stayed counted. One
+ *      failure plus one success left `count: 2` for a single generation,
+ *      and the cap arrived a request early — every day, cumulatively.
+ *
+ * Subtracting one is the representation that composes. It does not care
+ * what else has happened to the counter, only that this reservation is no
+ * longer held, so a lost race is a re-read rather than a lost slot.
  */
-async function releaseRegeneration(env, key, id, reservation) {
-  try {
-    // Written back rather than deleted: R2's `delete` takes no conditional
-    // at all, so a delete could remove a reservation another request made
-    // in the meantime with no way to refuse. The key is
-    // `<id>.regenerations.json` either way, so retention sweeps the object
-    // with the briefing.
-    await env.BRIEFINGS.put(
+async function releaseRegeneration(env, key, id) {
+  for (let attempt = 0; attempt < RESERVE_ATTEMPTS; attempt += 1) {
+    const existing = await env.BRIEFINGS.get(key);
+    // Swept by retention mid-flight, or never written. There is no slot to
+    // give back, and creating one here would invent an allowance.
+    if (!existing) return;
+
+    let count;
+    try {
+      count = JSON.parse(await existing.text()).count;
+    } catch {
+      // An unreadable counter is treated as the day being spent everywhere
+      // else in this file; rewriting it here would be the one place that
+      // quietly repairs it into an allowance.
+      return;
+    }
+    if (typeof count !== "number" || count <= 0) return;
+
+    // Written back rather than deleted at zero: R2's `delete` takes no
+    // conditional at all, so it could remove a reservation made in the
+    // meantime with no way to refuse. The key is `<id>.regenerations.json`,
+    // so retention sweeps the object with the briefing either way.
+    const written = await env.BRIEFINGS.put(
       key,
-      JSON.stringify({ count: reservation.previous, briefing_id: id }),
+      JSON.stringify({ count: count - 1, briefing_id: id }),
       {
         httpMetadata: { contentType: "application/json" },
-        // No etag means the reservation was written by something that does
-        // not report one. Refuse to roll back rather than roll back blind.
-        ...(reservation.etag
-          ? { onlyIf: { etagMatches: reservation.etag } }
-          : {}),
+        onlyIf: { etagMatches: existing.etag ?? existing.httpEtag },
       },
     );
-  } catch {
-    // Best effort. Failing to give the allowance back must not turn a 502
-    // into a 500 — the user still needs to be told the dispatch failed.
+    if (written !== null) return;
+    // Lost the race. Re-read and subtract from whatever is there now.
   }
 }
 

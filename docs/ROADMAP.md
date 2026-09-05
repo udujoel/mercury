@@ -218,9 +218,25 @@ Audio and voice — a chain, each step needs the last:
       stings, royalty-free and committed as assets. Acceptance: a manifest
       generated with music and one without differ *only* by the offset, and
       every deep-link still lands on the right sentence.
-- [ ] 4. The waiting room. Bed plus a short spoken holding line when today's
+- [x] 4. The waiting room. Bed plus a short spoken holding line when today's
       briefing is not there yet. Exception path only — a test should assert it
       never appears on a normal morning.
+      **Done.** Entirely on-device, which is forced rather than chosen: it
+      exists for the case where the server has nothing to give, so it cannot
+      depend on the server giving it something. A bundled bed under
+      `AVSpeechSynthesizer` — no network, no ElevenLabs spend, works on a
+      plane. The system voice is not Mara; on an exception path a real voice
+      saying a true thing beats silence.
+      Gated on the STATUS, not the prose: `AppState.lastFailureStatus`
+      records the code, and only when the failure left no briefing at all —
+      a 404 on the AUDIO of a briefing that exists is a broken object in R2,
+      not a morning that never happened, and offering the waiting room for
+      it would hide the real fault. `WaitingRoomTests` covers both, plus the
+      roadmap's own ask (`testANormalMorningRecordsNoFailure`) and the bed
+      actually being in the built bundle — the app-icon lesson as an
+      assertion.
+      The session uses `.ambient`, so it obeys the Ring/Silent switch. It is
+      the one sound in Mercury nobody asked to hear.
 
 The listening surface:
 

@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A1B2C3D40005444455556666 /* waiting-bed.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40006444455556666 /* waiting-bed.mp3 */; };
+		A1B2C3D40007444455556666 /* WaitingRoom.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40008444455556666 /* WaitingRoom.swift */; };
 		4EFB053B2C9C4ACB9AFAB020 /* ScrubBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2096912312AB40E88333D8D7 /* ScrubBar.swift */; };
 		4AC5207F819D4CFEB3162B8F /* PlayerTransportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DC33513BB114842845E52B2 /* PlayerTransportTests.swift */; };
 		288558DB08DB434CB10982EA /* TranscriptScriptTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32D47A7A70BD4EFDBEFC0B1D /* TranscriptScriptTests.swift */; };
@@ -50,6 +52,7 @@
 		7A6EB2262FAE4FE4BBEFC626 /* Endpoints.swift in Sources */ = {isa = PBXBuildFile; fileRef = C07D32533485477A94ED0028 /* Endpoints.swift */; };
 		7CCEBA62BD6243E6A7B925D5 /* ManifestDecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21B43020023E45A79EFA6674 /* ManifestDecodingTests.swift */; };
 		5F963A6E751A4BF384EC7379 /* UserSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDAC8C36903D4A44ABA2B0CE /* UserSettingsTests.swift */; };
+		A1B2C3D40009444455556666 /* WaitingRoomTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4000A444455556666 /* WaitingRoomTests.swift */; };
 		A1B2C3D40003444455556666 /* NowPlayingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40004444455556666 /* NowPlayingTests.swift */; };
 		E75405F450744A038B656053 /* DigestDecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8FFEB83D34D47D28DDE42CD /* DigestDecodingTests.swift */; };
 		7E97FD97918C4F1E9E94F233 /* BackgroundSchedulerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F32E4E9056748DB84F2950A /* BackgroundSchedulerTests.swift */; };
@@ -85,6 +88,8 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		A1B2C3D40006444455556666 /* waiting-bed.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; name = "waiting-bed.mp3"; path = "Resources/waiting-bed.mp3"; sourceTree = "<group>"; };
+		A1B2C3D40008444455556666 /* WaitingRoom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaitingRoom.swift; sourceTree = "<group>"; };
 		1A8B6C748468445682D56984 /* APIClientCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClientCacheTests.swift; sourceTree = "<group>"; };
 		06EA8B5CE80A4C93901A531A /* PlaybackCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackCoordinatorTests.swift; sourceTree = "<group>"; };
 		06EFBD27CD7347D39362659B /* Typography.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Typography.swift; sourceTree = "<group>"; };
@@ -97,6 +102,7 @@
 		16C20DEB1A984F4682C4B440 /* PushService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushService.swift; sourceTree = "<group>"; };
 		21B43020023E45A79EFA6674 /* ManifestDecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManifestDecodingTests.swift; sourceTree = "<group>"; };
 		DDAC8C36903D4A44ABA2B0CE /* UserSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserSettingsTests.swift; sourceTree = "<group>"; };
+		A1B2C3D4000A444455556666 /* WaitingRoomTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaitingRoomTests.swift; sourceTree = "<group>"; };
 		A1B2C3D40004444455556666 /* NowPlayingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingTests.swift; sourceTree = "<group>"; };
 		D8FFEB83D34D47D28DDE42CD /* DigestDecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DigestDecodingTests.swift; sourceTree = "<group>"; };
 		310D73BEA60748D8B4DAA3FA /* ShowNotesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShowNotesView.swift; sourceTree = "<group>"; };
@@ -243,6 +249,7 @@
 			children = (
 				A75D66FD46884F8C8C9FF9E2 /* HomeView.swift */,
 				6D8689ACDA9A48AB9414D238 /* RegenerateButton.swift */,
+				A1B2C3D40008444455556666 /* WaitingRoom.swift */,
 				6734BCFCE5C04CDA9EB44FF1 /* MiniPlayerBar.swift */,
 				2E6D208506BB47919431D65F /* TodaysBriefingCard.swift */,
 				DDC079C69CB342979682EDCA /* BriefingDigest.swift */,
@@ -264,6 +271,7 @@
 			children = (
 				B956E7F4DB914008B249D1FB /* App */,
 				6D7890DC734345CAB69E483B /* Assets.xcassets */,
+				A1B2C3D40006444455556666 /* waiting-bed.mp3 */,
 				7D49A3254F0D49A2A78964DA /* Core */,
 				7A8E01B658804A95967F9AB6 /* DesignSystem */,
 				0F1F83873CA548AE9B5DA619 /* Features */,
@@ -387,6 +395,7 @@
 				06EA8B5CE80A4C93901A531A /* PlaybackCoordinatorTests.swift */,
 				21B43020023E45A79EFA6674 /* ManifestDecodingTests.swift */,
 				DDAC8C36903D4A44ABA2B0CE /* UserSettingsTests.swift */,
+				A1B2C3D4000A444455556666 /* WaitingRoomTests.swift */,
 				A1B2C3D40004444455556666 /* NowPlayingTests.swift */,
 				D8FFEB83D34D47D28DDE42CD /* DigestDecodingTests.swift */,
 				E4F896E2D9B44EC9B3C48E6A /* BinarySearchTests.swift */,
@@ -501,6 +510,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				C16B000246F54454BAA0F87C /* Assets.xcassets in Resources */,
+				A1B2C3D40005444455556666 /* waiting-bed.mp3 in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -535,6 +545,7 @@
 				30A383EE10954F759510B5F1 /* Typography.swift in Sources */,
 				73F0CF0CBC4D411A8D0441EF /* HomeView.swift in Sources */,
 				9B07A7C2667C4177AA451788 /* RegenerateButton.swift in Sources */,
+				A1B2C3D40007444455556666 /* WaitingRoom.swift in Sources */,
 				F3C7574A474743039C3FAF0D /* SettingsView.swift in Sources */,
 				85B50362008444919C203549 /* VoicePicker.swift in Sources */,
 				9695A139C8F440429BBB599D /* ArchiveView.swift in Sources */,
@@ -571,6 +582,7 @@
 				E5DF1051C55F4D9F881C9AB4 /* PlaybackCoordinatorTests.swift in Sources */,
 				7CCEBA62BD6243E6A7B925D5 /* ManifestDecodingTests.swift in Sources */,
 				5F963A6E751A4BF384EC7379 /* UserSettingsTests.swift in Sources */,
+				A1B2C3D40009444455556666 /* WaitingRoomTests.swift in Sources */,
 				A1B2C3D40003444455556666 /* NowPlayingTests.swift in Sources */,
 				E75405F450744A038B656053 /* DigestDecodingTests.swift in Sources */,
 				15513F96A27C48A09DCBEC91 /* BinarySearchTests.swift in Sources */,

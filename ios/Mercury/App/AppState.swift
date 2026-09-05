@@ -455,6 +455,37 @@ final class AppState {
         rebuild = nil
     }
 
+    /// The HTTP status of the last failed load, when it had one.
+    ///
+    /// Recorded rather than re-derived. `loadState.failed` carries
+    /// `localizedDescription`, and the alternative was the view scraping
+    /// "Backend returned 404: " back out of prose that exists to be read by
+    /// a person — a parser that breaks the moment anyone rewords the
+    /// sentence, and breaks silently, into "no waiting room ever".
+    private(set) var lastFailureStatus: Int?
+
+    @MainActor
+    private func recordFailure(_ error: Error) {
+        // Only when we are left with NO briefing.
+        //
+        // A 404 from the audio download is a different animal from a 404
+        // saying today's briefing was never made: the first means the
+        // manifest arrived and its audio did not, which is a broken object
+        // in R2 and an ordinary error. Recording both as "nothing yet"
+        // would offer the waiting room to someone whose briefing exists,
+        // and quietly hide the real fault.
+        //
+        // The view also checks `manifest == nil`, and this makes that
+        // belt-and-braces rather than the only thing standing between the
+        // two meanings.
+        if manifest == nil, case APIError.badStatus(let code, _) = error {
+            lastFailureStatus = code
+        } else {
+            lastFailureStatus = nil
+        }
+        loadState = .failed(error.localizedDescription)
+    }
+
     /// Called wherever a freshly fetched manifest is adopted.
     ///
     /// A manifest generated after the rebuild was requested IS the rebuild,
@@ -574,7 +605,7 @@ final class AppState {
             // `localizedDescription`, matching `playBriefing`. The other
             // spelling put "Error Domain=NSURLErrorDomain Code=-1004" on
             // the card where the user reads it.
-            loadState = .failed(error.localizedDescription)
+            recordFailure(error)
         }
     }
 
@@ -623,7 +654,7 @@ final class AppState {
                 loadState = .ready
                 return
             }
-            loadState = .failed(error.localizedDescription)
+            recordFailure(error)
         }
     }
 
@@ -757,7 +788,7 @@ final class AppState {
             await startPlayback(of: manifest)
             loadState = .ready
         } catch {
-            loadState = .failed(error.localizedDescription)
+            recordFailure(error)
         }
     }
 
