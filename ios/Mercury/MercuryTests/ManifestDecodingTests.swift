@@ -622,6 +622,30 @@ final class PendingRebuildTests: XCTestCase {
         XCTAssertFalse(state.isRegenerating, "nothing was dispatched")
     }
 
+    /// A refused SECOND request must not cancel the first rebuild.
+    ///
+    /// The button is disabled while one is pending, so this cannot happen
+    /// through the UI today — but a 429 clearing state it never created
+    /// would re-enable the control and stop the next play refetching while
+    /// the first job was still running.
+    @MainActor
+    func testARefusalDoesNotCancelARebuildAlreadyRunning() async throws {
+        let api = RecordingAPI(manifestResult: .success(ManifestFixtures.minimal))
+        let state = AppState(api: api)
+
+        _ = try await state.regenerateToday()
+        XCTAssertTrue(state.isRegenerating)
+
+        api.regenerationError = APIError.badStatus(
+            429, #"{"detail":"cap","used":3,"limit":3}"#)
+        _ = try? await state.regenerateToday()
+
+        XCTAssertTrue(state.isRegenerating,
+                      "the first rebuild is still running")
+        XCTAssertEqual(state.regeneration?.remaining, nil,
+                       "the 429 body carries no briefing_id, so it is not today's")
+    }
+
     /// Left open overnight, the app kept yesterday's `remaining == 0` and
     /// disabled a button whose allowance had reset hours before.
     @MainActor

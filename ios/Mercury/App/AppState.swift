@@ -405,10 +405,19 @@ final class AppState {
             if let refused = Self.statusFromRefusal(error) {
                 lastRegeneration = refused
             }
-            // Nothing was dispatched, so nothing is pending. Clearing here
-            // rather than in a `defer` is the difference between the two
-            // questions above.
-            endRebuild()
+            // This request dispatched nothing, so it leaves nothing
+            // pending — but it must not cancel a rebuild ALREADY running.
+            //
+            // `endRebuild()` unconditionally was wrong in a way the UI
+            // currently hides: the button is disabled while a rebuild is
+            // pending, so a second press cannot happen through it today.
+            // Any other caller — a deep link, a shortcut, a future control —
+            // would have had its 429 wipe the earlier rebuild's state,
+            // re-enabling the button and stopping the next play refetching
+            // while that job was still running. Clearing state you did not
+            // create is the kind of thing that is only ever unreachable
+            // until it is not.
+            if rebuild == nil { endRebuild() }
             throw error
         }
     }
