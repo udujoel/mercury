@@ -33,6 +33,7 @@ from app.core.schemas import (
     Turn,
     WordSpan,
 )
+from app.synthesis.music import load_music_set
 
 log = logging.getLogger(__name__)
 
@@ -82,6 +83,7 @@ async def synthesize_briefing(
     sources: list[SourceRef],
     degraded_sources: list[str] | None = None,
     degraded_attempts: int = 0,
+    music_set: str | None = None,
 ) -> tuple[bytes, BriefingManifest, str]:
     """Synthesise every turn, stitch, and emit the timing manifest.
 
@@ -96,8 +98,34 @@ async def synthesize_briefing(
 
     clips = await _synthesize_all(turns, tts)
 
+    # None means NO music here, not "the default set".
+    #
+    # The stitcher adds only what it is told to add. Defaulting at this
+    # level would give every caller music — including the tests that assert
+    # turn timings, which would then be asserting against an eight-second
+    # offset nobody asked for. The PRODUCT default lives one level up, in
+    # `generate_briefing`, where it is a decision about briefings rather
+    # than about audio assembly.
+    music = load_music_set(music_set) if music_set else None
+
     combined = AudioSegment.silent(duration=0)
     cursor_ms = 0
+
+    # The intro goes in FIRST, and `cursor_ms` moves with it.
+    #
+    # This is the whole trick, and the failure ADR-006 named. Every turn's
+    # `start_ms` is an offset into the finished file, so prepending eight
+    # seconds of music moves every turn, every chapter boundary, every
+    # word timing and every story deep-link by eight seconds. Doing it here
+    # — before the loop, on the same cursor the loop advances — means all
+    # of them move for free.
+    #
+    # The alternative, adding the intro after the loop and correcting the
+    # numbers, is a second place doing the arithmetic. That is how the
+    # words end up lighting up eight seconds ahead of the voice.
+    if music and music.intro is not None:
+        combined += music.intro
+        cursor_ms += len(music.intro)
 
     # Only turns that actually made it into the audio belong in the manifest.
     # A skipped turn keeps start_ms/end_ms as None, and the manifest's whole
@@ -124,6 +152,20 @@ async def synthesize_briefing(
         # Loudness normalisation is gain only; it does not change duration,
         # so the timings stay valid across it.
         clip = _normalize_loudness(clip)
+
+        # An interlude at each segment boundary, on the same cursor.
+        #
+        # Not before the first turn: the intro has just played, and a
+        # transition sting immediately after it says "we are moving on"
+        # before anything has been said.
+        if (
+            music
+            and music.interlude is not None
+            and rendered
+            and turn.segment is not rendered[-1].segment
+        ):
+            combined += music.interlude
+            cursor_ms += len(music.interlude)
 
         if idx > 0:
             prev = turns[idx - 1]
@@ -167,12 +209,30 @@ async def synthesize_briefing(
             "for the rest of the day."
         )
 
+    # The outro, after every turn and after the last `end_ms` is fixed. It
+    # carries no timings of its own, so nothing needs to move for it — but
+    # it must be added before the export, which is why it is here rather
+    # than anywhere more obvious.
+    if music and music.outro is not None:
+        combined += music.outro
+
     audio_bytes, audio_format = _export(combined)
 
     manifest = BriefingManifest(
         briefing_id=briefing_id,
         generated_at=datetime.now(UTC),
-        duration_ms=len(combined),
+        # The duration of the FILE, not of the segment it was built from.
+        #
+        # AAC encoding pads to a frame boundary, so the exported audio can
+        # be a few milliseconds longer than `len(combined)`. That gap was
+        # invisible until music arrived and the e2e test — which asserts the
+        # manifest against the real decoded audio — caught 20ms of it.
+        #
+        # Small, but the manifest's whole job is describing the file the
+        # phone downloads. A duration that is not that file's duration is
+        # the same class of untruth as a turn timing that does not match
+        # its audio, and this project has shipped one of those already.
+        duration_ms=_exported_duration_ms(audio_bytes, audio_format, combined),
         audio_url=audio_url_for(audio_format),
         segments=_segment_offsets(rendered),
         turns=rendered,
@@ -213,6 +273,25 @@ def _remap_source_refs(
             continue
         remapped.append(ref.model_copy(update={"turn_index": new_index}))
     return remapped
+
+
+def _exported_duration_ms(
+    data: bytes, audio_format: str, fallback: AudioSegment
+) -> int:
+    """How long the exported bytes actually are.
+
+    Falls back to the pre-export segment when the result cannot be decoded
+    — on a machine with no ffmpeg an m4a is unreadable, and a manifest that
+    is a few milliseconds out beats a run that dies measuring itself.
+    """
+    try:
+        return len(AudioSegment.from_file(io.BytesIO(data), format=_sniff_format(data)))
+    except Exception:
+        log.warning(
+            "could not measure the exported %s; using the pre-export length, "
+            "which may differ by a frame", audio_format,
+        )
+        return len(fallback)
 
 
 def _export(combined: AudioSegment) -> tuple[bytes, str]:

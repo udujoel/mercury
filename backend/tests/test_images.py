@@ -600,3 +600,287 @@ def test_the_fetch_time_guard_still_blocks_private_destinations():
     ]:
         with _pytest.raises(BlockedURLError):
             assert_public_url(blocked)
+
+
+def test_a_google_only_deployment_still_runs_live_after_elevenlabs_became_default(
+    monkeypatch, tmp_path
+):
+    """The regression the default change introduced.
+
+    `tts_provider` now defaults to "elevenlabs". A gate that demanded the
+    CONFIGURED provider's credentials sent every existing Google-only
+    install to `FakeTTSProvider` on upgrade — fixture tones behind a real
+    manifest and a real push notification, which is precisely what
+    `_credentials_configured` exists to prevent.
+
+    `build_tts_provider` falls back to Google, so the gate has to ask
+    whether EITHER provider can work.
+    """
+    from app.api import briefing as briefing_api
+    from app.core.config import get_settings
+
+    tts_key = tmp_path / "gcp-tts.json"
+    tts_key.write_text("{}")
+    token = tmp_path / "token.json"
+    token.write_text("{}")
+
+    monkeypatch.setenv("GEMINI_API_KEY", "a-key")
+    monkeypatch.setenv("GOOGLE_TTS_CREDENTIALS", str(tts_key))
+    monkeypatch.setenv("GOOGLE_TOKEN_FILE", str(token))
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "")
+    get_settings.cache_clear()
+
+    assert get_settings().tts_provider == "elevenlabs"
+    assert briefing_api._credentials_configured() is True
+
+    # And with NEITHER provider configured it still refuses, which is the
+    # half of the check that must not be lost while relaxing the other.
+    monkeypatch.setenv("GOOGLE_TTS_CREDENTIALS", str(tmp_path / "missing.json"))
+    get_settings.cache_clear()
+    assert briefing_api._credentials_configured() is False
+
+    get_settings.cache_clear()
+
+
+def test_the_default_voices_match_the_host_names():
+    """The gender-swapped conversation this caught.
+
+    `host_a_name` is "Mara" and `host_b_name` is "Theo". Assigning the deep
+    male voice to A gave Mara that voice and Theo a woman's — wrong in
+    every briefing, and living in a config file where nobody would look.
+
+    Asserted against the NAMES rather than hardcoded ids on both sides, so
+    renaming a host without moving its voice fails here.
+    """
+    from app.core.config import (
+        DEFAULT_ELEVENLABS_VOICE_A,
+        DEFAULT_ELEVENLABS_VOICE_B,
+        get_settings,
+    )
+
+    get_settings.cache_clear()
+    s = get_settings()
+
+    assert s.host_a_name == "Mara"
+    assert s.host_b_name == "Theo"
+    # The British woman for Mara, Brian for Theo.
+    assert DEFAULT_ELEVENLABS_VOICE_A == "3Drdg7QWqr45nZmYpXRP"
+    assert DEFAULT_ELEVENLABS_VOICE_B == "nPczCjzI2devNBz1zQrb"
+    assert s.elevenlabs_voice_a == DEFAULT_ELEVENLABS_VOICE_A
+    assert s.elevenlabs_voice_b == DEFAULT_ELEVENLABS_VOICE_B
+
+
+def test_a_tilde_credentials_path_is_expanded(monkeypatch, tmp_path):
+    """`~/keys/gcp-tts.json` is an ordinary way to write a path.
+
+    Unexpanded, the check looked for a literal "~" directory, found
+    nothing, and reported no Google credentials for a machine that has
+    them — so auto-mode chose fixtures over a working provider. The
+    provider itself already expands, so the gate and the provider
+    disagreed about the same file.
+    """
+    from app.api import briefing as briefing_api
+    from app.core.config import get_settings
+
+    key = tmp_path / "gcp-tts.json"
+    key.write_text("{}")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("GOOGLE_TTS_CREDENTIALS", "~/gcp-tts.json")
+    get_settings.cache_clear()
+
+    assert briefing_api._google_tts_credentials_present(get_settings()) is True
+    get_settings.cache_clear()
+
+
+def test_the_music_files_are_actually_in_the_repository():
+    """The finding that the PR description was wrong about.
+
+    `.gitignore` carried a blanket `*.mp3` for generated briefing audio,
+    which silently swallowed all nine committed music tracks — `git add -A`
+    reported the other files and said nothing about them. The repository
+    held a README describing music it did not contain.
+
+    Asserts the FILES, not the directory: a README on its own is exactly
+    the state this is here to catch.
+    """
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2] / "assets" / "music"
+    for name in ("paper", "broadsheet", "first-light"):
+        for piece in ("intro", "outro", "interlude"):
+            track = root / name / f"{piece}.mp3"
+            assert track.is_file(), f"missing {track}"
+            # A git-lfs pointer or an empty file would pass `is_file`.
+            assert track.stat().st_size > 10_000, f"{track} is not audio"
+
+
+# ── music, and the offset ADR-006 warned about ────────────────
+
+
+@pytest.mark.asyncio
+async def test_music_moves_every_timing_by_exactly_the_intro_length():
+    """The failure ADR-006 named, asserted rather than reasoned about.
+
+    Every `start_ms` is an offset into the finished file. Prepending eight
+    seconds of intro must move every turn, every chapter boundary AND every
+    word timing by exactly eight seconds — no more, no less, and all of them
+    together.
+
+    Getting this wrong is invisible today and glaring the moment word-level
+    highlighting is on, because the words light up ahead of the voice.
+    """
+    from app.core.providers import Speech, WordTiming
+    from app.core.schemas import Segment, Turn
+    from app.providers.fake_tts import FakeTTSProvider
+    from app.synthesis.music import load_music_set
+    from app.synthesis.stitch import synthesize_briefing
+
+    class _TimedTTS:
+        voice_a = "a"
+        voice_b = "b"
+
+        async def synthesize(self, text: str, voice_id: str) -> Speech:
+            fake = FakeTTSProvider()
+            base = await fake.synthesize(text, fake.voice_a)
+            return Speech(
+                audio=base.audio,
+                words=(WordTiming(word="first", start_ms=0, end_ms=200),),
+            )
+
+    # ONE segment, deliberately. A segment boundary inserts an interlude,
+    # which shifts everything after it as well — correct behaviour, and it
+    # would make this test assert two things at once and pass for the wrong
+    # reason. The interlude has its own test below.
+    def turns():
+        return [
+            Turn(speaker="A", segment=Segment.COLD_OPEN, text="first line"),
+            Turn(speaker="B", segment=Segment.COLD_OPEN, text="second line"),
+        ]
+
+    common = dict(
+        briefing_id="2026-09-05",
+        audio_url_for=lambda fmt: f"x.{fmt}",
+        sources=[],
+    )
+
+    _, without, _ = await synthesize_briefing(
+        turns(), tts=_TimedTTS(), music_set=None, **common
+    )
+    _, with_music, _ = await synthesize_briefing(
+        turns(), tts=_TimedTTS(), music_set="paper", **common
+    )
+
+    paper = load_music_set("paper")
+    assert paper is not None and paper.intro is not None
+    intro_ms = len(paper.intro)
+    assert intro_ms > 1000, "the intro should be real audio, not a stub"
+
+    # Turns moved by the intro, and by nothing else.
+    for before, after in zip(without.turns, with_music.turns, strict=True):
+        assert after.start_ms == before.start_ms + intro_ms
+        assert after.end_ms == before.end_ms + intro_ms
+
+    # The FIRST segment moved too. A chapter boundary left at zero would
+    # drop the listener into the middle of the intro.
+    assert with_music.segments[0]["start_ms"] == (
+        without.segments[0]["start_ms"] + intro_ms
+    )
+
+    # And the words, which is the half that makes highlighting wrong.
+    assert without.turns[0].words and with_music.turns[0].words
+    assert (
+        with_music.turns[0].words[0].start_ms
+        == without.turns[0].words[0].start_ms + intro_ms
+    )
+
+
+@pytest.mark.asyncio
+async def test_asking_for_no_music_gets_exactly_the_unmusical_briefing():
+    """"none" is a real choice, and it must not quietly mean "the default"."""
+    from app.core.schemas import Segment, Turn
+    from app.providers.fake_tts import FakeTTSProvider
+    from app.synthesis.stitch import synthesize_briefing
+
+    def turns():
+        return [Turn(speaker="A", segment=Segment.COLD_OPEN, text="only line")]
+
+    common = dict(
+        tts=FakeTTSProvider(),
+        briefing_id="2026-09-05",
+        audio_url_for=lambda fmt: f"x.{fmt}",
+        sources=[],
+    )
+
+    silent_bytes, silent, _ = await synthesize_briefing(
+        turns(), music_set="none", **common
+    )
+    none_bytes, plain, _ = await synthesize_briefing(turns(), music_set=None, **common)
+
+    assert silent.turns[0].start_ms == 0
+    assert plain.turns[0].start_ms == 0
+    assert len(silent_bytes) == len(none_bytes)
+
+
+def test_an_unknown_music_set_costs_the_music_not_the_run(caplog):
+    """The artifact is written by a client that may be newer than this
+    build, so a name we do not recognise is ordinary — and must not fail
+    the only run of the day. Logged, because a briefing quietly losing its
+    music is the kind of change nobody reports and everybody notices."""
+    from app.synthesis.music import available_sets, load_music_set
+
+    assert load_music_set("a-set-that-does-not-exist") is None
+    assert any(r.levelname == "ERROR" for r in caplog.records)
+
+    # And the real ones do load, read from disk rather than hardcoded here.
+    assert set(available_sets()) >= {"paper", "broadsheet", "first-light"}
+    for name in ("paper", "broadsheet", "first-light"):
+        loaded = load_music_set(name)
+        assert loaded is not None and not loaded.is_silent
+
+
+@pytest.mark.asyncio
+async def test_an_interlude_shifts_everything_after_the_segment_it_opens():
+    """The second half of the offset rule.
+
+    An interlude at a segment boundary moves every turn after it, exactly
+    as the intro moves every turn. Same cursor, same arithmetic — which is
+    the point of doing it in the loop rather than correcting afterwards.
+    """
+    from app.core.schemas import Segment, Turn
+    from app.providers.fake_tts import FakeTTSProvider
+    from app.synthesis.music import load_music_set
+    from app.synthesis.stitch import synthesize_briefing
+
+    def turns():
+        return [
+            Turn(speaker="A", segment=Segment.COLD_OPEN, text="first line"),
+            Turn(speaker="B", segment=Segment.INBOX, text="second line"),
+        ]
+
+    common = dict(
+        tts=FakeTTSProvider(),
+        briefing_id="2026-09-05",
+        audio_url_for=lambda fmt: f"x.{fmt}",
+        sources=[],
+    )
+
+    _, without, _ = await synthesize_briefing(turns(), music_set=None, **common)
+    _, with_music, _ = await synthesize_briefing(turns(), music_set="paper", **common)
+
+    paper = load_music_set("paper")
+    intro_ms = len(paper.intro)
+    interlude_ms = len(paper.interlude)
+
+    # The first turn moves by the intro alone — nothing precedes it.
+    assert with_music.turns[0].start_ms == without.turns[0].start_ms + intro_ms
+
+    # The second opens a new segment, so it moves by the intro AND the
+    # interlude that now sits in front of it.
+    assert (
+        with_music.turns[1].start_ms
+        == without.turns[1].start_ms + intro_ms + interlude_ms
+    )
+
+    # And its chapter marker moved with it, rather than pointing at the
+    # interlude that precedes it.
+    assert with_music.segments[1]["start_ms"] == with_music.turns[1].start_ms

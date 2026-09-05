@@ -19,10 +19,18 @@ service-account*.json
 # the filename (gcp-tts.json) matched none of the patterns above.
 credentials/
 
-# Audio artifacts
+# Audio artifacts — GENERATED ones. Briefing audio is written to out/ and
+# tmp/ and must never be committed.
 *.mp3
 *.m4a
 *.wav
+
+# The music, which is the opposite case: three sets of intro/outro/
+# interlude that ship WITH the app. The blanket *.mp3 above silently
+# swallowed all nine on their first commit — `git add -A` reported the
+# other files and said nothing about them, and the PR claimed they were
+# committed when the repository held only a README describing them.
+!assets/music/**/*.mp3
 out/
 tmp/
 

@@ -52,6 +52,7 @@ from app.pipeline.digest import (
     stories_to_enrich,
 )
 from app.pipeline.ranking import score_stories
+from app.synthesis.music import DEFAULT_SET as DEFAULT_MUSIC_SET
 from app.synthesis.stitch import synthesize_briefing
 from app.synthesis.storage import BriefingStorage, build_storage
 
@@ -120,6 +121,11 @@ async def generate_briefing(
     feeds: list[str] | None = None,
     # Senders whose mail never reaches the briefing.
     muted_senders: list[str] | None = None,
+    # Which music set tops and tails the briefing, or "none" for silence.
+    # None means the product default — this is the level that decides what a
+    # briefing sounds like, as distinct from `synthesize_briefing`, which
+    # adds only what it is given.
+    music_set: str | None = None,
     max_messages: int = 60,
     # PRD F-02 and the ROADMAP both specify today plus 72 hours. What is
     # SPOKEN is decided by select_for_briefing; this is only the fetch
@@ -272,6 +278,7 @@ async def generate_briefing(
             briefing_id=briefing_id,
             audio_url_for=lambda _fmt: storage.audio_path_for(briefing_id),
             sources=sources,
+            music_set=music_set or DEFAULT_MUSIC_SET,
             # THIS run's failures, carried down from ingestion rather than
             # re-read from the module global at the end — see
             # _ingest_concurrently for why the global cannot answer honestly.

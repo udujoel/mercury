@@ -368,6 +368,64 @@ describe("settings", () => {
     assert.equal(Object.keys(env.BRIEFINGS.written).length, 0);
   });
 
+  test("GET /voices reshapes the upstream list", async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          voices: [
+            {
+              voice_id: "v1",
+              name: "Brian",
+              preview_url: "https://cdn/x.mp3",
+              // Fields the picker has no use for. Reshaping rather than
+              // proxying is what keeps them off the phone.
+              settings: { stability: 0.5 },
+              fine_tuning: { state: "fine_tuned" },
+              labels: { accent: "american" },
+            },
+          ],
+        }),
+        { headers: { "content-type": "application/json" } },
+      );
+
+    try {
+      const env = { ...envFor({}), ELEVENLABS_API_KEY: "k" };
+      const res = await worker.fetch(
+        new Request("https://x/voices", { headers: { "x-mercury-token": TOKEN } }),
+        env,
+      );
+
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(body.voices.length, 1);
+      assert.equal(body.voices[0].name, "Brian");
+      assert.equal("settings" in body.voices[0], false);
+      assert.equal("fine_tuning" in body.voices[0], false);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  test("GET /voices without a key is an explained empty list, not a failure", async () => {
+    const res = await worker.fetch(
+      new Request("https://x/voices", { headers: { "x-mercury-token": TOKEN } }),
+      envFor({}),
+    );
+
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.deepEqual(body.voices, []);
+    // The reason matters: an empty list with no explanation reads as
+    // "there are no voices".
+    assert.ok(body.detail);
+  });
+
+  test("GET /voices still needs the token", async () => {
+    const res = await worker.fetch(new Request("https://x/voices"), envFor({}));
+    assert.equal(res.status, 401);
+  });
+
   test("PUT to anything else is still refused", async () => {
     const res = await worker.fetch(
       new Request("https://x/briefing/2026-08-30", {

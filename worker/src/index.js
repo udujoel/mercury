@@ -217,6 +217,10 @@ export default {
       return serveSettings(env);
     }
 
+    if (url.pathname === "/voices") {
+      return serveVoices(env);
+    }
+
     // Which mornings are still here.
     //
     // `list_briefing_ids()` has existed in both storage backends since the
@@ -637,6 +641,74 @@ function matchesShape(value, shape) {
     return Array.isArray(value) && value.every((v) => typeof v === "string");
   }
   return typeof value === shape;
+}
+
+// A voice list the phone can render WITHOUT holding the API key.
+//
+// This is the whole reason the route exists. Listing voices means calling
+// ElevenLabs, calling ElevenLabs means the key, and the key on a phone is a
+// key in a binary anyone can pull apart. The Worker already holds it for
+// nothing else; here it spends it on one read-only GET and returns four
+// fields per voice.
+const VOICE_CACHE_SECONDS = 60 * 60 * 6;
+
+// A ceiling on the RESPONSE, not on the library.
+//
+// 120 was too low and truncated silently: an account with cloned voices
+// passes it easily, and the dropped ones simply were not in the picker
+// with nothing saying why. This is high enough that reaching it means
+// something unusual, and reaching it now says so in the payload rather
+// than quietly shortening the list.
+const MAX_VOICES = 500;
+
+async function serveVoices(env) {
+  if (!env.ELEVENLABS_API_KEY) {
+    // Not an error the user can act on from the app, and not a reason to
+    // fail: the picker falls back to plain text fields.
+    return json({ voices: [], detail: "ElevenLabs is not configured." }, 200);
+  }
+
+  let response;
+  try {
+    response = await fetch("https://api.elevenlabs.io/v1/voices", {
+      headers: { "xi-api-key": env.ELEVENLABS_API_KEY, accept: "application/json" },
+    });
+  } catch (err) {
+    return json({ voices: [], detail: "Could not reach ElevenLabs." }, 502);
+  }
+  if (!response.ok) {
+    return json({ voices: [], detail: `ElevenLabs returned ${response.status}.` }, 502);
+  }
+
+  const payload = await response.json();
+  // Reshaped, not proxied. The upstream response carries settings, sharing
+  // metadata and fine-tuning state that the picker has no use for and that
+  // would grow the payload on a phone for nothing.
+  const all = payload.voices || [];
+  const voices = all.slice(0, MAX_VOICES).map((v) => ({
+    voice_id: v.voice_id,
+    name: v.name,
+    // The sample the picker plays. Present for library voices and absent
+    // for some cloned ones, so the client must handle its absence.
+    preview_url: v.preview_url || null,
+    description: v.description || v.labels?.description || null,
+    labels: v.labels || {},
+  }));
+
+  const body = { voices };
+  if (all.length > MAX_VOICES) {
+    body.detail =
+      `Showing the first ${MAX_VOICES} of ${all.length} voices.`;
+  }
+
+  return new Response(JSON.stringify(body), {
+    headers: {
+      "content-type": "application/json",
+      // Voices change rarely and the list costs an upstream call, so this
+      // is the one response here worth caching.
+      "cache-control": `private, max-age=${VOICE_CACHE_SECONDS}`,
+    },
+  });
 }
 
 async function serveSettings(env) {

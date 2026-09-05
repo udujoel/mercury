@@ -82,24 +82,34 @@ struct SettingsView: View {
                     Text("Google").tag("google")
                     Text("ElevenLabs").tag("elevenlabs")
                 }
-                if settings.ttsProvider == "elevenlabs" {
-                    LabeledContent("Host A") {
-                        TextField("Voice ID", text: voiceBinding(\.voiceA))
-                            .multilineTextAlignment(.trailing)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                    }
-                    LabeledContent("Host B") {
-                        TextField("Voice ID", text: voiceBinding(\.voiceB))
-                            .multilineTextAlignment(.trailing)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                    }
+                if usesElevenLabs {
+                    voiceRow("Host A", \.voiceA)
+                    voiceRow("Host B", \.voiceB)
                 }
             } header: {
                 Text("Voice")
             } footer: {
                 Text(voiceNote)
+            }
+            .disabled(!isEditable)
+
+            Section {
+                Picker("Music", selection: musicBinding) {
+                    Text("Server default").tag(Self.unsetTag)
+                    ForEach(UserSettings.musicSets, id: \.id) { set in
+                        Text(set.label).tag(set.id)
+                    }
+                }
+                if let note = musicNote {
+                    Text(note)
+                        .font(MercuryType.figureCaption)
+                        .foregroundStyle(MercuryColor.inkFaint.color)
+                }
+            } header: {
+                Text("Music")
+            } footer: {
+                Text("Tops and tails the briefing, with a short transition "
+                     + "between segments. Takes effect on the next one.")
             }
             .disabled(!isEditable)
 
@@ -156,6 +166,52 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - Voice
+
+    /// Every spelling `build_tts_provider` accepts, not just the canonical
+    /// one. A saved `11labs` left the voice ids live for generation while
+    /// both controls were hidden, so the setting was in effect and
+    /// invisible.
+    private static let elevenLabsAliases: Set<String> =
+        ["elevenlabs", "eleven_labs", "eleven-labs", "11labs"]
+
+    private var usesElevenLabs: Bool {
+        // Nil counts. It means "server default", and the server default is
+        // now ElevenLabs — so the voices are relevant rather than hidden.
+        // The client cannot read the server's environment, so a deployment
+        // that overrides it to Google will show these controls; the footer
+        // says which provider is actually in use is the server's to decide.
+        guard let provider = settings.ttsProvider?.lowercased() else { return true }
+        return Self.elevenLabsAliases.contains(provider)
+    }
+
+    /// A row that opens the picker, showing the chosen voice's NAME rather
+    /// than its id once the library has been seen.
+    ///
+    /// An id is not a choice you can read back. Before the list has loaded
+    /// there is nothing to translate it with, so it falls back to the id —
+    /// which is still better than blank.
+    private func voiceRow(
+        _ title: String, _ key: WritableKeyPath<UserSettings, String?>
+    ) -> some View {
+        NavigationLink {
+            VoicePicker(
+                title: title,
+                selection: Binding(
+                    get: { settings[keyPath: key] },
+                    set: { value in edit { $0[keyPath: key] = value } }
+                )
+            )
+        } label: {
+            LabeledContent(title, value: voiceLabel(settings[keyPath: key]))
+        }
+    }
+
+    private func voiceLabel(_ id: String?) -> String {
+        guard let id, !id.isEmpty else { return "Default" }
+        return knownVoiceNames[id] ?? id
+    }
+
     // MARK: - Sources
 
     /// Factored out of `body` because the type-checker gave up on it inline.
@@ -181,7 +237,7 @@ struct SettingsView: View {
     /// were a picker: listing real voices needs the ElevenLabs key, and the
     /// key belongs on the server.
     private var voiceNote: String {
-        if settings.ttsProvider == "elevenlabs" {
+        if usesElevenLabs {
             return "Voice IDs from elevenlabs.io \u{2014} Voices, then Copy "
                 + "Voice ID. A picker needs the API key, which stays on the "
                 + "server."
@@ -281,6 +337,26 @@ struct SettingsView: View {
     /// who opened settings to mute a sender would have silently pinned the
     /// length and switched the voice back to Google.
     private static let unsetTag = ""
+
+    /// Names for the two defaults, so the rows read as voices rather than
+    /// as identifiers before the picker has ever been opened. Anything else
+    /// shows its id until the library is loaded.
+    private let knownVoiceNames = [
+        "nPczCjzI2devNBz1zQrb": "Brian (default)",
+        "3Drdg7QWqr45nZmYpXRP": "British woman (default)",
+    ]
+
+    private var musicBinding: Binding<String> {
+        Binding(
+            get: { settings.musicSet ?? Self.unsetTag },
+            set: { value in edit { $0.musicSet = value.isEmpty ? nil : value } }
+        )
+    }
+
+    private var musicNote: String? {
+        guard let id = settings.musicSet else { return nil }
+        return UserSettings.musicSets.first { $0.id == id }?.note
+    }
 
     private var lengthBinding: Binding<String> {
         Binding(
