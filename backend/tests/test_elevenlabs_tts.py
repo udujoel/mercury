@@ -326,6 +326,58 @@ async def test_with_no_fallback_available_the_original_failure_is_raised():
         await p.synthesize("x", p.voice_a)
 
 
+@pytest.mark.asyncio
+async def test_concurrent_turns_do_not_build_the_fallback_more_than_once():
+    """Turns are synthesised CONCURRENTLY — up to MAX_CONCURRENT_TTS of them
+    — so several can fail before any has finished reacting. Without a lock
+    the fallback was constructed once per failure and the log claimed
+    several switches had happened."""
+    import asyncio
+
+    builds = 0
+
+    def _build():
+        nonlocal builds
+        builds += 1
+        return _Backup()
+
+    p = FallbackTTSProvider(_Boom(fail_from=0), _build)
+    await asyncio.gather(*(p.synthesize("x", p.voice_a) for _ in range(8)))
+
+    assert builds == 1
+
+
+@pytest.mark.asyncio
+async def test_the_voice_never_flips_back_after_the_switch():
+    """A primary call already in flight when the switch happens can still
+    SUCCEED, and returning it would put one primary turn after the
+    changeover — primary, Google, primary. One voice change is a degraded
+    briefing; two is a broken one."""
+    import asyncio
+
+    class _SlowThenBroken:
+        voice_a = "el-a"
+        voice_b = "el-b"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def synthesize(self, text: str, voice_id: str) -> Speech:
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("elevenlabs is down")
+            # Started before the switch, lands after it.
+            await asyncio.sleep(0.01)
+            return Speech(audio=b"primary")
+
+    p = FallbackTTSProvider(_SlowThenBroken(), _Backup)
+    results = await asyncio.gather(
+        p.synthesize("first", p.voice_a), p.synthesize("second", p.voice_a)
+    )
+
+    assert all(r.audio == b"backup" for r in results)
+
+
 # ── the offset that music will move ───────────────────────────
 
 

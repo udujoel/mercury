@@ -80,7 +80,18 @@ def _tts_configured(s) -> bool:
     choice = (s.tts_provider or "google").strip().lower()
 
     if choice in ELEVENLABS_NAMES:
-        if not (s.elevenlabs_api_key and s.elevenlabs_voice_a and s.elevenlabs_voice_b):
+        # Stripped, because `ElevenLabsTTSProvider` strips before checking.
+        # A key of " " passed raw truthiness here, so auto-mode started a
+        # LIVE run and the provider then refused to construct — a crash
+        # where the whole point of this function is to choose fixtures.
+        if not all(
+            (value or "").strip()
+            for value in (
+                s.elevenlabs_api_key,
+                s.elevenlabs_voice_a,
+                s.elevenlabs_voice_b,
+            )
+        ):
             return False
         if not google_ready:
             logging.getLogger(__name__).warning(

@@ -192,7 +192,13 @@ class ElevenLabsTTSProvider:
             )
 
         return Speech(
-            audio=base64.b64decode(audio_b64),
+            # `validate=True`: without it b64decode SKIPS characters outside
+            # the alphabet, so a corrupted payload decodes to a few bytes or
+            # none and returns as a valid `Speech`. That bypassed the retry
+            # loop entirely and the turn was silently dropped later, in the
+            # decoder, where the cause is invisible. Raising here is what
+            # puts it back on the path built to handle a bad response.
+            audio=base64.b64decode(audio_b64, validate=True),
             words=_words_from_alignment(payload.get("alignment")),
         )
 

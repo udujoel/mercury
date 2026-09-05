@@ -123,10 +123,13 @@ class FallbackTTSProvider:
     """
 
     def __init__(self, primary: TTSProvider, build_fallback) -> None:
+        import asyncio
+
         self._primary = primary
         self._build_fallback = build_fallback
         self._fallback: TTSProvider | None = None
         self._failed_over = False
+        self._lock = asyncio.Lock()
 
     @property
     def voice_a(self) -> str:
@@ -148,33 +151,54 @@ class FallbackTTSProvider:
             return self._fallback.voice_b
         return self._fallback.voice_a
 
-    async def synthesize(self, text: str, voice_id: str) -> Speech:
+    async def _fail_over(self, exc: Exception) -> None:
+        """Build the fallback and record the switch, once.
+
+        Under the lock because turns are synthesised CONCURRENTLY — up to
+        `MAX_CONCURRENT_TTS` of them — so several can fail before any of them
+        has finished reacting. Without it the fallback provider was built
+        several times and the log claimed several switches.
+        """
         import logging
 
         log = logging.getLogger(__name__)
 
+        async with self._lock:
+            if self._failed_over:
+                return
+            try:
+                self._fallback = self._build_fallback()
+            except Exception as build_exc:
+                log.error(
+                    "%s failed (%s) and no fallback provider could be built "
+                    "(%s) — the run has no way to produce audio.",
+                    type(self._primary).__name__, exc, build_exc,
+                )
+                raise exc from None
+
+            self._failed_over = True
+            log.error(
+                "%s failed mid-run (%s) — switching to %s for the REST of "
+                "this briefing. It will change voice partway through, and "
+                "turns after this point carry no word timings.",
+                type(self._primary).__name__, exc,
+                type(self._fallback).__name__,
+            )
+
+    async def synthesize(self, text: str, voice_id: str) -> Speech:
         if not self._failed_over:
             try:
-                return await self._primary.synthesize(text, voice_id)
+                speech = await self._primary.synthesize(text, voice_id)
             except Exception as exc:  # noqa: BLE001 - any failure is a failover
-                try:
-                    self._fallback = self._build_fallback()
-                except Exception as build_exc:
-                    log.error(
-                        "%s failed (%s) and no fallback provider could be "
-                        "built (%s) — the run has no way to produce audio.",
-                        type(self._primary).__name__, exc, build_exc,
-                    )
-                    raise exc from None
-
-                self._failed_over = True
-                log.error(
-                    "%s failed mid-run (%s) — switching to %s for the REST of "
-                    "this briefing. It will change voice partway through, "
-                    "and turns after this point carry no word timings.",
-                    type(self._primary).__name__, exc,
-                    type(self._fallback).__name__,
-                )
+                await self._fail_over(exc)
+            else:
+                # A call already in flight when the switch happened can still
+                # succeed, and returning it would flip the voice BACK for one
+                # turn somewhere in the middle — primary, Google, primary.
+                # One voice change is a degraded briefing; two is a broken
+                # one, so this clip is discarded and re-synthesised below.
+                if not self._failed_over:
+                    return speech
 
         assert self._fallback is not None
         return await self._fallback.synthesize(text, self._translated(voice_id))
