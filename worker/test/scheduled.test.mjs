@@ -51,6 +51,22 @@ function bucket(objects = {}) {
   return {
     get: async (key, options) => body(key, options),
     head: async (key) => body(key),
+    // Paginated the way R2 is, because the Worker pages through it and a
+    // stub that returned everything at once would leave that loop untested
+    // and quietly green — the same trap the `onlyIf` note above describes.
+    list: async ({ cursor, limit = 1000 } = {}) => {
+      const keys = Object.keys(objects).sort();
+      const start = cursor ? keys.indexOf(cursor) : 0;
+      const page = keys.slice(start, start + limit);
+      const next = start + limit;
+      return {
+        // Size included, as R2 does — the archive route reads it from the
+        // listing rather than spending a `head` per briefing.
+        objects: page.map((key) => ({ key, size: objects[key]?.size ?? 1 })),
+        truncated: next < keys.length,
+        cursor: next < keys.length ? keys[next] : undefined,
+      };
+    },
   };
 }
 
@@ -71,6 +87,122 @@ const DIGEST = {
     stories: [{ id: "st_c3", covered_in_audio: true, turn_index: 4 }],
   },
 };
+
+describe("GET /briefings", () => {
+  // Audio alongside every manifest: the route lists what can actually be
+  // PLAYED, so a manifest on its own is deliberately not enough.
+  const listing = {
+    "2026-08-28.manifest.json": PLAYABLE,
+    "2026-08-28.m4a": REAL_AUDIO,
+    "2026-08-30.manifest.json": PLAYABLE,
+    "2026-08-30.m4a": REAL_AUDIO,
+    "2026-08-29.manifest.json": PLAYABLE,
+    "2026-08-29.m4a": REAL_AUDIO,
+  };
+
+  test("returns every briefing id, newest first", async () => {
+    const res = await worker.fetch(
+      new Request("https://x/briefings", { headers: { "x-mercury-token": TOKEN } }),
+      envFor(listing),
+    );
+
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    // Ids are ISO dates, so lexicographic ordering IS chronological.
+    assert.deepEqual(body.briefings, ["2026-08-30", "2026-08-29", "2026-08-28"]);
+    assert.equal(body.count, 3);
+  });
+
+  test("lists manifests, not audio or digests", async () => {
+    const res = await worker.fetch(
+      new Request("https://x/briefings", { headers: { "x-mercury-token": TOKEN } }),
+      envFor({
+        "2026-08-30.manifest.json": PLAYABLE,
+        "2026-08-30.m4a": REAL_AUDIO,
+        "2026-08-30.digest.json": DIGEST,
+      }),
+    );
+
+    // One briefing, not three. Keying off the audio or the digest would
+    // count the same morning several times, and keying off the digest alone
+    // would hide every briefing generated before the digest existed.
+    assert.deepEqual((await res.json()).briefings, ["2026-08-30"]);
+  });
+
+  test("pages through a truncated listing rather than trusting the first page", async () => {
+    const many = {};
+    for (let d = 1; d <= 30; d += 1) {
+      const day = String(d).padStart(2, "0");
+      many[`2026-08-${day}.manifest.json`] = PLAYABLE;
+      many[`2026-08-${day}.m4a`] = REAL_AUDIO;
+    }
+    const env = envFor(many);
+    // Force truncation at a size the real bucket would not hit today, so
+    // the loop is exercised rather than skipped because 30 < 1000.
+    const inner = env.BRIEFINGS.list;
+    env.BRIEFINGS.list = (opts) => inner({ ...opts, limit: 7 });
+
+    const res = await worker.fetch(
+      new Request("https://x/briefings", { headers: { "x-mercury-token": TOKEN } }),
+      env,
+    );
+
+    assert.equal((await res.json()).count, 30);
+  });
+
+  test("skips keys that do not parse as a briefing id", async () => {
+    const res = await worker.fetch(
+      new Request("https://x/briefings", { headers: { "x-mercury-token": TOKEN } }),
+      envFor({
+        "2026-08-30.manifest.json": PLAYABLE,
+        "2026-08-30.m4a": REAL_AUDIO,
+        "not-a-date.manifest.json": PLAYABLE,
+        "not-a-date.m4a": REAL_AUDIO,
+      }),
+    );
+
+    // A key that is not a briefing id would be handed straight back to a
+    // client that puts it in a URL.
+    assert.deepEqual((await res.json()).briefings, ["2026-08-30"]);
+  });
+
+  test("omits a briefing whose audio never made it", async () => {
+    const res = await worker.fetch(
+      new Request("https://x/briefings", { headers: { "x-mercury-token": TOKEN } }),
+      envFor({
+        "2026-08-30.manifest.json": PLAYABLE,
+        "2026-08-30.m4a": REAL_AUDIO,
+        // The shape `--force` used to leave when a regeneration failed after
+        // deleting the old file: 200 on the manifest, 404 on the audio.
+        "2026-08-29.manifest.json": PLAYABLE,
+      }),
+    );
+
+    assert.deepEqual((await res.json()).briefings, ["2026-08-30"]);
+  });
+
+  test("omits a briefing whose audio is a zero-byte upload", async () => {
+    const res = await worker.fetch(
+      new Request("https://x/briefings", { headers: { "x-mercury-token": TOKEN } }),
+      envFor({
+        "2026-08-29.manifest.json": PLAYABLE,
+        // `head` returns an object for a zero-byte key, so existence alone
+        // read as playable — the trap `briefingState` already documents.
+        "2026-08-29.m4a": { size: 0 },
+      }),
+    );
+
+    assert.deepEqual((await res.json()).briefings, []);
+  });
+
+  test("needs the token, like everything else that is about the user", async () => {
+    const res = await worker.fetch(
+      new Request("https://x/briefings"),
+      envFor(listing),
+    );
+    assert.equal(res.status, 401);
+  });
+});
 
 function envFor(objects) {
   return {

@@ -43,7 +43,7 @@ from collections import Counter
 from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.core.providers import LLMProvider
 from app.core.schemas import (
@@ -97,6 +97,7 @@ _ENRICHMENT_SCHEMA: dict[str, Any] = {
             "id": {"type": "string"},
             "headline": {"type": "string"},
             "summary": {"type": "string"},
+            "points": {"type": "array", "items": {"type": "string"}},
             "why_it_matters": {"type": "string", "nullable": True},
             "topics": {"type": "array", "items": {"type": "string"}},
         },
@@ -244,13 +245,81 @@ def build_enrichment_prompt(stories: list[Story]) -> str:
     return DIGEST_PROMPT.format(stories=_fence_untrusted("\n".join(blocks)))
 
 
+# The prompt asks for two to four. This caps rather than requires — see
+# `_tidy_points`.
+_MAX_POINTS = 4
+
+# A bullet marker is a marker only when a space follows it. Without that
+# condition `lstrip` ate the minus in "-5% revenue growth" and shipped
+# "5% revenue growth" — the same figure with the opposite meaning.
+#
+# That is not a formatting bug. Rule 3 says every factual claim is grounded
+# in the source data, and a display transform that silently reverses the
+# direction of a number breaks it in the one way nothing downstream can
+# detect: the result is well-formed, plausible, and wrong.
+_BULLET_MARKERS = ("-", "*", "•", "\u2013", "\u2014", "\u2022")
+
+
+def _strip_bullet(text: str) -> str:
+    for marker in _BULLET_MARKERS:
+        if text.startswith(marker) and text[len(marker):len(marker) + 1].isspace():
+            return text[len(marker):].strip()
+    return text
+
+
 class StoryCard(BaseModel):
     """One enriched story, as the LLM returned it."""
 
     headline: str
     summary: str | None = None
+    points: list[str] = Field(default_factory=list)
     why_it_matters: str | None = None
     topics: list[str] = Field(default_factory=list)
+
+    @field_validator("points", mode="after")
+    @classmethod
+    def _tidy_points(cls, value: list[str]) -> list[str]:
+        """Normalised, not required.
+
+        The prompt asks for two to four lines. Making that a hard schema
+        requirement would mean one card with three-and-a-bit bullets fails
+        validation and the story ships with NO summary at all — rule 7
+        applied to a screen: a slightly-wrong bullet list beats a headline
+        with nothing under it.
+
+        So: blanks dropped, leading bullet characters stripped (models add
+        them despite being told not to, and the client draws its own), and
+        the list capped. A single bullet is left alone rather than promoted
+        or deleted — it is a thin card, not a broken one.
+        """
+        cleaned: list[str] = []
+        for point in value:
+            text = _strip_bullet(str(point).strip())
+            if text:
+                cleaned.append(text)
+        return cleaned[:_MAX_POINTS]
+
+
+def _lead_image(story: Story, members: list[Item]) -> str | None:
+    """The story's picture: the canonical member's, else the first that has one.
+
+    Preferring the canonical matters when a cluster spans publications. The
+    canonical is the version the ranking judged most authoritative, and its
+    art is the one most likely to actually be of this story rather than a
+    stock photo the third aggregator to run it reached for.
+
+    None is ordinary rather than exceptional. A newsletter-only story has no
+    image at all — rule 5 discards the body a newsletter's images live in,
+    so there is nowhere to get one — and that is most of the desk on a quiet
+    morning.
+    """
+    canonical = getattr(story, "canonical", None)
+    if canonical is not None and getattr(canonical, "image_url", None):
+        return canonical.image_url
+    for member in members:
+        if member.image_url:
+            return member.image_url
+    return None
 
 
 def _validate_cards(raw: Any) -> list[dict]:
@@ -461,7 +530,9 @@ def build_digest(
                 # and its subject line is not a headline.
                 headline=(card.headline if card else members[0].title),
                 summary=card.summary if card else None,
+                points=list(card.points) if card else [],
                 why_it_matters=card.why_it_matters if card else None,
+                image_url=_lead_image(story, members),
                 topics=list(card.topics) if card else [],
                 source_count=len(members),
                 sources=[

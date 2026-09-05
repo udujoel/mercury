@@ -230,7 +230,14 @@ Return a JSON array. One object per story, using the story's `id` exactly as
 given so the cards can be matched back:
 
 [{{"id": "c3", "headline": "...", "summary": "...",
-   "why_it_matters": null, "topics": ["ai", "regulation"]}}]
+   "points": ["...", "..."], "why_it_matters": null,
+   "topics": ["ai", "regulation"]}}]
+
+`points` is two to four short lines — the same reporting as `summary`, cut
+so it can be skimmed rather than read. Each is a complete statement that
+stands alone, not a sentence fragment continuing the one before it. No
+leading bullet characters or numbering; the client draws those. Lead with
+the concrete thing: a figure, a name, a date. Do not repeat the headline.
 
 `why_it_matters` is a string or null; the example shows null because rule 6
 says that is the common answer.

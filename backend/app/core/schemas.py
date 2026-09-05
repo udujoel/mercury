@@ -43,6 +43,14 @@ class Item(BaseModel):
     title: str
     body: str = ""                        # cleaned plain text
     url: str | None = None
+    # The publisher's own lead image, as a URL — never the bytes.
+    #
+    # It stays on their CDN, which keeps R2 small, keeps the retention sweep
+    # honest (nothing outlives the story it belongs to, because there is
+    # nothing extra to delete), and means Mercury never redistributes an
+    # image it has no licence to. Null for email: rule 5 discards the body
+    # a newsletter's images live in.
+    image_url: str | None = None
     author: str | None = None
     timestamp: datetime
 
@@ -304,7 +312,15 @@ class DigestStory(BaseModel):
     # which is the one thing rule 5 forbids — an extract is the raw body with
     # a smaller word count.
     summary: str | None = None
+    # The summary again, as points. Written as its own output rather than by
+    # splitting the paragraph on the client, which would be guessing at
+    # sentence boundaries in text full of abbreviations and figures.
+    # Empty for an unenriched story, same as `summary` being null.
+    points: list[str] = Field(default_factory=list)
     why_it_matters: str | None = None
+    # The lead image of whichever source has one, preferring the canonical.
+    # Null is ordinary: newsletters have none at all.
+    image_url: str | None = None
     topics: list[str] = Field(default_factory=list)
     # == len(sources). Denormalised so a list row can render "5 sources"
     # without the client walking the array for every row it scrolls past.

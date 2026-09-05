@@ -98,10 +98,10 @@ function tokensMatch(given, expected) {
   return diff === 0;
 }
 
-function json(body, status = 200) {
+function json(body, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...extraHeaders },
   });
 }
 
@@ -191,6 +191,21 @@ export default {
       const id = briefingIdFor(new Date(), resolvedTimeZone(env));
       const state = await briefingState(env, id);
       return json({ briefing_id: id, state, ok: state === "ok" });
+    }
+
+    // Which mornings are still here.
+    //
+    // `list_briefing_ids()` has existed in both storage backends since the
+    // R2 work and was reachable from nothing. Without this route an archive
+    // screen has to guess dates and probe, which is thirty 404s to draw one
+    // list — and thirty chances to be wrong about the timezone the ids were
+    // derived in.
+    //
+    // The window is whatever the retention sweep has left (ADR-011, 30
+    // days), so the client reads its horizon from the data rather than
+    // hardcoding a number that can drift away from the sweeper's.
+    if (url.pathname === "/briefings") {
+      return serveBriefingList(env);
     }
 
     const audio = url.pathname.match(/^\/briefing\/([^/]+)\/audio$/);
@@ -485,6 +500,87 @@ async function serveJsonObject(request, env, id, key, missingDetail) {
     },
   });
 }
+
+/**
+ * Every briefing id with a manifest in the bucket, newest first.
+ *
+ * Keyed off the MANIFEST, not the audio: a manifest with no audio is a
+ * broken briefing the client cannot play, and one that appeared in an
+ * archive list would be a row that does nothing when tapped.
+ *
+ * Paginated properly rather than trusting one page. Thirty days of
+ * briefings is about ninety objects today, comfortably inside R2's default
+ * page — but "comfortably inside" is a fact about the current retention
+ * setting, not about the code, and raising retention should not silently
+ * truncate this list.
+ */
+async function serveBriefingList(env) {
+  const manifests = new Set();
+  const audible = new Set();
+  let cursor;
+
+  do {
+    const page = await env.BRIEFINGS.list({ cursor, limit: 1000 });
+    for (const object of page.objects) {
+      // The same validation every id-taking route applies, because a key
+      // that does not parse as a briefing id is not one — and it would be
+      // handed straight back to a client that will put it in a URL.
+      if (object.key.endsWith(SUFFIX)) {
+        const id = object.key.slice(0, -SUFFIX.length);
+        if (validBriefingId(id)) manifests.add(id);
+        continue;
+      }
+      for (const ext of AUDIO_EXTS) {
+        if (!object.key.endsWith(ext)) continue;
+        const id = object.key.slice(0, -ext.length);
+        // Size, not existence. A zero-byte key is an upload that died
+        // mid-flight and `head` returns an object for one, which is the
+        // trap `briefingState` already documents.
+        if (validBriefingId(id) && object.size >= MIN_PLAYABLE_AUDIO_BYTES) {
+          audible.add(id);
+        }
+      }
+    }
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+
+  // A manifest is necessary and not sufficient. `--force` used to leave
+  // exactly this shape when a regeneration failed after deleting the old
+  // audio — 200 on the manifest, 404 on the file — and an archive row for
+  // one of those is a date that does nothing when tapped.
+  //
+  // Decided from the LISTING rather than by asking `briefingState` per id.
+  // That version cost a manifest `get` plus an audio `head` each, so a
+  // thirty-day archive spent sixty-plus subrequests against the Workers
+  // free-plan limit of 50 — the route would not have failed a test, it
+  // would have failed in production, on the plan ADR-008 is built on.
+  // `list` already carries every key and its size, so this costs nothing
+  // beyond the pages already being walked.
+  //
+  // The deliberate gap: this does NOT check that the manifest PARSES and
+  // has turns, which `briefingState` does. That needs a read per briefing
+  // and is the whole cost being avoided. Existence plus audio size covers
+  // the failure modes that actually happen; a manifest that is present,
+  // sized, and internally broken shows up when it is opened.
+  const playable = [...manifests].filter((id) => audible.has(id));
+
+  // Ids are ISO dates, so lexicographic ordering IS chronological — the one
+  // place `YYYY-MM-DD` being a string is an advantage rather than a trap.
+  playable.sort().reverse();
+
+  return json(
+    { briefings: playable, count: playable.length },
+    200,
+    // Short, not immutable: this list changes once a day, in both
+    // directions — a new briefing at the top, an expired one off the
+    // bottom. A stale archive that hides this morning is worse than a
+    // request.
+    { "cache-control": "private, max-age=60" },
+  );
+}
+
+const SUFFIX = ".manifest.json";
+const AUDIO_EXTS = [".m4a", ".wav"];
 
 function serveManifest(request, env, id) {
   return serveJsonObject(

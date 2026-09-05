@@ -44,6 +44,7 @@ from app.core.feeds import (
 )
 from app.core.net_guard import BlockedURLError, safe_get
 from app.core.schemas import Item, SourceType
+from app.ingestion.images import image_from_entry
 
 logger = logging.getLogger(__name__)
 
@@ -338,6 +339,9 @@ async def _entry_to_item(
         title=title,
         body=body,
         url=link,
+        # `link` as the base so a relative `src` in the entry's HTML resolves
+        # rather than being stored as a path no client can load.
+        image_url=image_from_entry(entry, link=link),
         author=clean_text(entry.get("author") or "") or None,
         timestamp=timestamp,
         raw={
