@@ -221,7 +221,18 @@ async def synthesize_briefing(
     manifest = BriefingManifest(
         briefing_id=briefing_id,
         generated_at=datetime.now(UTC),
-        duration_ms=len(combined),
+        # The duration of the FILE, not of the segment it was built from.
+        #
+        # AAC encoding pads to a frame boundary, so the exported audio can
+        # be a few milliseconds longer than `len(combined)`. That gap was
+        # invisible until music arrived and the e2e test — which asserts the
+        # manifest against the real decoded audio — caught 20ms of it.
+        #
+        # Small, but the manifest's whole job is describing the file the
+        # phone downloads. A duration that is not that file's duration is
+        # the same class of untruth as a turn timing that does not match
+        # its audio, and this project has shipped one of those already.
+        duration_ms=_exported_duration_ms(audio_bytes, audio_format, combined),
         audio_url=audio_url_for(audio_format),
         segments=_segment_offsets(rendered),
         turns=rendered,
@@ -262,6 +273,25 @@ def _remap_source_refs(
             continue
         remapped.append(ref.model_copy(update={"turn_index": new_index}))
     return remapped
+
+
+def _exported_duration_ms(
+    data: bytes, audio_format: str, fallback: AudioSegment
+) -> int:
+    """How long the exported bytes actually are.
+
+    Falls back to the pre-export segment when the result cannot be decoded
+    — on a machine with no ffmpeg an m4a is unreadable, and a manifest that
+    is a few milliseconds out beats a run that dies measuring itself.
+    """
+    try:
+        return len(AudioSegment.from_file(io.BytesIO(data), format=_sniff_format(data)))
+    except Exception:
+        log.warning(
+            "could not measure the exported %s; using the pre-export length, "
+            "which may differ by a frame", audio_format,
+        )
+        return len(fallback)
 
 
 def _export(combined: AudioSegment) -> tuple[bytes, str]:
