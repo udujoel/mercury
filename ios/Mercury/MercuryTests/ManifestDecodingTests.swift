@@ -285,6 +285,21 @@ final class RecordingAPI: APIClientProtocol {
         return try manifestResult.get()
     }
 
+    /// Nil, which is the ORDINARY answer for a briefing generated before
+    /// ADR-013 — the caller shows an empty desk rather than an error.
+    var digestResult: Digest?
+    var archiveResult: [String] = []
+
+    func fetchDigest(briefingId: String) async throws -> Digest? {
+        calls.append("fetchDigest")
+        return digestResult
+    }
+
+    func fetchBriefingIndex() async throws -> [String] {
+        calls.append("fetchBriefingIndex")
+        return archiveResult
+    }
+
     func generateBriefing(length: BriefingLength) async throws -> BriefingManifest {
         calls.append("generateBriefing")
         return ManifestFixtures.minimal

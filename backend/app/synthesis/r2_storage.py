@@ -34,6 +34,7 @@ from app.core.schemas import BriefingDigest, BriefingManifest
 from app.synthesis.storage import (
     AUDIO_MEDIA_TYPES,
     KNOWN_AUDIO_FORMATS,
+    MIN_PLAYABLE_AUDIO_BYTES,
     UnreadableManifestError,
     briefing_id_from_key,
 )
@@ -318,6 +319,40 @@ class R2Storage:
             if data is not None:
                 return data, AUDIO_MEDIA_TYPES.get(fmt, "application/octet-stream")
         return None
+
+    def audio_exists(self, briefing_id: str) -> bool:
+        """HEAD, not GET.
+
+        The archive index asks this of every briefing it lists, and `_get`
+        would download each one — thirty three-megabyte files to answer a
+        yes/no question.
+
+        Size rather than presence, matching the Worker and the local
+        backend: `head_object` succeeds for a zero-byte key, which is what
+        an upload that died mid-flight leaves behind.
+        """
+        from botocore.exceptions import ClientError
+
+        for fmt in KNOWN_AUDIO_FORMATS:
+            try:
+                head = self._client.head_object(
+                    Bucket=self._bucket, Key=self._audio_key(briefing_id, fmt)
+                )
+            except ClientError as exc:
+                # ONLY a 404 means absent. Swallowing every ClientError made a
+                # rotated or under-scoped credential look like an empty
+                # bucket, so the archive would come back empty and say so
+                # confidently — the same class of lie as `_delete` reporting
+                # success on a 403, which this module already documents.
+                status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+                if status == 404 or exc.response.get("Error", {}).get("Code") in {
+                    "404", "NoSuchKey", "NotFound",
+                }:
+                    continue
+                raise
+            if head.get("ContentLength", 0) >= MIN_PLAYABLE_AUDIO_BYTES:
+                return True
+        return False
 
     def list_briefing_ids(self) -> list[str]:
         ids = {

@@ -55,6 +55,23 @@ final class AppState {
 
     var manifest: BriefingManifest?
     var loadState: LoadState = .idle
+
+    /// The browse surface for whichever briefing is loaded.
+    ///
+    /// Fetched separately from the manifest and deliberately never awaited by
+    /// the play path: ADR-013 makes the digest a SIBLING of the manifest so
+    /// pressing play never waits on a screen the user may not open. A failure
+    /// here costs the desk, not the briefing.
+    var digest: Digest?
+
+    /// Briefing ids still on the server, newest first. Empty until asked for.
+    var archive: [String] = []
+    /// Whether the last archive request failed, as distinct from returning
+    /// nothing. The two look the same in `archive` and mean opposite things.
+    var archiveFailed = false
+    /// In flight. A third state, because "not yet asked" also looks like
+    /// "nothing there".
+    var archiveLoading = false
     let playback = PlaybackCoordinator()
 
     /// SwiftData persistence (PRD 3.7), handed over by `MercuryApp` from the
@@ -221,6 +238,97 @@ final class AppState {
     func seek(toMs ms: Int) {
         guard isPlaybackLoaded else { return }
         playback.seek(toMs: ms)
+    }
+
+    /// Loads the digest for the briefing on screen, quietly.
+    ///
+    /// Never throws and never blocks playback. Rule 7 at the level of a
+    /// screen: a digest that will not load costs you the story cards, and
+    /// the briefing still plays.
+    @MainActor
+    func loadDigest() async {
+        guard let id = manifest?.briefingId else {
+            digest = nil
+            return
+        }
+        if digest?.briefingId == id { return }
+
+        // Cleared BEFORE the request, not after it fails. Otherwise the
+        // previous morning's cards stay on screen under the new briefing —
+        // and their `turnIndex` values address a manifest that is no longer
+        // loaded, so tapping one seeks today's audio to yesterday's offset.
+        digest = nil
+
+        do {
+            let fetched = try await api.fetchDigest(briefingId: id)
+            // Recheck after the await. Two loads can overlap — a restore
+            // finishing while a tap starts today's — and without this the
+            // slower one wins whichever briefing it belonged to.
+            guard manifest?.briefingId == id else { return }
+            digest = fetched
+        } catch {
+            // Not surfaced. There is no action the user could take, and the
+            // play button is unaffected. Rule 7 at the level of a screen.
+            print("[Mercury] digest for \(id) did not load: \(error)")
+        }
+    }
+
+    /// The mornings still on the server, for the archive screen.
+    ///
+    /// `archiveFailed` exists because an empty list and a failed request are
+    /// different facts that look identical: without it the archive says
+    /// "Nothing earlier yet" when the server was simply unreachable, which
+    /// is a confident lie about the user's own data.
+    @MainActor
+    func loadArchive() async {
+        archiveFailed = false
+        archiveLoading = true
+        defer { archiveLoading = false }
+        do {
+            archive = try await api.fetchBriefingIndex()
+        } catch {
+            archiveFailed = true
+            print("[Mercury] archive index did not load: \(error)")
+        }
+    }
+
+    /// Loads an earlier briefing — manifest, audio and digest — and plays it.
+    ///
+    /// The audio is loaded rather than only the manifest, because every
+    /// offset-based control is gated on the loaded briefing matching the one
+    /// on screen (`isPlaybackCurrent`). Fetching the manifest alone would
+    /// leave the whole player inert with no explanation.
+    @MainActor
+    func openBriefing(id: String) async {
+        guard loadState != .loading else { return }
+        loadState = .loading
+        do {
+            let fetched = try await api.fetchManifest(briefingId: id)
+            await persist(fetched, audioPath: nil)
+            let audioURL = try await api.downloadAudio(briefingId: id)
+            await persist(fetched, audioPath: audioURL.path)
+            try playback.load(manifest: fetched, audioURL: audioURL)
+            // Assigned only once the audio is in the engine. Setting it
+            // before the download meant a failure left the PREVIOUS
+            // briefing playing while `manifest` named the requested one —
+            // so `isPlaybackCurrent` went false, every control greyed out,
+            // and the screen described a briefing that was not playing.
+            self.manifest = fetched
+            let manifest = fetched
+            loadState = .ready
+            // `startPlayback`, not a bare `play()`. It re-wires
+            // `onPositionPersist` and `onFinished` to THIS briefing id —
+            // without it, pausing or finishing the archive briefing saved
+            // progress against whichever one was played before, and could
+            // mark that earlier briefing complete.
+            await startPlayback(of: manifest)
+            await loadDigest()
+        } catch {
+            // `localizedDescription`, matching `playBriefing`. The other
+            // spelling put "Error Domain=NSURLErrorDomain Code=-1004" on
+            // the card where the user reads it.
+            loadState = .failed(error.localizedDescription)
+        }
     }
 
     /// Tapping the greeting card is the primary action of the entire app.

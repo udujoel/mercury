@@ -48,6 +48,10 @@ async def health() -> dict[str, str]:
 
 # Routers get mounted here as they land.
 app.include_router(briefing.router, prefix="/briefing", tags=["briefing"])
+# Plural, and deliberately not under the "/briefing" prefix: the Worker
+# serves the archive index at "/briefings" and the client has one code path
+# for both backends.
+app.include_router(briefing.index_router, prefix="/briefings", tags=["briefing"])
 app.include_router(devices.router, prefix="/devices", tags=["devices"])
 # from app.api import auth
 # app.include_router(auth.router,  prefix="/auth")
