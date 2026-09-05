@@ -320,13 +320,30 @@ final class AppState {
     /// real money while the previous run was still going.
     struct PendingRebuild: Equatable {
         let requestedAt: Date
-        /// The `generatedAt` of the briefing on screen when this was asked
-        /// for. Anything newer IS the rebuild — the id cannot say so,
-        /// because a forced run deliberately reuses the same one.
+        /// The briefing this rebuild is FOR. A manifest for any other
+        /// briefing cannot end it, however new it is.
+        let briefingId: String
+        /// The `generatedAt` of that briefing when this was asked for, when
+        /// it was the one on screen. Anything newer IS the rebuild — the id
+        /// cannot say so, because a forced run deliberately reuses it.
+        ///
+        /// Nil when the briefing on screen was some OTHER morning's. That
+        /// case is not hypothetical: open a briefing from the archive, press
+        /// rebuild, and an archive `generatedAt` from days ago would be
+        /// "superseded" by today's existing, un-rebuilt manifest the moment
+        /// anything fetched it.
         let supersedes: Date?
     }
 
     private(set) var rebuild: PendingRebuild?
+    /// Clears `rebuild` when the window runs out.
+    ///
+    /// Not a comparison against the clock alone. `isRegenerating` reads
+    /// `Date()`, and `@Observable` cannot see time pass — so once the window
+    /// expired, nothing invalidated the view and the button stayed disabled
+    /// until some unrelated state happened to change. A timer that mutates
+    /// `rebuild` is a change SwiftUI can actually observe.
+    private var rebuildExpiry: Task<Void, Never>?
 
     /// How long to believe in a rebuild nobody has confirmed.
     ///
@@ -367,37 +384,87 @@ final class AppState {
     /// `togglePlayback` now makes true rather than merely promising.
     @MainActor
     func regenerateToday() async throws -> RegenerationStatus {
-        let previous = manifest?.generatedAt
+        // The server's day, before anything is compared against it. The
+        // Worker keys the allowance by ITS date, and a device an hour the
+        // other side of midnight would otherwise file a perfectly good
+        // status under the wrong day and discard it.
+        await api.syncServerClock()
+        let today = AppDelegate.briefingId(for: .now)
+        // Only when the briefing on screen IS today's. See `supersedes`.
+        let previous = manifest?.briefingId == today ? manifest?.generatedAt : nil
+
         do {
             let status = try await api.requestRegeneration()
             lastRegeneration = status
-            rebuild = PendingRebuild(requestedAt: Date(), supersedes: previous)
+            beginRebuild(of: today, supersedes: previous)
             return status
         } catch {
+            // A refusal still carries the counts, and losing them is not
+            // harmless: the button stayed enabled at the cap, so every
+            // press sent another request the server had already refused.
+            if let refused = Self.statusFromRefusal(error) {
+                lastRegeneration = refused
+            }
             // Nothing was dispatched, so nothing is pending. Clearing here
             // rather than in a `defer` is the difference between the two
             // questions above.
-            rebuild = nil
+            endRebuild()
             throw error
         }
+    }
+
+    /// The allowance out of a 429 or 409 body.
+    ///
+    /// `APIError.badStatus` carries the body as text because that is what
+    /// every other screen wants to show; this is the one caller that wants
+    /// the numbers back out of it.
+    static func statusFromRefusal(_ error: Error) -> RegenerationStatus? {
+        guard case APIError.badStatus(let code, let body) = error,
+              code == 429 || code == 409,
+              let json = body.range(of: "{").map({ String(body[$0.lowerBound...]) })
+        else { return nil }
+        return try? JSONDecoder().decode(
+            RegenerationStatus.self, from: Data(json.utf8))
+    }
+
+    @MainActor
+    private func beginRebuild(of briefingId: String, supersedes: Date?) {
+        rebuildExpiry?.cancel()
+        rebuild = PendingRebuild(
+            requestedAt: Date(), briefingId: briefingId, supersedes: supersedes)
+        rebuildExpiry = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.rebuildWindow))
+            guard !Task.isCancelled else { return }
+            await MainActor.run { self?.rebuild = nil }
+        }
+    }
+
+    @MainActor
+    private func endRebuild() {
+        rebuildExpiry?.cancel()
+        rebuildExpiry = nil
+        rebuild = nil
     }
 
     /// Called wherever a freshly fetched manifest is adopted.
     ///
     /// A manifest generated after the rebuild was requested IS the rebuild,
     /// so the button comes back and the next play stops refetching.
+    @MainActor
     private func noteRebuildLanded(_ manifest: BriefingManifest) {
         guard let rebuild else { return }
-        // With nothing on screen when the rebuild was asked for there is no
-        // server timestamp to compare against, so the request time stands in.
-        // That is a server clock against a device one, and it is the only
-        // comparison here that crosses clocks — but it is reached only when
-        // nothing has been played today, where the alternative was treating
-        // the FIRST manifest to arrive as the rebuild regardless of when it
-        // was made.
+        // The rebuild was for ONE briefing. Adopting a different one — an
+        // archive morning, say — says nothing about whether it finished.
+        guard manifest.briefingId == rebuild.briefingId else { return }
+        // With no baseline there is no server timestamp to beat, so the
+        // request time stands in. That compares a server clock to a device
+        // one, and it is the only comparison here that crosses clocks — but
+        // it is reached only when today's briefing was not on screen, where
+        // the alternative was treating the FIRST manifest to arrive as the
+        // rebuild regardless of when it was made.
         let floor = rebuild.supersedes ?? rebuild.requestedAt
         if manifest.generatedAt <= floor { return }
-        self.rebuild = nil
+        endRebuild()
     }
 
     /// The voice library, for the picker.
@@ -665,6 +732,7 @@ final class AppState {
                 return
             }
             self.manifest = manifest
+            noteRebuildLanded(manifest)
             await persist(manifest, audioPath: nil)
             let audioURL = try await api.downloadAudio(briefingId: manifest.briefingId)
             await persist(manifest, audioPath: audioURL.path)

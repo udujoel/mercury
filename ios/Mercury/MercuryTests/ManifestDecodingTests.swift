@@ -475,14 +475,20 @@ enum ManifestFixtures {
     /// ONLY field that distinguishes a rebuilt briefing from the one it
     /// replaced — which makes it the field the pending-rebuild state has to
     /// read, and the one a test has to be able to vary.
-    static func made(at generatedAt: String) -> BriefingManifest {
+    static func made(at generatedAt: String,
+                     id: String = "2026-08-23") -> BriefingManifest {
         let json = """
-        {"briefing_id":"2026-08-23","generated_at":"\(generatedAt)",
-         "duration_ms":1000,"audio_url":"/briefing/2026-08-23/audio",
+        {"briefing_id":"\(id)","generated_at":"\(generatedAt)",
+         "duration_ms":1000,"audio_url":"/briefing/\(id)/audio",
          "segments":[],"turns":[],"sources":[]}
         """
         return try! JSONDecoder.mercury().decode(BriefingManifest.self, from: Data(json.utf8))
     }
+
+    /// TODAY's id, in the server's zone — the same call `regenerateToday`
+    /// makes. A rebuild is always for today, so any test about one has to
+    /// speak in today's id or it is testing the id guard by accident.
+    static var todayId: String { AppDelegate.briefingId(for: .now) }
 }
 
 /// Rebuilding today's briefing, as a piece of STATE rather than a request.
@@ -520,7 +526,8 @@ final class PendingRebuildTests: XCTestCase {
     /// The landing signal, which both the button and the next play read.
     @MainActor
     func testOnlyANewerBriefingEndsTheRebuild() async throws {
-        let first = ManifestFixtures.made(at: "2026-08-23T05:00:00Z")
+        let today = ManifestFixtures.todayId
+        let first = ManifestFixtures.made(at: "2026-08-23T05:00:00Z", id: today)
         let api = RecordingAPI(manifestResult: .success(first))
         let state = AppState(api: api)
 
@@ -536,7 +543,7 @@ final class PendingRebuildTests: XCTestCase {
                       "the same briefing coming back is not a new one")
 
         api.manifestResult = .success(
-            ManifestFixtures.made(at: "2026-08-23T09:30:00Z"))
+            ManifestFixtures.made(at: "2026-08-23T09:30:00Z", id: today))
         await state.playBriefing()
 
         XCTAssertFalse(state.isRegenerating,
@@ -551,14 +558,68 @@ final class PendingRebuildTests: XCTestCase {
     /// the button and stopped the next play refetching, both early.
     @MainActor
     func testAnOlderBriefingDoesNotEndARebuildAskedForCold() async throws {
-        let api = RecordingAPI(manifestResult: .success(ManifestFixtures.minimal))
+        // TODAY's briefing, so the id guard cannot be what makes this pass —
+        // the point is the requestedAt floor, and a test that passes for the
+        // wrong reason proves nothing about it.
+        let stale = ManifestFixtures.made(
+            at: "2026-08-23T05:00:00Z", id: ManifestFixtures.todayId)
+        let api = RecordingAPI(manifestResult: .success(stale))
         let state = AppState(api: api)
 
         _ = try await state.regenerateToday()   // nothing on screen
-        await state.playBriefing()              // fixture predates the request
+        await state.playBriefing()              // and it predates the request
 
         XCTAssertTrue(state.isRegenerating,
                       "a briefing made before the request cannot be the rebuild")
+    }
+
+    /// A briefing from the ARCHIVE must not act as the baseline.
+    ///
+    /// `regenerateToday` used whatever manifest was on screen. Open a
+    /// briefing from three days ago, press rebuild, and its `generatedAt`
+    /// is older than today's existing — un-rebuilt — manifest, so the very
+    /// next fetch of today looked like the rebuild landing. The button came
+    /// back and the next play stopped revalidating, both while the paid job
+    /// was still running.
+    @MainActor
+    func testAnArchiveBriefingIsNotTheBaseline() async throws {
+        let old = ManifestFixtures.made(at: "2026-08-23T05:00:00Z")
+        let api = RecordingAPI(manifestResult: .success(old))
+        let state = AppState(api: api)
+
+        await state.playBriefing()          // an archive morning is on screen
+        _ = try await state.regenerateToday()
+
+        // TODAY's pre-rebuild manifest: newer than the archive one on
+        // screen, and generated before the request — so neither the id
+        // guard nor the floor may mistake it for the rebuild.
+        api.manifestResult = .success(
+            ManifestFixtures.made(at: "2026-08-23T06:00:00Z",
+                                  id: ManifestFixtures.todayId))
+        await state.playBriefing()
+
+        XCTAssertTrue(state.isRegenerating,
+                      "a newer briefing is not automatically the rebuild")
+    }
+
+    /// A refusal carries the counts, and throwing them away kept the button
+    /// live at the cap — so every press sent another request the server had
+    /// already refused.
+    @MainActor
+    func testTheCapRefusalStillUpdatesTheAllowance() async {
+        let api = RecordingAPI(manifestResult: .success(ManifestFixtures.minimal))
+        let today = AppDelegate.briefingId(for: .now)
+        api.regenerationError = APIError.badStatus(
+            429,
+            #"{"detail":"Already regenerated 3 times today.","used":3,"limit":3,"#
+            + #""briefing_id":"\#(today)"}"#)
+        let state = AppState(api: api)
+
+        _ = try? await state.regenerateToday()
+
+        XCTAssertEqual(state.regeneration?.remaining, 0,
+                       "the button must learn there is nothing left")
+        XCTAssertFalse(state.isRegenerating, "nothing was dispatched")
     }
 
     /// Left open overnight, the app kept yesterday's `remaining == 0` and
