@@ -301,3 +301,28 @@ def test_a_port_out_of_range_is_rejected_rather_than_stored():
         "summary": '<img src="https://cdn.example.com/ok.jpg">',
     }
     assert image_from_entry(entry, link=LINK) == "https://cdn.example.com/ok.jpg"
+
+
+def test_a_leading_minus_on_a_figure_is_not_a_bullet_marker():
+    """The one that reverses a fact.
+
+    `lstrip("-*•… ")` ate the sign in "-5% revenue growth" and shipped
+    "5% revenue growth": the same figure with the opposite meaning, in a
+    form nothing downstream can detect as wrong. Rule 3 says claims are
+    grounded in the source data, and a display transform that flips a
+    number breaks that more quietly than a hallucination would.
+
+    A bullet marker is a marker only when a space follows it.
+    """
+    from app.pipeline.digest import StoryCard
+
+    card = StoryCard(headline="h", points=["-5% revenue growth", "- down again"])
+    assert card.points == ["-5% revenue growth", "down again"]
+
+
+def test_an_em_dash_opening_a_sentence_survives_when_it_is_not_a_bullet():
+    from app.pipeline.digest import StoryCard
+
+    assert StoryCard(headline="h", points=["—and then it closed"]).points == [
+        "—and then it closed"
+    ]

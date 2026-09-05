@@ -249,6 +249,23 @@ def build_enrichment_prompt(stories: list[Story]) -> str:
 # `_tidy_points`.
 _MAX_POINTS = 4
 
+# A bullet marker is a marker only when a space follows it. Without that
+# condition `lstrip` ate the minus in "-5% revenue growth" and shipped
+# "5% revenue growth" — the same figure with the opposite meaning.
+#
+# That is not a formatting bug. Rule 3 says every factual claim is grounded
+# in the source data, and a display transform that silently reverses the
+# direction of a number breaks it in the one way nothing downstream can
+# detect: the result is well-formed, plausible, and wrong.
+_BULLET_MARKERS = ("-", "*", "•", "\u2013", "\u2014", "\u2022")
+
+
+def _strip_bullet(text: str) -> str:
+    for marker in _BULLET_MARKERS:
+        if text.startswith(marker) and text[len(marker):len(marker) + 1].isspace():
+            return text[len(marker):].strip()
+    return text
+
 
 class StoryCard(BaseModel):
     """One enriched story, as the LLM returned it."""
@@ -277,7 +294,7 @@ class StoryCard(BaseModel):
         """
         cleaned: list[str] = []
         for point in value:
-            text = str(point).strip().lstrip("-*•\u2013\u2014 ").strip()
+            text = _strip_bullet(str(point).strip())
             if text:
                 cleaned.append(text)
         return cleaned[:_MAX_POINTS]
