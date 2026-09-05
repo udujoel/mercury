@@ -58,6 +58,82 @@ enum TranscriptScript {
         return turns[index - 1].speaker != turns[index].speaker
     }
 
+    // MARK: - Word-level sweep
+
+    /// How much of a line has been spoken, as a range into its own text.
+    ///
+    /// **Nil means "no timings", and only that** — Google, or any briefing
+    /// generated before ElevenLabs. The view falls back to lighting the whole
+    /// line, which is what every manifest got until now.
+    ///
+    /// A timed line that has not reached its first word returns an EMPTY
+    /// range, not nil. Collapsing the two put a line that had not started
+    /// yet on the same branch as a line with no timings at all, so it
+    /// rendered fully lit for the moment before its first word — brightest
+    /// exactly when nothing had been said.
+    static func spokenRange(of turn: Turn, atMs ms: Int) -> Range<String.Index>? {
+        guard let words = turn.words, !words.isEmpty else { return nil }
+        let start = turn.text.startIndex
+
+        // Once the turn is over the whole line is spoken, including anything
+        // the timings do not cover. A line ending in a punctuation-only
+        // token — an em dash, an ellipsis — has no timed word reaching the
+        // end of the text, so without this its last characters stayed muted
+        // for good.
+        if ms >= turn.endMs { return start..<turn.text.endIndex }
+
+        // The last word whose speaking has BEGUN. Not the word containing
+        // `ms`: positions land in the gaps between words constantly at 20Hz,
+        // and a highlight that blinks off between every word is worse than
+        // no highlight. A word stays lit until the next one starts.
+        var spoken = 0
+        for (i, w) in words.enumerated() where w.startMs <= ms {
+            spoken = i + 1
+        }
+        guard spoken > 0 else { return start..<start }
+
+        let ranges = wordRanges(in: turn.text, words: words)
+        guard let last = ranges.prefix(spoken).compactMap({ $0 }).last else {
+            return start..<start
+        }
+        return start..<last.upperBound
+    }
+
+    /// Where each timed word sits in the line's own text.
+    ///
+    /// Matched sequentially rather than by tokenising the text again. The
+    /// timings came from the exact string that was sent to the TTS provider,
+    /// but punctuation-only tokens were dropped on the way back, so the
+    /// word list and a fresh `split(separator: " ")` do not line up — and
+    /// re-tokenising would put the highlight on the wrong word from the
+    /// first em dash onward.
+    ///
+    /// Each entry is nil when that word could not be found after the
+    /// previous one. That should not happen — the timings came from this
+    /// exact string — and if it ever does, the sweep ends at the last word
+    /// it could both confirm has started AND locate. So it can LAG behind
+    /// the voice, never lead it, and the boundary is always a position that
+    /// was actually found rather than one inferred from a word that was not.
+    /// Under-highlighting is a degradation you might not notice;
+    /// highlighting the wrong word is the bug this whole feature exists to
+    /// avoid.
+    static func wordRanges(in text: String, words: [WordSpan]) -> [Range<String.Index>?] {
+        var out: [Range<String.Index>?] = []
+        var cursor = text.startIndex
+
+        for w in words {
+            guard !w.word.isEmpty,
+                  let found = text.range(of: w.word, range: cursor..<text.endIndex)
+            else {
+                out.append(nil)
+                continue
+            }
+            out.append(found)
+            cursor = found.upperBound
+        }
+        return out
+    }
+
     /// "3 of 7" for the segment currently playing.
     ///
     /// One-based, because it is read aloud by VoiceOver and shown to a

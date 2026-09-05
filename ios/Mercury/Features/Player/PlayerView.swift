@@ -29,6 +29,7 @@ struct PlayerView: View {
                 turns: manifest?.renderedTurns ?? [],
                 activeTurn: playback.currentTurn,
                 isFinished: playback.hasFinished,
+                positionMs: playback.positionMs,
                 isEnabled: appState.isPlaybackCurrent,
                 onSelect: { turn in
                     Task { await appState.play(fromMs: turn.startMs) }
