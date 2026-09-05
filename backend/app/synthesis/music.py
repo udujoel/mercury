@@ -109,6 +109,17 @@ def _load(path: Path) -> AudioSegment | None:
         return None
     try:
         clip = AudioSegment.from_file(path)
+    except FileNotFoundError:
+        # ffprobe, not the track. pydub shells out to decode mp3, and what
+        # it raises names a missing BINARY rather than a missing asset —
+        # which sends whoever reads the log looking for the wrong thing.
+        log.error(
+            "could not decode music at %s because ffmpeg/ffprobe is not "
+            "installed. The briefing will ship WITHOUT music. Install "
+            "ffmpeg on this machine; the Actions workflows both do.",
+            path,
+        )
+        return None
     except Exception:
         # A corrupt or truncated asset. Losing one sting is survivable;
         # failing the run over it is not.

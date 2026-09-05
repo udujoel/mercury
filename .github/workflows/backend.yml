@@ -4,7 +4,10 @@ on:
   push:
     paths: ["backend/**", ".github/workflows/backend.yml"]
   pull_request:
-    paths: ["backend/**"]
+    # `assets/**` too: the music tests decode real files from there, so a
+    # change to an asset must run this suite. Without it, replacing a track
+    # with something unreadable would be reported by nothing.
+    paths: ["backend/**", "assets/**", ".github/workflows/backend.yml"]
 
 jobs:
   test:
@@ -18,6 +21,17 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+      # pydub shells out to ffmpeg/ffprobe to decode mp3. Without it,
+      # `load_music_set` returns None for every set and the music tests
+      # cannot tell "the assets are broken" from "this machine cannot read
+      # them" — so they would have to be skipped, and a suite that skips
+      # the tests protecting the offset rule is the green-suite problem
+      # this project keeps meeting.
+      #
+      # `briefing.yml` installs it for the same reason: without ffmpeg the
+      # production run ships a briefing with no music and a warning nobody
+      # reads.
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - run: pip install -r requirements.txt
       - run: ruff check .
       # Catches vulnerable TRANSITIVE dependencies, which Dependabot's
