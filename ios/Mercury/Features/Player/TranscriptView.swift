@@ -30,6 +30,10 @@ struct TranscriptView: View {
     /// set after finishing so the last line stays on screen; without this the
     /// script would go on claiming to be speaking it.
     var isFinished: Bool = false
+    /// The playhead, for the word-level sweep. Only the speaking line reads
+    /// it, so the twenty-times-a-second churn redraws one line rather than
+    /// the whole script.
+    var positionMs: Int = 0
     /// False until there is audio in the engine, matching the scrubber and
     /// the chapter ribbon: tapping a line is a seek, and a seek with no file
     /// does nothing.
@@ -95,12 +99,11 @@ struct TranscriptView: View {
                     .accessibilityLabel("Host \(turn.speaker)")
             }
 
-            Text(turn.text)
+            text(turn, state: state)
                 .font(MercuryType.transcript)
                 // Ragged right, per ADR-012.
                 .multilineTextAlignment(.leading)
                 .lineSpacing(MercuryType.voiceLineSpacing)
-                .foregroundStyle(color(for: state).color)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -113,6 +116,31 @@ struct TranscriptView: View {
         .accessibilityLabel("\(turn.speaker): \(turn.text)")
         .accessibilityValue(state == .speaking ? "Now playing" : "")
         .accessibilityHint(isEnabled ? "Plays from this line" : "")
+    }
+
+    /// The line, with the part already spoken lit ahead of the rest.
+    ///
+    /// Two `Text` values concatenated rather than an `AttributedString`
+    /// rebuilt every frame: the split moves at most once per word, and
+    /// concatenation keeps the whole thing one laid-out paragraph, so the
+    /// line does not re-wrap as the highlight advances.
+    ///
+    /// Falls back to a flat line whenever there is no sweep to draw — a
+    /// manifest without word timings, a line that is not the one speaking,
+    /// or Reduce Motion, where a wipe advancing word by word is exactly the
+    /// continuous motion that setting exists to stop.
+    @ViewBuilder
+    private func text(_ turn: Turn, state: TranscriptScript.LineState) -> some View {
+        if state == .speaking, motion.allowsAmbientMotion,
+           let spoken = TranscriptScript.spokenRange(of: turn, atMs: positionMs) {
+            Text(turn.text[spoken])
+                .foregroundStyle(MercuryColor.ink.color)
+            + Text(turn.text[spoken.upperBound...])
+                .foregroundStyle(MercuryColor.inkMuted.color)
+        } else {
+            Text(turn.text)
+                .foregroundStyle(color(for: state).color)
+        }
     }
 
     private func color(for state: TranscriptScript.LineState) -> AdaptiveColor {

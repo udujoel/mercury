@@ -58,6 +58,61 @@ enum TranscriptScript {
         return turns[index - 1].speaker != turns[index].speaker
     }
 
+    // MARK: - Word-level sweep
+
+    /// How much of a line has been spoken, as a range into its own text.
+    ///
+    /// Returns nil when there is nothing to sweep — no word timings (Google,
+    /// or any briefing generated before ElevenLabs), or a position before
+    /// the line starts. The view falls back to lighting the whole line,
+    /// which is what it did for every manifest until now.
+    static func spokenRange(of turn: Turn, atMs ms: Int) -> Range<String.Index>? {
+        guard let words = turn.words, !words.isEmpty else { return nil }
+
+        // The last word whose speaking has BEGUN. Not the word containing
+        // `ms`: positions land in the gaps between words constantly at 20Hz,
+        // and a highlight that blinks off between every word is worse than
+        // no highlight. A word stays lit until the next one starts.
+        var spoken = 0
+        for (i, w) in words.enumerated() where w.startMs <= ms {
+            spoken = i + 1
+        }
+        guard spoken > 0 else { return nil }
+
+        let ranges = wordRanges(in: turn.text, words: words)
+        guard let last = ranges.prefix(spoken).compactMap({ $0 }).last else { return nil }
+        return turn.text.startIndex..<last.upperBound
+    }
+
+    /// Where each timed word sits in the line's own text.
+    ///
+    /// Matched sequentially rather than by tokenising the text again. The
+    /// timings came from the exact string that was sent to the TTS provider,
+    /// but punctuation-only tokens were dropped on the way back, so the
+    /// word list and a fresh `split(separator: " ")` do not line up — and
+    /// re-tokenising would put the highlight on the wrong word from the
+    /// first em dash onward.
+    ///
+    /// Each entry is nil when that word could not be found after the
+    /// previous one, which should not happen and must not become a crash or
+    /// a silently shifted highlight if it ever does.
+    static func wordRanges(in text: String, words: [WordSpan]) -> [Range<String.Index>?] {
+        var out: [Range<String.Index>?] = []
+        var cursor = text.startIndex
+
+        for w in words {
+            guard !w.word.isEmpty,
+                  let found = text.range(of: w.word, range: cursor..<text.endIndex)
+            else {
+                out.append(nil)
+                continue
+            }
+            out.append(found)
+            cursor = found.upperBound
+        }
+        return out
+    }
+
     /// "3 of 7" for the segment currently playing.
     ///
     /// One-based, because it is read aloud by VoiceOver and shown to a

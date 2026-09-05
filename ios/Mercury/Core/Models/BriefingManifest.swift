@@ -5,6 +5,29 @@ import Foundation
 /// Mirrors `backend/app/core/schemas.py::Turn`. `id` is a computed property
 /// (not part of the JSON). Decoding is hand-written only to tolerate null
 /// timings — see `startMs`.
+/// One word, and when it is spoken in the finished audio.
+///
+/// Absolute milliseconds — `stitch` offsets them once, at the point that
+/// knows where the turn landed, which is what will keep them correct when
+/// intro music is prepended (ROADMAP task 3).
+struct WordSpan: Codable, Equatable, Hashable {
+    let word: String
+    let startMs: Int
+    let endMs: Int
+
+    init(word: String, startMs: Int, endMs: Int) {
+        self.word = word
+        self.startMs = startMs
+        self.endMs = endMs
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case word
+        case startMs = "start_ms"
+        case endMs = "end_ms"
+    }
+}
+
 struct Turn: Codable, Identifiable, Equatable, Hashable {
     let speaker: String
     let segment: String
@@ -17,15 +40,24 @@ struct Turn: Codable, Identifiable, Equatable, Hashable {
     // A briefing missing a line beats a briefing that will not decode.
     let startMs: Int
     let endMs: Int
+    /// Word timings, when the TTS provider supplied them.
+    ///
+    /// Nil for Google — Neural2 cannot produce them without SSML mark
+    /// injection — and nil for every briefing generated before ElevenLabs.
+    /// The transcript falls back to whole-line highlighting, which is what
+    /// it did for all of them until now.
+    let words: [WordSpan]?
 
     // Writing init(from:) suppresses the synthesized memberwise init, which
     // previews and tests construct Turns with. Declare it explicitly.
-    init(speaker: String, segment: String, text: String, startMs: Int, endMs: Int) {
+    init(speaker: String, segment: String, text: String,
+         startMs: Int, endMs: Int, words: [WordSpan]? = nil) {
         self.speaker = speaker
         self.segment = segment
         self.text = text
         self.startMs = startMs
         self.endMs = endMs
+        self.words = words
     }
 
     init(from decoder: Decoder) throws {
@@ -35,6 +67,7 @@ struct Turn: Codable, Identifiable, Equatable, Hashable {
         text = try c.decode(String.self, forKey: .text)
         startMs = try c.decodeIfPresent(Int.self, forKey: .startMs) ?? -1
         endMs = try c.decodeIfPresent(Int.self, forKey: .endMs) ?? -1
+        words = try c.decodeIfPresent([WordSpan].self, forKey: .words)
     }
 
     /// A turn that never made it into the audio. Filtered out on load.
@@ -44,6 +77,7 @@ struct Turn: Codable, Identifiable, Equatable, Hashable {
         case speaker, segment, text
         case startMs = "start_ms"
         case endMs = "end_ms"
+        case words
     }
 
     /// Stable within a single manifest: two turns never share both a start
