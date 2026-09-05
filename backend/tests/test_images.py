@@ -663,11 +663,30 @@ def test_the_default_voices_match_the_host_names():
 
     assert s.host_a_name == "Mara"
     assert s.host_b_name == "Theo"
-    # The British woman for Mara, Brian for Theo.
-    assert DEFAULT_ELEVENLABS_VOICE_A == "3Drdg7QWqr45nZmYpXRP"
+    # A British woman for Mara, Brian for Theo — both PREMADE.
+    #
+    # The id here changed once already, and not for taste. The previous
+    # voice A, "Posh - A British Woman" (3Drdg7QWqr45nZmYpXRP), is a LIBRARY
+    # voice, and every call for it returned 402 paid_plan_required on the
+    # free plan while Brian returned 200. The run degraded that host to
+    # Google and shipped a briefing read by two men, green all the way.
+    assert DEFAULT_ELEVENLABS_VOICE_A == "Xb7hH8MSUJpSbSDYk0k2"
     assert DEFAULT_ELEVENLABS_VOICE_B == "nPczCjzI2devNBz1zQrb"
+    assert (
+        DEFAULT_ELEVENLABS_VOICE_A != "3Drdg7QWqr45nZmYpXRP"
+    ), "that voice is library-only and 402s on the free plan"
     assert s.elevenlabs_voice_a == DEFAULT_ELEVENLABS_VOICE_A
     assert s.elevenlabs_voice_b == DEFAULT_ELEVENLABS_VOICE_B
+
+    # The GOOGLE pair is matched to the same names, and was the other half
+    # of the same bug: Mara had `Neural2-D` (male) and Theo `Neural2-F`
+    # (female). It stayed invisible because these are only reached when
+    # ElevenLabs fails — so the first time the fallback ran for real, it
+    # ran backwards.
+    #
+    # Google's en-US Neural2 set: A, D, I, J are male; C, E, F, G, H female.
+    assert s.tts_voice_host_a == "en-US-Neural2-F", "Mara is a woman"
+    assert s.tts_voice_host_b == "en-US-Neural2-D", "Theo is a man"
 
 
 def test_a_tilde_credentials_path_is_expanded(monkeypatch, tmp_path):

@@ -219,6 +219,22 @@ class ElevenLabsTTSProvider:
                         "elevenlabs rejected the request (%d): %.300s",
                         status, exc.response.text,
                     )
+                    # 402 has exactly one cause worth naming, and it cost a
+                    # whole briefing: a LIBRARY voice on a free plan. The
+                    # raw body says "paid_plan_required" and leaves the
+                    # reader to work out which of the two voices it was and
+                    # what to do, while the run goes green and ships a
+                    # briefing in the wrong voice.
+                    if status == 402:
+                        logger.error(
+                            "voice %s cannot be used on this ElevenLabs plan. "
+                            "Free plans can only synthesise PREMADE voices — "
+                            "check `category` on GET /v1/voices and pick one "
+                            "that reads \"premade\", or upgrade the plan. "
+                            "This host will fall back to Google, so the "
+                            "briefing will ship in the wrong voice.",
+                            voice_id,
+                        )
                     raise
                 if attempt == MAX_ATTEMPTS:
                     raise

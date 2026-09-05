@@ -67,9 +67,29 @@ def apply_to_environment(user_settings) -> None:
 #
 # If the host names change, these move with them.
 
-# A poised British woman. Host A — Mara.
-DEFAULT_ELEVENLABS_VOICE_A = "3Drdg7QWqr45nZmYpXRP"
-# Brian: deep, resonant, comforting. Host B — Theo.
+# BOTH MUST BE **PREMADE** VOICES, not library or professional ones.
+#
+# The first pair here paid for that lesson. "Posh - A British Woman"
+# (`3Drdg7QWqr45nZmYpXRP`) is exactly the voice that was asked for, and it
+# is a LIBRARY voice — so every request for it came back
+#
+#   402 paid_plan_required: "Free users cannot use library voices via the
+#   API. Please upgrade your subscription to use this voice."
+#
+# while Brian, a premade voice, returned 200. The run then degraded to
+# Google for that host and shipped a briefing narrated by two men, with the
+# 402 sitting in the log of a workflow that reported success. Nothing in the
+# audio said which half had failed.
+#
+# The ElevenLabs voice library shows premade and library voices side by
+# side and the id looks identical; the only signal is the `category` field
+# on `GET /v1/voices` ("premade" is free-tier usable, "professional" and
+# library voices are not). Check it before changing either of these.
+
+# Alice: British, female, clear — and premade, so the free tier can speak
+# her. Host A — Mara.
+DEFAULT_ELEVENLABS_VOICE_A = "Xb7hH8MSUJpSbSDYk0k2"
+# Brian: deep, resonant, comforting, and premade. Host B — Theo.
 DEFAULT_ELEVENLABS_VOICE_B = "nPczCjzI2devNBz1zQrb"
 
 
@@ -107,8 +127,15 @@ class Settings(BaseSettings):
     # own did nothing, and the difference was invisible.
     tts_provider: str = "elevenlabs"
     google_tts_credentials: str = "./credentials/gcp-tts.json"
-    tts_voice_host_a: str = "en-US-Neural2-D"
-    tts_voice_host_b: str = "en-US-Neural2-F"
+    # Matched to the host NAMES, like the ElevenLabs pair above — and for
+    # the same reason, because these were the other half of the same bug.
+    # Host A is Mara and got `Neural2-D`, which is male; host B is Theo and
+    # got `Neural2-F`, which is female. Swapped, and invisible for as long
+    # as ElevenLabs was answering: the Google voices are only reached when
+    # ElevenLabs fails, so the fallback for a woman's part was a man's
+    # voice and nothing exercised it until the 402 above.
+    tts_voice_host_a: str = "en-US-Neural2-F"
+    tts_voice_host_b: str = "en-US-Neural2-D"
     elevenlabs_api_key: str = ""
     # Two voices that sound like a pair rather than two strangers: a deep,
     # resonant male and a poised British female. Defaults rather than

@@ -37,14 +37,58 @@ final class NowPlayingService {
         }
     }
 
-    func update(title: String, durationMs: Int, positionMs: Int, rate: Float, isPlaying: Bool) {
+    /// Artwork, built once and handed to every update.
+    ///
+    /// `MPMediaItemArtwork` asks for the image at whatever size the surface
+    /// wants — the lock screen, Control Center and CarPlay all ask
+    /// differently — so this draws on demand rather than scaling one bitmap.
+    private lazy var artwork = MPMediaItemArtwork(
+        boundsSize: CGSize(width: 1024, height: 1024)
+    ) { size in
+        MercuryArtwork.image(side: max(size.width, size.height))
+    }
+
+    /// The whole card: what is playing, which briefing it belongs to, and
+    /// the mark.
+    ///
+    /// `title` is the SEGMENT, not the briefing. This is the line a podcast
+    /// app uses for the episode, and the briefing's own name is already on
+    /// the line below it — putting "Your briefing" in both said nothing
+    /// twice and left the lock screen unchanged for eight minutes while the
+    /// audio moved through five different subjects.
+    func update(
+        title: String,
+        briefing: String,
+        durationMs: Int,
+        positionMs: Int,
+        rate: Float,
+        isPlaying: Bool
+    ) {
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: title,
+            MPMediaItemPropertyArtist: briefing,
+            // Album is what the Lock Screen shows in small type under the
+            // artist, and what CarPlay groups by.
+            MPMediaItemPropertyAlbumTitle: "Mercury",
             MPMediaItemPropertyPlaybackDuration: Double(durationMs) / 1000.0,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: Double(positionMs) / 1000.0,
             MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? Double(rate) : 0.0,
         ]
+        info[MPMediaItemPropertyArtwork] = artwork
         info[MPMediaItemPropertyMediaType] = MPMediaType.podcast.rawValue
+        center.nowPlayingInfo = info
+    }
+
+    /// Change the line that names what is playing, keeping everything else.
+    ///
+    /// A segment boundary must not rebuild the whole dictionary: doing that
+    /// re-sends duration and elapsed time, and iOS treats a fresh
+    /// `nowPlayingInfo` as a new item — the scrubber jumps back to the start
+    /// of the bar for a frame each time a chapter changes.
+    func setTitle(_ title: String) {
+        guard var info = center.nowPlayingInfo, info[MPMediaItemPropertyTitle] as? String != title
+        else { return }
+        info[MPMediaItemPropertyTitle] = title
         center.nowPlayingInfo = info
     }
 
