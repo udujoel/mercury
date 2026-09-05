@@ -62,12 +62,25 @@ enum TranscriptScript {
 
     /// How much of a line has been spoken, as a range into its own text.
     ///
-    /// Returns nil when there is nothing to sweep — no word timings (Google,
-    /// or any briefing generated before ElevenLabs), or a position before
-    /// the line starts. The view falls back to lighting the whole line,
-    /// which is what it did for every manifest until now.
+    /// **Nil means "no timings", and only that** — Google, or any briefing
+    /// generated before ElevenLabs. The view falls back to lighting the whole
+    /// line, which is what every manifest got until now.
+    ///
+    /// A timed line that has not reached its first word returns an EMPTY
+    /// range, not nil. Collapsing the two put a line that had not started
+    /// yet on the same branch as a line with no timings at all, so it
+    /// rendered fully lit for the moment before its first word — brightest
+    /// exactly when nothing had been said.
     static func spokenRange(of turn: Turn, atMs ms: Int) -> Range<String.Index>? {
         guard let words = turn.words, !words.isEmpty else { return nil }
+        let start = turn.text.startIndex
+
+        // Once the turn is over the whole line is spoken, including anything
+        // the timings do not cover. A line ending in a punctuation-only
+        // token — an em dash, an ellipsis — has no timed word reaching the
+        // end of the text, so without this its last characters stayed muted
+        // for good.
+        if ms >= turn.endMs { return start..<turn.text.endIndex }
 
         // The last word whose speaking has BEGUN. Not the word containing
         // `ms`: positions land in the gaps between words constantly at 20Hz,
@@ -77,11 +90,13 @@ enum TranscriptScript {
         for (i, w) in words.enumerated() where w.startMs <= ms {
             spoken = i + 1
         }
-        guard spoken > 0 else { return nil }
+        guard spoken > 0 else { return start..<start }
 
         let ranges = wordRanges(in: turn.text, words: words)
-        guard let last = ranges.prefix(spoken).compactMap({ $0 }).last else { return nil }
-        return turn.text.startIndex..<last.upperBound
+        guard let last = ranges.prefix(spoken).compactMap({ $0 }).last else {
+            return start..<start
+        }
+        return start..<last.upperBound
     }
 
     /// Where each timed word sits in the line's own text.

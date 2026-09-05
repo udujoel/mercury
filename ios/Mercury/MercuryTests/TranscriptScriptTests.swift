@@ -129,8 +129,27 @@ final class TranscriptScriptTests: XCTestCase {
             "Northwind paid four")
     }
 
-    func testBeforeTheFirstWordNothingIsLit() {
-        XCTAssertNil(TranscriptScript.spokenRange(of: line, atMs: -1))
+    /// Empty, not nil. Nil is reserved for "this line has no timings at
+    /// all", and collapsing the two rendered a line that had not started
+    /// yet as fully lit — brightest exactly when nothing had been said.
+    func testBeforeTheFirstWordTheSweepIsEmptyRatherThanAbsent() {
+        let r = TranscriptScript.spokenRange(of: line, atMs: -1)
+        XCTAssertNotNil(r)
+        XCTAssertTrue(r!.isEmpty)
+    }
+
+    /// A line ending in a punctuation-only token has no timed word reaching
+    /// the end of its text, so the last characters stayed muted for good.
+    func testTrailingUntimedPunctuationIsLitOnceTheTurnIsOver() {
+        let turn = Turn(speaker: "Maya", segment: "world", text: "Really —",
+                        startMs: 0, endMs: 1_000,
+                        words: [WordSpan(word: "Really", startMs: 0, endMs: 500)])
+
+        let mid = TranscriptScript.spokenRange(of: turn, atMs: 600)
+        XCTAssertEqual(String(turn.text[mid!]), "Really")
+
+        let after = TranscriptScript.spokenRange(of: turn, atMs: 1_000)
+        XCTAssertEqual(String(turn.text[after!]), "Really —")
     }
 
     func testPastTheEndTheWholeLineIsLit() {
