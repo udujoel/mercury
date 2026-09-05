@@ -168,41 +168,63 @@ struct DigestSource: Codable, Equatable, Hashable, Identifiable {
     }
 }
 
-struct DigestNewsletter: Codable, Equatable, Identifiable {
+struct DigestNewsletter: Codable, Equatable, Hashable, Identifiable {
     let id: String
     let sourceName: String
+    let sender: String?
     let subject: String
     let receivedAt: Date?
-    /// Nil when this newsletter's story never made the briefing — which is
-    /// most of them on a busy morning, and the thing this screen exists to
-    /// make visible.
-    let turnIndex: Int?
+    /// The stories this newsletter contributed to. The join back onto
+    /// `Digest.stories`.
+    let storyIds: [String]
+    /// Whether anything from this newsletter reached the audio.
+    ///
+    /// The wire field is `in_briefing`, a BOOL. The first version of this
+    /// model invented a `turn_index` that the backend has never emitted, so
+    /// it decoded as nil for every newsletter and the list reported that
+    /// none of them made the briefing — silently wrong in exactly the
+    /// direction the screen exists to show.
+    let inBriefing: Bool
 
-    var reachedTheBriefing: Bool { turnIndex != nil }
+    var reachedTheBriefing: Bool { inBriefing }
+
+    /// Always nil today: `gmail.py` builds every email Item with no URL,
+    /// because a message in your inbox has no public address. Carried
+    /// because the backend carries it, and documented there for the same
+    /// reason — so nobody builds a tappable row expecting one.
+    let url: URL?
 
     enum CodingKeys: String, CodingKey {
-        case id, subject
+        case id, subject, sender, url
         case sourceName = "source_name"
         case receivedAt = "received_at"
-        case turnIndex = "turn_index"
+        case storyIds = "story_ids"
+        case inBriefing = "in_briefing"
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
         sourceName = try c.decodeIfPresent(String.self, forKey: .sourceName) ?? "Unknown"
+        sender = try c.decodeIfPresent(String.self, forKey: .sender)
         subject = try c.decodeIfPresent(String.self, forKey: .subject) ?? ""
         receivedAt = try c.decodeIfPresent(Date.self, forKey: .receivedAt)
-        turnIndex = try c.decodeIfPresent(Int.self, forKey: .turnIndex)
+        storyIds = try c.decodeIfPresent([String].self, forKey: .storyIds) ?? []
+        inBriefing = try c.decodeIfPresent(Bool.self, forKey: .inBriefing) ?? false
+        url = (try c.decodeIfPresent(String.self, forKey: .url)).flatMap(URL.init(string:))
     }
 
-    init(id: String, sourceName: String, subject: String,
-         receivedAt: Date? = nil, turnIndex: Int? = nil) {
+    init(id: String, sourceName: String, subject: String, sender: String? = nil,
+         receivedAt: Date? = nil, storyIds: [String] = [],
+         inBriefing: Bool = false, url: URL? = nil) {
         self.id = id
         self.sourceName = sourceName
+        self.sender = sender
         self.subject = subject
         self.receivedAt = receivedAt
-        self.turnIndex = turnIndex
+        self.storyIds = storyIds
+        self.inBriefing = inBriefing
+        self.url = url
     }
 }
 

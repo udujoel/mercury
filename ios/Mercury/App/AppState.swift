@@ -69,6 +69,9 @@ final class AppState {
     /// Whether the last archive request failed, as distinct from returning
     /// nothing. The two look the same in `archive` and mean opposite things.
     var archiveFailed = false
+    /// In flight. A third state, because "not yet asked" also looks like
+    /// "nothing there".
+    var archiveLoading = false
     let playback = PlaybackCoordinator()
 
     /// SwiftData persistence (PRD 3.7), handed over by `MercuryApp` from the
@@ -279,6 +282,8 @@ final class AppState {
     @MainActor
     func loadArchive() async {
         archiveFailed = false
+        archiveLoading = true
+        defer { archiveLoading = false }
         do {
             archive = try await api.fetchBriefingIndex()
         } catch {

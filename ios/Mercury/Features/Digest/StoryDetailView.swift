@@ -52,31 +52,33 @@ struct StoryDetailView: View {
         }
     }
 
-    @ViewBuilder
+    /// The lead image, or the accent band that stands in for one.
+    ///
+    /// Same treatment as the card, which is the point: a newsletter-only
+    /// story HAS no picture, and if the card shows a band while the detail
+    /// view shows nothing, opening a story looks like something failed to
+    /// load. A failed fetch gets the band too, for the same reason — a
+    /// publisher refusing a hotlink is ordinary, not an error.
     private var lead: some View {
-        if let url = story.imageURL {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable().aspectRatio(contentMode: .fill)
-                case .failure:
-                    // A publisher's CDN refusing a hotlink is ordinary. The
-                    // story reads perfectly well without its picture, so the
-                    // space closes up rather than showing a broken frame.
-                    // `EmptyView`, not a zero-height Color: the latter still
-                    // participates in layout and leaves the frame's spacing
-                    // behind it.
-                    EmptyView()
-                default:
-                    MercuryColor.accent.color.opacity(0.12)
+        ZStack {
+            if let url = story.imageURL {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image.resizable().aspectRatio(contentMode: .fill)
+                    default:
+                        MercuryColor.accent.color.opacity(0.12)
+                    }
                 }
+            } else {
+                MercuryColor.accent.color.opacity(0.12)
             }
-            .frame(maxWidth: .infinity)
-            .frame(maxHeight: 220)
-            .clipped()
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .accessibilityHidden(true)
         }
+        .frame(maxWidth: .infinity)
+        .frame(height: 200)
+        .clipped()
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .accessibilityHidden(true)
     }
 
     private var headline: some View {
@@ -181,7 +183,14 @@ struct SourceRow: View {
                     .accessibilityHint("Opens the article")
             } else {
                 content(openable: false)
-                    .accessibilityHint("From your inbox — no link to open")
+                    // Conditioned on the type. An email genuinely has no
+                    // public address and saying so is useful; an RSS source
+                    // with a missing URL is a gap in the data, and telling
+                    // the user it came from their inbox would be false.
+                    .accessibilityHint(
+                        source.sourceType == "email"
+                            ? "From your inbox — no link to open"
+                            : "No link available")
             }
         }
     }

@@ -323,11 +323,19 @@ async def list_briefings() -> BriefingIndexResponse:
     """
     storage = build_storage()
     ids = await asyncio.to_thread(storage.list_briefing_ids)
-    playable = [
-        briefing_id
-        for briefing_id in ids
-        if await asyncio.to_thread(storage.audio_exists, briefing_id)
-    ]
+
+    playable = []
+    for briefing_id in ids:
+        # BOTH, not either. `save` writes the audio first, so a run that died
+        # in between leaves audio with no manifest — and the client fetches
+        # the manifest first, so that id is an archive row that 404s the
+        # moment it is tapped.
+        if not await asyncio.to_thread(storage.audio_exists, briefing_id):
+            continue
+        if await asyncio.to_thread(storage.load_manifest, briefing_id) is None:
+            continue
+        playable.append(briefing_id)
+
     playable.sort(reverse=True)
     return BriefingIndexResponse(briefings=playable, count=len(playable))
 

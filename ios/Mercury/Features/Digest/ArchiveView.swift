@@ -24,6 +24,11 @@ struct ArchiveView: View {
     /// opposite things, and saying "nothing earlier yet" about a server you
     /// could not reach is a confident lie about the user's own data.
     var failed: Bool = false
+    /// True while the first request is in flight. Without it the screen
+    /// opens on "Nothing earlier yet" for as long as the round trip takes,
+    /// then replaces it with a list — telling the user their briefings are
+    /// gone and then taking it back.
+    var loading: Bool = false
     let onSelect: (String) -> Void
     /// Retry. The failure state tells you to pull down, so there has to be
     /// something to pull.
@@ -34,6 +39,11 @@ struct ArchiveView: View {
             VStack(alignment: .leading, spacing: 0) {
                 if !ids.isEmpty {
                     list
+                } else if loading {
+                    ProgressView()
+                        .tint(MercuryColor.accent.color)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.top, MercurySpace.section)
                 } else if failed {
                     unreachable
                 } else {
@@ -136,22 +146,46 @@ struct ArchiveView: View {
     /// Falls back to the raw id rather than showing nothing: an id that does
     /// not parse is a bug worth seeing, and a blank row is a bug you cannot.
     static func display(_ id: String) -> String {
-        guard let date = idFormatter.date(from: id) else { return id }
-        if Calendar.current.isDateInToday(date) { return "Today" }
-        if Calendar.current.isDateInYesterday(date) { return "Yesterday" }
-        return date.formatted(.dateTime.weekday(.wide).day().month(.wide))
+        guard let date = idFormatter().date(from: id) else { return id }
+
+        // "Today" has to mean today ON THE SERVER, in the zone the id was
+        // derived in — the same comparison the id itself was made with.
+        // `Calendar.current` answers a different question, and answers it
+        // wrongly by a whole day for anyone not in their configured zone.
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = BriefingClock.serverTimeZone
+        if calendar.isDateInToday(date) { return "Today" }
+        if calendar.isDateInYesterday(date) { return "Yesterday" }
+
+        // The style's own `timeZone` symbol formats a zone NAME; setting the
+        // zone the date is rendered IN is `.timeZone(_:)` on the style
+        // itself, via `FormatStyle`'s environment.
+        var style = Date.FormatStyle.dateTime.weekday(.wide).day().month(.wide)
+        style.timeZone = BriefingClock.serverTimeZone
+        return date.formatted(style)
     }
 
-    /// Fixed locale and calendar: this PARSES a machine identifier the
-    /// backend wrote, so it must not follow the user's calendar preference.
-    private static let idFormatter: DateFormatter = {
+    /// Parsed in the SERVER's zone, which is where these ids come from.
+    ///
+    /// `BriefingClock` already holds that zone and self-corrects on first
+    /// contact with the server; the first cut of this used `.current` and
+    /// was right only for a user sitting in their configured timezone.
+    ///
+    /// Not a stored `let`: the zone can change under us when the client
+    /// learns the server's, and a formatter built once at launch would keep
+    /// the old one for the life of the process.
+    ///
+    /// Locale and calendar stay pinned — this parses a machine identifier,
+    /// and a non-Gregorian calendar preference must not fail to read a
+    /// Gregorian date.
+    private static func idFormatter() -> DateFormatter {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.calendar = Calendar(identifier: .gregorian)
-        f.timeZone = .current
+        f.timeZone = BriefingClock.serverTimeZone
         f.dateFormat = "yyyy-MM-dd"
         return f
-    }()
+    }
 }
 
 #Preview("Archive") {

@@ -338,8 +338,18 @@ class R2Storage:
                 head = self._client.head_object(
                     Bucket=self._bucket, Key=self._audio_key(briefing_id, fmt)
                 )
-            except ClientError:
-                continue
+            except ClientError as exc:
+                # ONLY a 404 means absent. Swallowing every ClientError made a
+                # rotated or under-scoped credential look like an empty
+                # bucket, so the archive would come back empty and say so
+                # confidently — the same class of lie as `_delete` reporting
+                # success on a 403, which this module already documents.
+                status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+                if status == 404 or exc.response.get("Error", {}).get("Code") in {
+                    "404", "NoSuchKey", "NotFound",
+                }:
+                    continue
+                raise
             if head.get("ContentLength", 0) >= MIN_PLAYABLE_AUDIO_BYTES:
                 return True
         return False

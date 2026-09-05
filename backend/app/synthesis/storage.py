@@ -382,11 +382,18 @@ class LocalFilesystemStorage:
         return None
 
     def audio_exists(self, briefing_id: str) -> bool:
-        return any(
-            (path := self._audio_path(briefing_id, fmt)).exists()
-            and path.stat().st_size >= MIN_PLAYABLE_AUDIO_BYTES
-            for fmt in KNOWN_AUDIO_FORMATS
-        )
+        for fmt in KNOWN_AUDIO_FORMATS:
+            try:
+                size = self._audio_path(briefing_id, fmt).stat().st_size
+            except OSError:
+                # Absent, or deleted between the check and the stat — the
+                # retention sweep runs against this same directory, so the
+                # race is real rather than theoretical. Either way this
+                # format is not playable; it must not 500 the archive.
+                continue
+            if size >= MIN_PLAYABLE_AUDIO_BYTES:
+                return True
+        return False
 
     def delete_audio(self, briefing_id: str) -> None:
         for fmt in KNOWN_AUDIO_FORMATS:

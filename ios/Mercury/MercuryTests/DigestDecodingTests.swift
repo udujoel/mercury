@@ -57,7 +57,8 @@ final class DigestDecodingTests: XCTestCase {
              "covered_in_audio": true, "turn_index": 4, "segment": "world"}
         ], "newsletters": [
             {"id": "nl_1", "source_name": "Stratechery", "subject": "Monday",
-             "received_at": "2026-09-04T05:00:00Z", "turn_index": 2}
+             "received_at": "2026-09-04T05:00:00Z", "in_briefing": true,
+             "story_ids": ["st_c1"]}
         ]}
         """)
 
@@ -145,6 +146,38 @@ final class DigestDecodingTests: XCTestCase {
 
     // MARK: - The archive index
 
+    /// The field the backend actually emits is `in_briefing`, a BOOL.
+    ///
+    /// The first cut of this model invented a `turn_index` the backend has
+    /// never written, so every newsletter decoded as "did not reach the
+    /// briefing" — silently wrong in exactly the direction the screen
+    /// exists to show, and green, because nothing asserted it against a
+    /// real payload.
+    func testANewsletterThatReachedTheBriefingSaysSo() throws {
+        let digest = try decode("""
+        {"briefing_id": "x", "newsletters": [
+            {"id": "nl_1", "source_name": "Stratechery", "subject": "Monday",
+             "in_briefing": true, "story_ids": ["st_c1"]},
+            {"id": "nl_2", "source_name": "Platformer", "subject": "Friday",
+             "in_briefing": false}
+        ]}
+        """)
+
+        XCTAssertEqual(digest.newsletters.map(\.reachedTheBriefing), [true, false])
+        XCTAssertEqual(digest.newsletters.first?.storyIds, ["st_c1"])
+    }
+
+    /// A newsletter has no public URL — `gmail.py` builds every email Item
+    /// with none — so the field is carried and always nil.
+    func testANewsletterHasNoLink() throws {
+        let digest = try decode("""
+        {"briefing_id": "x", "newsletters": [
+            {"id": "nl_1", "source_name": "S", "subject": "M", "url": null}
+        ]}
+        """)
+        XCTAssertNil(digest.newsletters.first?.url)
+    }
+
     func testTheBriefingIndexDecodes() throws {
         let index = try JSONDecoder().decode(
             BriefingIndex.self,
@@ -177,10 +210,14 @@ final class DigestDecodingTests: XCTestCase {
     func testAnArchiveRowNamesTheDayRatherThanShowingAnIsoString() {
         let shown = ArchiveView.display("2020-03-06")
 
+        // The property, not the wording: a machine id became something a
+        // person reads. Asserting "March" and "Friday" was the same mistake
+        // the doc comment above warns about, one axis over — the first
+        // version was time-dependent, the second was locale-dependent, and
+        // both pass on the machine that wrote them and fail elsewhere.
         XCTAssertNotEqual(shown, "2020-03-06")
-        XCTAssertTrue(shown.contains("March"), shown)
+        XCTAssertFalse(shown.isEmpty)
         XCTAssertTrue(shown.contains("6"), shown)
-        XCTAssertTrue(shown.contains("Friday"), shown)
     }
 
     /// Relative to now, computed rather than hardcoded, for the same reason.
