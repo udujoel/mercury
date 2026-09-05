@@ -2,7 +2,11 @@ name: backend
 
 on:
   push:
-    paths: ["backend/**", ".github/workflows/backend.yml"]
+    # `assets/**` on BOTH triggers. Adding it only to `pull_request` left
+    # a direct push of an unreadable track reaching the default branch
+    # without this suite ever running — the exact gap the filter was added
+    # to close, closed on one side only.
+    paths: ["backend/**", "assets/**", ".github/workflows/backend.yml"]
   pull_request:
     # `assets/**` too: the music tests decode real files from there, so a
     # change to an asset must run this suite. Without it, replacing a track
