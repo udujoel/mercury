@@ -364,7 +364,21 @@ async def _generate(
     # every call site: `get_settings()` is already the one place every
     # component asks about configuration, and adding a second source of
     # truth beside it is how the two drift.
-    user_settings = await asyncio.to_thread(storage.load_settings)
+    try:
+        user_settings = await asyncio.to_thread(storage.load_settings)
+    except Exception:
+        # `load_settings` handles a missing or corrupt FILE, but not a
+        # transient R2 error or a 403 from a rotated token — those raise, and
+        # raising here aborted the run before generation started. A
+        # preferences read must never be able to cost the morning; the
+        # environment is a working configuration.
+        log.error(
+            "could not read saved settings; using the environment. Saved "
+            "preferences are NOT being applied to this run.",
+            exc_info=True,
+        )
+        user_settings = None
+
     if user_settings is not None:
         length = user_settings.length_or(length)
         apply_to_environment(user_settings)

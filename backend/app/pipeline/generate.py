@@ -161,17 +161,25 @@ async def generate_briefing(
     # Gmail query. Case-insensitive, and matched as a substring so "Substack"
     # mutes every newsletter from a sender whose name contains it — which is
     # how a person thinks about muting a publication.
+    #
+    # `all_emails` keeps everything that arrived. Muting suppresses the
+    # READ-ALOUD, not the record: the desk still shows that a newsletter
+    # came in, which is the promise the settings screen makes and the whole
+    # reason the digest exists (ADR-013). Filtering `emails` alone made a
+    # muted publication vanish from both, so the user could not tell muted
+    # from never-arrived.
+    all_emails = emails
     if muted_senders:
         wanted = [s.strip().lower() for s in muted_senders if s.strip()]
         if wanted:
-            before = len(emails)
             emails = [
                 em for em in emails
                 if not any(w in em.source_name.lower() for w in wanted)
             ]
             log.info(
-                "muted %d of %d emails from %d muted sender(s)",
-                before - len(emails), before, len(wanted),
+                "muted %d of %d emails from %d muted sender(s); they remain "
+                "on the desk",
+                len(all_emails) - len(emails), len(all_emails), len(wanted),
             )
 
     # Newsletters and articles cluster TOGETHER, in one call, which is the
@@ -294,7 +302,9 @@ async def generate_briefing(
     digest = build_digest(
         briefing_id=briefing_id,
         stories=all_stories,
-        emails=emails,
+        # Everything that arrived, including muted senders — see the note
+        # where `all_emails` is set.
+        emails=all_emails,
         manifest=manifest,
         cards=cards,
     )
@@ -370,7 +380,16 @@ async def _ingest_concurrently(
             raise RuntimeError(
                 "fetch_articles not available (app.ingestion.rss.fetch_articles)"
             )
-        return await fetch_articles(fixture=rss_fixture, feeds=feeds or None)
+        # `feeds` passed ONLY when there is one. Tests and callers inject
+        # `fetch_articles` fakes that accept `fixture` alone, and partials
+        # that already bind `feeds`; passing it unconditionally raised
+        # TypeError, which `gather(return_exceptions=True)` then swallowed
+        # into an empty news segment. A briefing quietly losing every world
+        # story because of a keyword argument is exactly the failure this
+        # degradation is supposed to protect against, not cause.
+        if feeds:
+            return await fetch_articles(fixture=rss_fixture, feeds=feeds)
+        return await fetch_articles(fixture=rss_fixture)
 
     labels = ("email", "calendar", "weather", "news")
     defaults: tuple[Any, Any, Any, Any] = ([], [], None, [])

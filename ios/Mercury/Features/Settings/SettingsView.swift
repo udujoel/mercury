@@ -73,6 +73,7 @@ struct SettingsView: View {
                 // stored a preference nothing reads. ROADMAP task 15.
                 Text("Takes effect on the next briefing, not this morning's.")
             }
+            .disabled(!isEditable)
 
             Section {
                 Picker("Voice", selection: providerBinding) {
@@ -96,37 +97,16 @@ struct SettingsView: View {
             } header: {
                 Text("Voice")
             } footer: {
-                // Honest about the gap rather than presenting a text field as
-                // if it were a picker. Listing real voices needs the
-                // ElevenLabs key, and the key belongs on the server — putting
-                // it on the phone to populate a menu would be the wrong trade
-                // by a wide margin.
-                Text(settings.ttsProvider == "elevenlabs"
-                     ? "Voice IDs from elevenlabs.io — Voices, then Copy Voice "
-                       + "ID. A picker needs the API key, which stays on the "
-                       + "server."
-                     : "Google is the fallback whenever ElevenLabs is "
-                       + "unavailable, so a briefing always ships.")
+                Text(voiceNote)
             }
+            .disabled(!isEditable)
 
             Section {
-                LineListEditor(
-                    title: "News feeds",
-                    placeholder: "One feed URL per line",
-                    lines: linesBinding(\.feeds),
-                    emptyNote: "Empty means Mercury's curated feeds."
-                )
-                LineListEditor(
-                    title: "Muted senders",
-                    placeholder: "One sender per line",
-                    lines: linesBinding(\.mutedSenders),
-                    emptyNote: "Matched loosely, so \"Substack\" mutes every "
-                        + "sender whose name contains it. Muted mail still "
-                        + "appears on the desk — it just is not read aloud."
-                )
+                sources
             } header: {
                 Text("Sources")
             }
+            .disabled(!isEditable)
 
             Section {
                 Link("Manage access", destination: Self.googlePermissions)
@@ -148,10 +128,10 @@ struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
-        // The whole form, not just the Save button. An edit made during the
-        // request was marked `.saved` without ever being sent, so leaving the
-        // screen lost it.
-        .disabled(!isEditable)
+        // NOT form-wide. Wake time is stored on this device and does not
+        // come from the artifact, so disabling it because a SERVER read
+        // failed would take away the one setting that still works. Each
+        // server-backed section carries the flag instead.
         .task {
             guard loadState == .loading, !edited else { return }
             do {
@@ -167,6 +147,48 @@ struct SettingsView: View {
             }
         }
     }
+
+    // MARK: - Sources
+
+    /// Factored out of `body` because the type-checker gave up on it inline.
+    @ViewBuilder
+    private var sources: some View {
+        LineListEditor(
+            title: "News feeds",
+            placeholder: "One feed URL per line",
+            lines: linesBinding(\.feeds),
+            emptyNote: Self.feedsNote
+        )
+        LineListEditor(
+            title: "Muted senders",
+            placeholder: "One sender per line",
+            lines: linesBinding(\.mutedSenders),
+            emptyNote: Self.mutedNote
+        )
+    }
+
+    private static let feedsNote = "Empty means Mercury's curated feeds."
+
+    /// Honest about the gap rather than presenting a text field as if it
+    /// were a picker: listing real voices needs the ElevenLabs key, and the
+    /// key belongs on the server.
+    private var voiceNote: String {
+        if settings.ttsProvider == "elevenlabs" {
+            return "Voice IDs from elevenlabs.io \u{2014} Voices, then Copy "
+                + "Voice ID. A picker needs the API key, which stays on the "
+                + "server."
+        }
+        return "Google is the fallback whenever ElevenLabs is unavailable, "
+            + "so a briefing always ships."
+    }
+
+    /// Says what muting does AND what it does not. Muted mail still reaches
+    /// the desk — suppressing it from both would leave no way to tell a
+    /// muted publication from one that never arrived.
+    private static let mutedNote =
+        "Matched loosely, so \"Substack\" mutes every sender whose name "
+        + "contains it. Muted mail still appears on the desk \u{2014} it is "
+        + "just not read aloud."
 
     // MARK: - Saving
 
