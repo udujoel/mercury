@@ -59,6 +59,7 @@ struct SettingsView: View {
 
             Section {
                 Picker("Length", selection: lengthBinding) {
+                    Text("Server default").tag(Self.unsetTag)
                     ForEach(BriefingLength.allCases) { length in
                         Text(length.label).tag(length.rawValue)
                     }
@@ -77,6 +78,7 @@ struct SettingsView: View {
 
             Section {
                 Picker("Voice", selection: providerBinding) {
+                    Text("Server default").tag(Self.unsetTag)
                     Text("Google").tag("google")
                     Text("ElevenLabs").tag("elevenlabs")
                 }
@@ -136,12 +138,18 @@ struct SettingsView: View {
             guard loadState == .loading, !edited else { return }
             do {
                 let saved = try await appState.fetchSavedSettings()
-                // Only when nothing has been typed. A slow response landing
-                // after the user changed something would overwrite the edit
-                // and then save the OLD values.
+                // The load has RESOLVED either way — that is what `.ready`
+                // means, and it must be set before the edit check. Returning
+                // early left `loadState == .loading` forever, so `isEditable`
+                // stayed false and the form was permanently disabled for
+                // anyone who typed while it was loading. A worse bug than
+                // the one being fixed.
+                loadState = .ready
+                // The VALUES are only adopted when nothing has been typed. A
+                // slow response landing after an edit would overwrite it and
+                // then save the old values.
                 guard !edited else { return }
                 settings = saved ?? UserSettings()
-                loadState = .ready
             } catch {
                 loadState = .failed(error.localizedDescription)
             }
@@ -254,17 +262,32 @@ struct SettingsView: View {
         if saveState == .saved { saveState = .idle }
     }
 
+    /// The tag meaning "no value in the artifact — use whatever the server
+    /// is configured with".
+    ///
+    /// Both pickers used to fall back to a concrete value when unset, which
+    /// was wrong twice over: the screen SHOWED "Standard" and "Google" for a
+    /// deployment configured otherwise, and saving anything at all then
+    /// wrote those defaults over the deployment's own configuration. Someone
+    /// who opened settings to mute a sender would have silently pinned the
+    /// length and switched the voice back to Google.
+    private static let unsetTag = ""
+
     private var lengthBinding: Binding<String> {
         Binding(
-            get: { settings.briefingLength ?? BriefingLength.standard.rawValue },
-            set: { value in edit { $0.briefingLength = value } }
+            get: { settings.briefingLength ?? Self.unsetTag },
+            set: { value in
+                edit { $0.briefingLength = value.isEmpty ? nil : value }
+            }
         )
     }
 
     private var providerBinding: Binding<String> {
         Binding(
-            get: { settings.ttsProvider ?? "google" },
-            set: { value in edit { $0.ttsProvider = value } }
+            get: { settings.ttsProvider ?? Self.unsetTag },
+            set: { value in
+                edit { $0.ttsProvider = value.isEmpty ? nil : value }
+            }
         )
     }
 

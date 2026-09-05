@@ -37,7 +37,14 @@ def apply_to_environment(user_settings) -> None:
             # long-lived process (the API, the scheduler) a stale override
             # would outlive the setting that created it and null would
             # quietly mean "keep the last value".
-            previous = _ORIGINAL_ENVIRONMENT.pop(key)
+            #
+            # The record is READ, not popped. Popping it made this work
+            # exactly once: a second call with the same field still null
+            # found nothing to restore and left the first call's override in
+            # place, so "null means the environment" quietly stopped being
+            # true after one round trip. The entry is only meaningful while
+            # the process lives, and keeping it costs nothing.
+            previous = _ORIGINAL_ENVIRONMENT[key]
             if previous is None:
                 os.environ.pop(key, None)
             else:

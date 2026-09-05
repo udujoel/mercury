@@ -384,11 +384,11 @@ async def _generate(
         apply_to_environment(user_settings)
         log.info(
             "applied saved settings (length=%s, provider=%s, feeds=%d, "
-            "disabled segments=%s)",
+            "muted senders=%d)",
             length.value,
             user_settings.tts_provider or "unset",
             len(user_settings.feeds),
-            user_settings.disabled_segments or "none",
+            len(user_settings.muted_senders),
         )
 
     try:

@@ -501,3 +501,63 @@ def test_the_settings_route_exists_on_fastapi_too(tmp_path, monkeypatch):
     assert got.json()["muted_senders"] == ["Substack"]
 
     get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_generation_logs_the_settings_it_applied_without_crashing(tmp_path):
+    """The log line that referenced a field removed in the same PR.
+
+    `user_settings.disabled_segments` survived the field's deletion and
+    would have raised AttributeError on EVERY run with a settings file —
+    the whole generation path, killed by a log statement. No test exercised
+    `_generate` with settings present, so a green suite said nothing.
+    """
+    from app.core.schemas import BriefingLength, UserSettings
+    from app.synthesis.storage import LocalFilesystemStorage
+
+    storage = LocalFilesystemStorage(base_dir=tmp_path)
+    storage.save_settings(
+        UserSettings(briefing_length="express", muted_senders=["Substack"])
+    )
+    loaded = storage.load_settings()
+
+    # Exactly the interpolation `_generate` performs.
+    message = (
+        "applied saved settings (length=%s, provider=%s, feeds=%d, "
+        "muted senders=%d)"
+        % (
+            loaded.length_or(BriefingLength.STANDARD).value,
+            loaded.tts_provider or "unset",
+            len(loaded.feeds),
+            len(loaded.muted_senders),
+        )
+    )
+    assert "express" in message
+    assert "muted senders=1" in message
+
+
+def test_clearing_a_setting_twice_still_restores_the_environment(monkeypatch):
+    """`pop` made the restore work exactly once.
+
+    A second apply with the field still null found nothing to restore and
+    left the first call's override in place — "null means the environment"
+    silently stopping being true after one round trip, in a long-lived
+    process where nobody would think to look.
+    """
+    from app.core.config import apply_to_environment, get_settings
+    from app.core.schemas import UserSettings
+
+    monkeypatch.setenv("TTS_PROVIDER", "google")
+    get_settings.cache_clear()
+
+    apply_to_environment(UserSettings(tts_provider="elevenlabs"))
+    assert get_settings().tts_provider == "elevenlabs"
+
+    apply_to_environment(UserSettings())          # cleared
+    assert get_settings().tts_provider == "google"
+
+    apply_to_environment(UserSettings(tts_provider="elevenlabs"))
+    apply_to_environment(UserSettings())          # cleared AGAIN
+    assert get_settings().tts_provider == "google"
+
+    get_settings.cache_clear()
