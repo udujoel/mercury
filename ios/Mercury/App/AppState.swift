@@ -686,10 +686,18 @@ final class AppState {
             // onto: `finish()` keeps the file so it can be replayed, so
             // without unloading it the new briefing could never be
             // published and the next tap replayed yesterday's.
-            noteRebuildLanded(manifest)
+            // AFTER the swap, not before it.
+            //
+            // The early return below is the mid-listen case: the manifest is
+            // persisted but the coordinator keeps the old file, deliberately.
+            // Marking the rebuild landed there said "the new briefing is
+            // loaded" when it was not — so pausing and pressing play again
+            // resumed the stale audio instead of fetching, which is the
+            // exact bug the pending state exists to prevent.
             if playback.isLoaded && !playback.hasFinished { return true }
             playback.unload()
             self.manifest = manifest
+            noteRebuildLanded(manifest)
             return true
         } catch {
             print("[Mercury] Background prefetch for briefing \(id) failed: \(error)")

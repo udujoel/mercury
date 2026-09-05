@@ -799,23 +799,55 @@ async function reserveRegeneration(env, key, id) {
     // Only `null` is a failed precondition. A stub or a binding that
     // returns undefined has written, and treating that as a loss would
     // spin the loop and refuse a request that actually succeeded.
-    if (written !== null) return { ok: true, used: used + 1, previous: used };
+    //
+    // The etag of OUR write is carried out so the release can be
+    // conditional on it. Without that the rollback is the one unguarded
+    // write left in this path, and it undoes the whole point of reserving.
+    if (written !== null) {
+      return {
+        ok: true,
+        used: used + 1,
+        previous: used,
+        etag: written?.etag ?? written?.httpEtag,
+      };
+    }
   }
 
   return { ok: false, used: MAX_REGENERATIONS_PER_DAY, contended: true };
 }
 
-/** Hand a reservation back after a dispatch that never started. */
+/**
+ * Hand a reservation back after a dispatch that never started.
+ *
+ * CONDITIONAL, on the etag of the reservation being released. The first cut
+ * wrote the old count back unconditionally, which reopened the hole the
+ * reservation had just closed: if another request reserved a slot in the gap
+ * between this dispatch failing and this rollback running, the rollback
+ * overwrote THEIR count with the older one and the cap stopped counting
+ * again. Two failures in a row could then hand out the day's allowance twice.
+ *
+ * A precondition that does not match means the counter has moved on and this
+ * reservation is no longer the top of it — so there is nothing safe to undo,
+ * and leaving it alone costs one generation rather than corrupting the cap.
+ */
 async function releaseRegeneration(env, key, id, reservation) {
   try {
-    // Written back rather than deleted: R2's `delete` takes no conditional,
-    // so deleting could remove a reservation another request made in the
-    // meantime. The key is `<id>.regenerations.json` either way, so
-    // retention sweeps the object with the briefing.
+    // Written back rather than deleted: R2's `delete` takes no conditional
+    // at all, so a delete could remove a reservation another request made
+    // in the meantime with no way to refuse. The key is
+    // `<id>.regenerations.json` either way, so retention sweeps the object
+    // with the briefing.
     await env.BRIEFINGS.put(
       key,
       JSON.stringify({ count: reservation.previous, briefing_id: id }),
-      { httpMetadata: { contentType: "application/json" } },
+      {
+        httpMetadata: { contentType: "application/json" },
+        // No etag means the reservation was written by something that does
+        // not report one. Refuse to roll back rather than roll back blind.
+        ...(reservation.etag
+          ? { onlyIf: { etagMatches: reservation.etag } }
+          : {}),
+      },
     );
   } catch {
     // Best effort. Failing to give the allowance back must not turn a 502

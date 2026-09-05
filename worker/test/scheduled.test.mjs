@@ -678,6 +678,58 @@ describe("settings", () => {
     }
   });
 
+  test("a rollback cannot undo someone else's reservation", async () => {
+    const original = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      if (calls === 1) {
+        // The first dispatch is slow AND fails, which is the window the
+        // rollback has to be safe in.
+        await new Promise((r) => setTimeout(r, 25));
+        return new Response("nope", { status: 500 });
+      }
+      return new Response(null, { status: 204 });
+    };
+
+    try {
+      const env = { ...envFor({}), GITHUB_DISPATCH_TOKEN: "t", GITHUB_REPO: "o/r" };
+      env.BRIEFINGS = writableBucket({});
+      const post = () =>
+        worker.fetch(
+          new Request("https://x/regenerate", {
+            method: "POST",
+            headers: { "x-mercury-token": TOKEN },
+          }),
+          env,
+        );
+
+      const first = post();
+      // Long enough for the first to have reserved and be waiting on its
+      // dispatch, so the second reserves on top of it.
+      await new Promise((r) => setTimeout(r, 5));
+      const second = post();
+      const [a, b] = await Promise.all([first, second]);
+
+      assert.equal(a.status, 502, "the first dispatch failed");
+      assert.equal(b.status, 200, "the second one started");
+
+      // ONE generation is running, so one is spent. The rollback of the
+      // failed request must not give back an allowance the successful one
+      // is holding: written unconditionally it put `count: 0` over the
+      // second request's `count: 2`, and the day got its whole allowance
+      // back despite a paid workflow running.
+      const [key] = Object.keys(env.BRIEFINGS.written);
+      const counter = JSON.parse(env.BRIEFINGS.written[key]);
+      assert.ok(
+        counter.count >= 1,
+        `a running generation must stay counted, got ${counter.count}`,
+      );
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
   test("the regeneration counter is keyed so retention sweeps it", async () => {
     const original = globalThis.fetch;
     globalThis.fetch = async () => new Response(null, { status: 204 });
