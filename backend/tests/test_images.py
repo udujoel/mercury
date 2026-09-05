@@ -352,3 +352,58 @@ def test_the_index_route_lists_only_briefings_with_playable_audio(tmp_path):
     assert storage.audio_exists("2026-09-04") is True
     assert storage.audio_exists("2026-09-03") is False
     assert storage.audio_exists("2026-09-02") is False
+
+
+# ── settings the generation job actually reads ────────────────
+
+
+def test_settings_survive_a_round_trip(tmp_path):
+    from app.core.schemas import UserSettings
+    from app.synthesis.storage import LocalFilesystemStorage
+
+    storage = LocalFilesystemStorage(base_dir=tmp_path)
+    assert storage.load_settings() is None  # every deployment starts here
+
+    storage.save_settings(
+        UserSettings(briefing_length="express", disabled_segments=["weather"])
+    )
+    loaded = storage.load_settings()
+    assert loaded.briefing_length == "express"
+    assert loaded.disabled_segments == ["weather"]
+
+
+def test_corrupt_settings_fall_back_to_the_environment(tmp_path):
+    """A preferences file must not be able to break the morning."""
+    from app.synthesis.storage import LocalFilesystemStorage
+
+    storage = LocalFilesystemStorage(base_dir=tmp_path)
+    (tmp_path / "settings.json").write_text("{ not json")
+
+    assert storage.load_settings() is None
+
+
+def test_retention_cannot_sweep_the_settings(tmp_path):
+    """`settings.json` is deliberately not `YYYY-MM-DD.`-prefixed.
+
+    `_BRIEFING_KEY` only matches that shape, so retention cannot mistake
+    preferences for a briefing and delete them after thirty days.
+    """
+    from app.synthesis.storage import briefing_id_from_key
+
+    assert briefing_id_from_key("settings.json") is None
+    assert briefing_id_from_key("2026-09-04.manifest.json") == "2026-09-04"
+
+
+def test_an_unknown_length_falls_back_rather_than_failing_the_run():
+    """The artifact is written by a client that may be newer or older than
+    the backend reading it, so a value this build does not recognise is an
+    ordinary event — not a reason to lose the only run of the day."""
+    from app.core.schemas import BriefingLength, UserSettings
+
+    assert UserSettings(briefing_length="deep").length_or(
+        BriefingLength.STANDARD
+    ) is BriefingLength.STANDARD
+    assert UserSettings().length_or(BriefingLength.EXPRESS) is BriefingLength.EXPRESS
+    assert UserSettings(briefing_length="express").length_or(
+        BriefingLength.STANDARD
+    ) is BriefingLength.EXPRESS

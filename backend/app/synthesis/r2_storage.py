@@ -29,8 +29,15 @@ import json
 import logging
 from functools import cached_property
 
+from pydantic import ValidationError
+
 from app.core.config import get_settings
-from app.core.schemas import BriefingDigest, BriefingManifest
+from app.core.schemas import (
+    SETTINGS_KEY,
+    BriefingDigest,
+    BriefingManifest,
+    UserSettings,
+)
 from app.synthesis.storage import (
     AUDIO_MEDIA_TYPES,
     KNOWN_AUDIO_FORMATS,
@@ -319,6 +326,27 @@ class R2Storage:
             if data is not None:
                 return data, AUDIO_MEDIA_TYPES.get(fmt, "application/octet-stream")
         return None
+
+    def load_settings(self) -> UserSettings | None:
+        raw = self._get(SETTINGS_KEY)
+        if raw is None:
+            return None
+        try:
+            return UserSettings.model_validate_json(raw)
+        except ValidationError:
+            log.error(
+                "settings object %r will not parse; using the environment",
+                SETTINGS_KEY,
+            )
+            return None
+
+    def save_settings(self, settings: UserSettings) -> None:
+        self._client.put_object(
+            Bucket=self._bucket,
+            Key=SETTINGS_KEY,
+            Body=settings.model_dump_json(indent=2).encode(),
+            ContentType="application/json",
+        )
 
     def audio_exists(self, briefing_id: str) -> bool:
         """HEAD, not GET.

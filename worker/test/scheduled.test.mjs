@@ -204,6 +204,133 @@ describe("GET /briefings", () => {
   });
 });
 
+describe("settings", () => {
+  /** A bucket that also records writes, which `bucket()` does not. */
+  function writableBucket(objects = {}) {
+    const base = bucket(objects);
+    const written = {};
+    return {
+      ...base,
+      written,
+      put: async (key, body) => {
+        written[key] = body;
+      },
+    };
+  }
+
+  test("GET /settings returns what was saved", async () => {
+    const res = await worker.fetch(
+      new Request("https://x/settings", { headers: { "x-mercury-token": TOKEN } }),
+      envFor({ "settings.json": { json: { briefing_length: "deep" } } }),
+    );
+
+    assert.equal(res.status, 200);
+    // Never cached: a stale read would show a preference the user just
+    // replaced.
+    assert.equal(res.headers.get("cache-control"), "no-store");
+  });
+
+  test("GET /settings 404s when none were ever saved", async () => {
+    const res = await worker.fetch(
+      new Request("https://x/settings", { headers: { "x-mercury-token": TOKEN } }),
+      envFor({}),
+    );
+    // Ordinary, not an error: every deployment starts here.
+    assert.equal(res.status, 404);
+  });
+
+  test("PUT /settings stores only declared fields", async () => {
+    const env = envFor({});
+    env.BRIEFINGS = writableBucket({});
+
+    const res = await worker.fetch(
+      new Request("https://x/settings", {
+        method: "PUT",
+        headers: { "x-mercury-token": TOKEN },
+        body: JSON.stringify({
+          briefing_length: "quick",
+          voice_a: "v1",
+          // Not a declared field. The generation job parses this file, so a
+          // write path that forwards unknown keys is a write path that
+          // forwards whatever a future client bug puts in them.
+          arbitrary: { nested: "junk" },
+        }),
+      }),
+      env,
+    );
+
+    assert.equal(res.status, 200);
+    const stored = JSON.parse(env.BRIEFINGS.written["settings.json"]);
+    assert.equal(stored.briefing_length, "quick");
+    assert.equal(stored.voice_a, "v1");
+    assert.equal("arbitrary" in stored, false);
+  });
+
+  test("PUT /settings needs the token", async () => {
+    const env = envFor({});
+    env.BRIEFINGS = writableBucket({});
+
+    const res = await worker.fetch(
+      new Request("https://x/settings", {
+        method: "PUT",
+        body: JSON.stringify({ briefing_length: "quick" }),
+      }),
+      env,
+    );
+
+    assert.equal(res.status, 401);
+    assert.equal(Object.keys(env.BRIEFINGS.written).length, 0);
+  });
+
+  test("PUT /settings refuses a body that is not a JSON object", async () => {
+    const env = envFor({});
+    env.BRIEFINGS = writableBucket({});
+
+    for (const body of ["not json", "[1,2,3]", "null"]) {
+      const res = await worker.fetch(
+        new Request("https://x/settings", {
+          method: "PUT",
+          headers: { "x-mercury-token": TOKEN },
+          body,
+        }),
+        env,
+      );
+      assert.equal(res.status, 400, body);
+    }
+    assert.equal(Object.keys(env.BRIEFINGS.written).length, 0);
+  });
+
+  test("PUT /settings caps the size", async () => {
+    const env = envFor({});
+    env.BRIEFINGS = writableBucket({});
+
+    const res = await worker.fetch(
+      new Request("https://x/settings", {
+        method: "PUT",
+        headers: { "x-mercury-token": TOKEN },
+        body: JSON.stringify({ feeds: [Array(20000).join("x")] }),
+      }),
+      env,
+    );
+
+    assert.equal(res.status, 413);
+    assert.equal(Object.keys(env.BRIEFINGS.written).length, 0);
+  });
+
+  test("PUT to anything else is still refused", async () => {
+    const res = await worker.fetch(
+      new Request("https://x/briefing/2026-08-30", {
+        method: "PUT",
+        headers: { "x-mercury-token": TOKEN },
+        body: "{}",
+      }),
+      envFor({}),
+    );
+    // The write exception is settings and nothing else.
+    assert.equal(res.status, 405);
+  });
+});
+
 function envFor(objects) {
   return {
     BRIEFINGS: bucket(objects),

@@ -33,6 +33,14 @@ protocol APIClientProtocol {
     func fetchDigest(briefingId: String) async throws -> Digest?
     /// The briefing ids still in the bucket, newest first.
     func fetchBriefingIndex() async throws -> [String]
+    /// The saved settings, or nil when none have ever been written.
+    ///
+    /// Nil rather than throwing on 404: never-saved is the state every
+    /// deployment starts in, and the screen shows its defaults.
+    func fetchSettings() async throws -> UserSettings?
+    /// Saves settings for the GENERATION JOB to read. Not `UserDefaults` —
+    /// the cron runs on a machine that cannot see the phone.
+    func saveSettings(_ settings: UserSettings) async throws
     /// Registers (or refreshes) this device's APNs token with the backend
     /// so the server cron can wake it with a silent push. Mirrors
     /// `POST /devices/register` in `backend/app/api/devices.py`.
@@ -160,6 +168,33 @@ final class APIClient: APIClientProtocol {
     func fetchBriefingIndex() async throws -> [String] {
         let index: BriefingIndex = try await request(.briefingIndex)
         return index.briefings
+    }
+
+    func fetchSettings() async throws -> UserSettings? {
+        do {
+            let settings: UserSettings = try await request(.settings)
+            return settings
+        } catch APIError.badStatus(404, _) {
+            return nil
+        }
+    }
+
+    func saveSettings(_ settings: UserSettings) async throws {
+        var urlRequest = URLRequest(url: Endpoint.settings.url())
+        urlRequest.httpMethod = "PUT"
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+        urlRequest.httpBody = try JSONEncoder().encode(settings)
+        Self.authorize(&urlRequest)
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: urlRequest)
+        } catch {
+            throw APIError.transport(error)
+        }
+        try Self.validate(response, body: data)
     }
 
     /// Downloads the briefing audio to a local temp file and returns its

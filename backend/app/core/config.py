@@ -3,6 +3,36 @@ from functools import lru_cache
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def apply_to_environment(user_settings) -> None:
+    """Write saved settings into the process environment, then rebuild.
+
+    Not elegant, and deliberate. `get_settings()` is already the single
+    place every component asks about configuration — providers, feeds, the
+    script chain — and it is `lru_cache`d. Threading a `UserSettings` object
+    through all of them would create a SECOND source of truth for the same
+    questions, and the two would drift the first time one call site was
+    missed. Writing the values where `Settings` already looks keeps one.
+
+    Only non-empty values are applied: a null field means "use the
+    environment", which is what the artifact is missing entirely.
+    """
+    import os
+
+    mapping = {
+        "TTS_PROVIDER": user_settings.tts_provider,
+        "ELEVENLABS_VOICE_A": user_settings.voice_a,
+        "ELEVENLABS_VOICE_B": user_settings.voice_b,
+    }
+    for key, value in mapping.items():
+        if value:
+            os.environ[key] = value
+
+    # Cleared so the next `get_settings()` sees what was just written.
+    # Without this the whole function is a no-op with a log line, which is
+    # the exact failure mode it exists to prevent one level up.
+    get_settings.cache_clear()
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore"

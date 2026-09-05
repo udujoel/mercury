@@ -350,6 +350,67 @@ class DigestNewsletter(BaseModel):
     in_briefing: bool = False
 
 
+SETTINGS_SCHEMA_VERSION = 1
+
+# The storage key. Deliberately not `YYYY-MM-DD.`-prefixed: `_BRIEFING_KEY`
+# only matches that shape, so retention cannot mistake the settings for a
+# briefing and sweep them after thirty days.
+SETTINGS_KEY = "settings.json"
+
+
+class UserSettings(BaseModel):
+    """What the app can change about how a briefing is made.
+
+    The whole point of this artifact is that it is read by the JOB, not just
+    stored by the phone. Most of what belongs on a settings screen — the feed
+    list, the voices, the length — is a server-side constant read by a cron
+    the phone cannot see, so a setting the app writes and `generate_briefing`
+    never reads is worse than no setting at all: it is a control that appears
+    to work.
+
+    Every field is optional with a null default meaning "use the
+    environment". That is what lets the artifact be absent entirely, which is
+    the state every deployment starts in and the one this must never break.
+    """
+
+    schema_version: int = SETTINGS_SCHEMA_VERSION
+    updated_at: datetime | None = None
+
+    # The briefing
+    briefing_length: str | None = None
+    # Segment ids to skip. Named as an exclusion rather than an inclusion so
+    # a segment added in a later release is ON by default — an allow-list
+    # would silently hide every new segment from anyone with saved settings.
+    disabled_segments: list[str] = Field(default_factory=list)
+
+    # Voice
+    tts_provider: str | None = None
+    voice_a: str | None = None
+    voice_b: str | None = None
+
+    # Sources. Empty means "the curated defaults" rather than "no feeds",
+    # because an empty list is what an app that has never written this
+    # produces, and a briefing with no news is not a plausible thing to ask
+    # for by accident.
+    feeds: list[str] = Field(default_factory=list)
+    muted_senders: list[str] = Field(default_factory=list)
+
+    def length_or(self, fallback: BriefingLength) -> BriefingLength:
+        """The configured length, or the fallback when unset or unknown.
+
+        Unknown rather than invalid: this artifact is written by a client
+        that may be newer or older than the backend reading it, so a value
+        this build does not recognise is an ordinary event and must not
+        fail the only run of the day.
+        """
+        if not self.briefing_length:
+            return fallback
+        try:
+            return BriefingLength(self.briefing_length)
+        except ValueError:
+            return fallback
+
+
 class BriefingDigest(BaseModel):
     briefing_id: str
     generated_at: datetime

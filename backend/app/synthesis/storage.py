@@ -16,8 +16,15 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Protocol
 
+from pydantic import ValidationError
+
 from app.core.config import get_settings
-from app.core.schemas import BriefingDigest, BriefingManifest
+from app.core.schemas import (
+    SETTINGS_KEY,
+    BriefingDigest,
+    BriefingManifest,
+    UserSettings,
+)
 
 log = logging.getLogger(__name__)
 
@@ -159,6 +166,19 @@ class BriefingStorage(Protocol):
 
     def load_audio(self, briefing_id: str) -> tuple[bytes, str] | None:
         """Returns (audio_bytes, media_type), or None if not found."""
+        ...
+
+    def load_settings(self) -> UserSettings | None:
+        """The user's saved settings, or None when none have been written.
+
+        None is the state every deployment starts in and stays in until the
+        app saves something, so it must be the easy path rather than an
+        error — the caller falls back to the environment.
+        """
+        ...
+
+    def save_settings(self, settings: UserSettings) -> None:
+        """Persist settings. Overwrites; there is only ever one."""
         ...
 
     def audio_exists(self, briefing_id: str) -> bool:
@@ -380,6 +400,29 @@ class LocalFilesystemStorage:
                 media_type = AUDIO_MEDIA_TYPES.get(fmt, "application/octet-stream")
                 return path.read_bytes(), media_type
         return None
+
+    def load_settings(self) -> UserSettings | None:
+        path = self._base_dir / SETTINGS_KEY
+        try:
+            raw = path.read_text()
+        except OSError:
+            return None
+        try:
+            return UserSettings.model_validate_json(raw)
+        except ValidationError:
+            # Corrupt or written by an incompatible client. The environment
+            # is a working configuration; a half-parsed one is not, and
+            # failing the run over a settings file would make a preferences
+            # screen able to break the morning.
+            log.error(
+                "settings at %s will not parse; using the environment", path
+            )
+            return None
+
+    def save_settings(self, settings: UserSettings) -> None:
+        (self._base_dir / SETTINGS_KEY).write_text(
+            settings.model_dump_json(indent=2)
+        )
 
     def audio_exists(self, briefing_id: str) -> bool:
         for fmt in KNOWN_AUDIO_FORMATS:

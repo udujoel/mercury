@@ -202,13 +202,13 @@ text-to-speech read-out. That is what the ten second test measures.
 
 Audio and voice — a chain, each step needs the last:
 
-- [ ] 1. ElevenLabs behind the existing TTS protocol. A second implementation
+- [x] 1. ElevenLabs behind the existing TTS protocol. A second implementation
       file swapped by config, per rule 6; `GoogleTTSProvider` is the model.
       Must return character-level timings, so `TTSProvider` grows a richer
       return type and Google returns `None` for it. Keep Google working — it
       is the fallback when quota runs out mid-run, and rule 7 says the
       briefing still ships.
-- [ ] 2. Word timings in the manifest. Schema version bump; the client must
+- [x] 2. Word timings in the manifest. Schema version bump; the client must
       tolerate their absence, since every briefing already in R2 lacks them.
 - [ ] 3. Music as a track element in the stitcher. Intro, outro, inter-segment
       stings, royalty-free and committed as assets. Acceptance: a manifest
@@ -220,33 +220,33 @@ Audio and voice — a chain, each step needs the last:
 
 The listening surface:
 
-- [ ] 5. The transcript as a script, not a dump. Speaker-attributed blocks,
+- [x] 5. The transcript as a script, not a dump. Speaker-attributed blocks,
       the two hosts visually distinguished, one turn at a time. Independent of
       1-4; can start immediately.
-- [ ] 6. Steady highlighting, driven by task 2. Falls back to whole-turn
+- [x] 6. Steady highlighting, driven by task 2. Falls back to whole-turn
       highlighting when a manifest has no word data.
-- [ ] 7. The segment marker moves below the transcript, centred. It stops
+- [x] 7. The segment marker moves below the transcript, centred. It stops
       being a row of tabs at the bottom edge and becomes a position indicator;
       navigation moves into a tap on it.
 
 The browse surface:
 
-- [ ] 8. The digest as boxes on Home — what #17 built, rendered. Story cards
+- [x] 8. The digest as boxes on Home — what #17 built, rendered. Story cards
       alongside the play button, each opening to a bullet summary, an image
       and the source row. Presentation, not new data.
-- [ ] 9. Article links, properly. `DigestSource.url` is already there. Start
+- [x] 9. Article links, properly. `DigestSource.url` is already there. Start
       with in-app `SFSafariViewController` — it keeps the morning ritual
       intact. Note the field is `str | None`, and email sources are
       structurally the None case: a Gmail item carries no public URL. So the
       source row needs a defined appearance for a source you cannot open,
       and for a newsletter-only story that is EVERY row.
-- [ ] 10. Browse previous mornings. One Worker route exposing
+- [x] 10. Browse previous mornings. One Worker route exposing
       `list_briefing_ids()`, plus an archive view. The horizon must be read
       from `retention_days`, never hardcoded to 30.
 
 Control:
 
-- [ ] 11a. **The settings artifact.** The screen is the easy half. Most of
+- [x] 11a. **The settings artifact.** The screen is the easy half. Most of
       what belongs on it — feeds, voices, thresholds, segment budgets — is a
       server-side constant read by a job the phone cannot see, so a setting
       the app writes and the cron never reads is worse than no setting at
@@ -254,7 +254,7 @@ Control:
       `generate_briefing` reads at the top of a run, with the env vars as the
       fallback when it is absent. Without it, everything in 11b is
       decoration.
-- [ ] 11b. Settings, built out. Wake time and length exist and are half-wired.
+- [x] 11b. Settings, built out. Wake time and length exist and are half-wired.
       The rest: voice and provider, briefing length, which feeds and
       newsletters count, timezone, appearance override, retention window, and
       a visible account state for the Google connection — including the token
@@ -264,7 +264,14 @@ Control:
 
 Added 2026-09-04, after the ElevenLabs go-ahead:
 
-- [ ] 12. **Voice chosen in the app, not in the environment.** The two
+- [~] 12. **Voice chosen in the app, not in the environment.** Half done:
+      11a landed, so the provider and both voice ids are now settings the
+      app writes and the job reads. What is NOT done is the picker — listing
+      real voices needs `GET /v1/voices`, which needs the ElevenLabs key,
+      and the key stays on the server. The screen takes voice ids as text
+      and says so rather than pretending to be a picker. Finishing this
+      means a Worker route that proxies the voice list.
+- [ ] 12b. **Voice chosen in the app, not in the environment.** The two
       ElevenLabs voice ids are `ELEVENLABS_VOICE_A` / `ELEVENLABS_VOICE_B`
       today, which means changing a host means editing a GitHub secret. They
       belong in settings, with the voice library fetched from ElevenLabs
