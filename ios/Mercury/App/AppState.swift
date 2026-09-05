@@ -310,6 +310,11 @@ final class AppState {
         set {
             let parts = Calendar.current.dateComponents([.hour, .minute], from: newValue)
             wakeTimeMinutesFromMidnight = (parts.hour ?? 7) * 60 + (parts.minute ?? 0)
+            // Re-armed here, not at the next cold launch. `BGTaskScheduler`
+            // holds the date it was given, so without this the device kept
+            // prefetching at the OLD time until the app happened to be
+            // launched from cold — the setting would appear to take and not.
+            BackgroundScheduler.schedule(wakeTime: nextWakeDate)
         }
     }
 

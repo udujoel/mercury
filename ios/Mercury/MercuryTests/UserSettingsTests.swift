@@ -17,12 +17,14 @@ final class UserSettingsTests: XCTestCase {
 
     func testTheKeysMatchWhatTheBackendParses() throws {
         let json = try encoded(
-            UserSettings(briefingLength: "express", disabledSegments: ["weather"],
-                         ttsProvider: "elevenlabs", voiceA: "a", voiceB: "b"))
+            UserSettings(briefingLength: "express", ttsProvider: "elevenlabs",
+                         voiceA: "a", voiceB: "b",
+                         feeds: ["https://example.com/f"], mutedSenders: ["Substack"]))
 
         // Snake case, matching `UserSettings` in app/core/schemas.py.
         XCTAssertEqual(json["briefing_length"] as? String, "express")
-        XCTAssertEqual(json["disabled_segments"] as? [String], ["weather"])
+        XCTAssertEqual(json["feeds"] as? [String], ["https://example.com/f"])
+        XCTAssertEqual(json["muted_senders"] as? [String], ["Substack"])
         XCTAssertEqual(json["tts_provider"] as? String, "elevenlabs")
         XCTAssertEqual(json["voice_a"] as? String, "a")
         XCTAssertEqual(json["voice_b"] as? String, "b")
@@ -51,13 +53,25 @@ final class UserSettingsTests: XCTestCase {
     func testItDecodesWhatTheBackendWrites() throws {
         let settings = try JSONDecoder().decode(UserSettings.self, from: Data("""
         {"schema_version": 1, "briefing_length": "full",
-         "disabled_segments": ["inbox"], "tts_provider": "elevenlabs",
-         "voice_a": "v1", "voice_b": "v2", "feeds": [], "muted_senders": []}
+         "tts_provider": "elevenlabs", "voice_a": "v1", "voice_b": "v2",
+         "feeds": ["https://a"], "muted_senders": ["B"]}
         """.utf8))
 
         XCTAssertEqual(settings.briefingLength, "full")
-        XCTAssertEqual(settings.disabledSegments, ["inbox"])
         XCTAssertEqual(settings.voiceA, "v1")
+        XCTAssertEqual(settings.feeds, ["https://a"])
+    }
+
+    /// An artifact written by the round that HAD segment toggles. The field
+    /// is gone from the model, and an unknown key must be ignored rather
+    /// than failing to decode — otherwise removing a setting would break
+    /// every phone that had saved one.
+    func testAnArtifactCarryingARemovedFieldStillDecodes() throws {
+        let settings = try JSONDecoder().decode(UserSettings.self, from: Data("""
+        {"briefing_length": "full", "disabled_segments": ["inbox"]}
+        """.utf8))
+
+        XCTAssertEqual(settings.briefingLength, "full")
     }
 
     /// An artifact written before a field existed. Every list defaults to
@@ -67,29 +81,8 @@ final class UserSettingsTests: XCTestCase {
             UserSettings.self, from: Data(#"{"briefing_length": "express"}"#.utf8))
 
         XCTAssertEqual(settings.briefingLength, "express")
-        XCTAssertTrue(settings.disabledSegments.isEmpty)
         XCTAssertTrue(settings.feeds.isEmpty)
+        XCTAssertTrue(settings.mutedSenders.isEmpty)
     }
 
-    /// Excluded, not included: a segment added in a later release must be ON
-    /// for someone who saved settings before it existed. An allow-list would
-    /// hide every new segment from exactly the people who use the app most.
-    func testSegmentsAreStoredAsAnExclusionList() throws {
-        let settings = UserSettings(disabledSegments: ["weather"])
-        let json = try encoded(settings)
-
-        XCTAssertEqual(json["disabled_segments"] as? [String], ["weather"])
-        // A segment nobody has heard of is not in the list, so it is on.
-        XCTAssertFalse(settings.disabledSegments.contains("markets"))
-    }
-
-    /// The opening and the sign-off are the shape of the show, not content.
-    /// A briefing that starts mid-sentence and stops dead is not shorter.
-    func testTheColdOpenAndSignOffAreNotOfferedAsToggles() {
-        let ids = UserSettings.optionalSegments.map(\.id)
-
-        XCTAssertFalse(ids.contains("cold_open"))
-        XCTAssertFalse(ids.contains("sign_off"))
-        XCTAssertEqual(ids, ["weather", "calendar", "inbox", "world"])
-    }
 }

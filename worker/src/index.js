@@ -611,21 +611,33 @@ const SETTINGS_KEY = "settings.json";
 // in the bucket.
 const MAX_SETTINGS_BYTES = 16 * 1024;
 
-/// The keys this Worker will store. Anything else is dropped rather than
-/// passed through: the artifact is read by the generation job, and a write
-/// path that forwards unknown fields is a write path that forwards whatever
-/// a future bug puts in them.
-const SETTINGS_FIELDS = [
-  "schema_version",
-  "updated_at",
-  "briefing_length",
-  "disabled_segments",
-  "tts_provider",
-  "voice_a",
-  "voice_b",
-  "feeds",
-  "muted_senders",
-];
+// The keys this Worker will store, WITH the shape each must have.
+//
+// Anything else is dropped rather than passed through: the artifact is
+// parsed by the generation job, and a write path that forwards unknown
+// fields forwards whatever a future client bug puts in them.
+//
+// Types are checked too, not just names. `briefing_length: 123` passed the
+// name filter and was stored, and Pydantic would then reject the whole
+// artifact on the next run — one bad write silently reverting every setting
+// to the environment.
+const SETTINGS_FIELDS = {
+  schema_version: "number",
+  updated_at: "string",
+  briefing_length: "string",
+  tts_provider: "string",
+  voice_a: "string",
+  voice_b: "string",
+  feeds: "string[]",
+  muted_senders: "string[]",
+};
+
+function matchesShape(value, shape) {
+  if (shape === "string[]") {
+    return Array.isArray(value) && value.every((v) => typeof v === "string");
+  }
+  return typeof value === shape;
+}
 
 async function serveSettings(env) {
   const object = await env.BRIEFINGS.get(SETTINGS_KEY);
@@ -658,7 +670,9 @@ async function handleSettingsWrite(request, env) {
   }
 
   const raw = await request.text();
-  if (raw.length > MAX_SETTINGS_BYTES) {
+  // BYTES, not characters. `String.length` counts UTF-16 code units, so a
+  // body of non-ASCII feed titles could pass a 16KB check and store 30KB.
+  if (new TextEncoder().encode(raw).length > MAX_SETTINGS_BYTES) {
     return json({ detail: "Settings are too large." }, 413);
   }
 
@@ -676,8 +690,20 @@ async function handleSettingsWrite(request, env) {
   // job parses this file; forwarding fields nobody has declared is how an
   // unrelated bug on the client ends up shaping a briefing.
   const clean = {};
-  for (const key of SETTINGS_FIELDS) {
-    if (key in parsed) clean[key] = parsed[key];
+  const wrongType = [];
+  for (const [key, shape] of Object.entries(SETTINGS_FIELDS)) {
+    if (!(key in parsed) || parsed[key] === null) continue;
+    if (!matchesShape(parsed[key], shape)) {
+      wrongType.push(`${key} must be ${shape}`);
+      continue;
+    }
+    clean[key] = parsed[key];
+  }
+  // Refused rather than silently dropped. A setting that vanishes on save is
+  // indistinguishable from one that never applied, and the client can only
+  // tell you which if the server says so.
+  if (wrongType.length) {
+    return json({ detail: `Invalid settings: ${wrongType.join("; ")}.` }, 400);
   }
 
   await env.BRIEFINGS.put(SETTINGS_KEY, JSON.stringify(clean, null, 2), {

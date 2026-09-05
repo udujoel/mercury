@@ -18,12 +18,12 @@ struct UserSettings: Codable, Equatable {
     static let schemaVersion = 1
 
     var briefingLength: String?
-    /// Segment ids to SKIP.
-    ///
-    /// An exclusion rather than an inclusion so a segment added in a later
-    /// release is on by default. An allow-list would silently hide every new
-    /// segment from anyone who had ever opened this screen.
-    var disabledSegments: [String]
+
+    // NO `disabledSegments`. It was here for one round and is deliberately
+    // gone: the script chain requires every canonical segment to be present
+    // (`_has_valid_segment_coverage_and_order`), so a toggle would have
+    // stored a preference nothing reads — the exact failure this artifact
+    // exists to prevent. ROADMAP task 15.
     var ttsProvider: String?
     var voiceA: String?
     var voiceB: String?
@@ -33,11 +33,10 @@ struct UserSettings: Codable, Equatable {
     var feeds: [String]
     var mutedSenders: [String]
 
-    init(briefingLength: String? = nil, disabledSegments: [String] = [],
+    init(briefingLength: String? = nil,
          ttsProvider: String? = nil, voiceA: String? = nil, voiceB: String? = nil,
          feeds: [String] = [], mutedSenders: [String] = []) {
         self.briefingLength = briefingLength
-        self.disabledSegments = disabledSegments
         self.ttsProvider = ttsProvider
         self.voiceA = voiceA
         self.voiceB = voiceB
@@ -49,7 +48,6 @@ struct UserSettings: Codable, Equatable {
         case schemaVersion = "schema_version"
         case updatedAt = "updated_at"
         case briefingLength = "briefing_length"
-        case disabledSegments = "disabled_segments"
         case ttsProvider = "tts_provider"
         case voiceA = "voice_a"
         case voiceB = "voice_b"
@@ -60,8 +58,6 @@ struct UserSettings: Codable, Equatable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         briefingLength = try c.decodeIfPresent(String.self, forKey: .briefingLength)
-        disabledSegments =
-            try c.decodeIfPresent([String].self, forKey: .disabledSegments) ?? []
         ttsProvider = try c.decodeIfPresent(String.self, forKey: .ttsProvider)
         voiceA = try c.decodeIfPresent(String.self, forKey: .voiceA)
         voiceB = try c.decodeIfPresent(String.self, forKey: .voiceB)
@@ -79,7 +75,6 @@ struct UserSettings: Codable, Equatable {
         try c.encode(Self.schemaVersion, forKey: .schemaVersion)
         try c.encode(ISO8601DateFormatter().string(from: .now), forKey: .updatedAt)
         try c.encodeIfPresent(briefingLength, forKey: .briefingLength)
-        try c.encode(disabledSegments, forKey: .disabledSegments)
         try c.encodeIfPresent(ttsProvider, forKey: .ttsProvider)
         try c.encodeIfPresent(voiceA, forKey: .voiceA)
         try c.encodeIfPresent(voiceB, forKey: .voiceB)
@@ -87,16 +82,4 @@ struct UserSettings: Codable, Equatable {
         try c.encode(mutedSenders, forKey: .mutedSenders)
     }
 
-    /// The segments a briefing can contain, in the order they are spoken.
-    ///
-    /// Mirrors `Segment` in `app/core/schemas.py`. Two of them are not
-    /// offered: the cold open and the sign-off are the shape of the show
-    /// rather than content, and a briefing that starts mid-sentence and stops
-    /// dead is not a shorter briefing, it is a broken one.
-    static let optionalSegments: [(id: String, label: String)] = [
-        ("weather", "Weather"),
-        ("calendar", "Your day"),
-        ("inbox", "Your inbox"),
-        ("world", "Your world"),
-    ]
 }

@@ -405,7 +405,21 @@ class LocalFilesystemStorage:
         path = self._base_dir / SETTINGS_KEY
         try:
             raw = path.read_text()
-        except OSError:
+        except FileNotFoundError:
+            # Never saved. The state every deployment starts in, and the only
+            # one that is silent.
+            return None
+        except (OSError, UnicodeError):
+            # An existing file that cannot be read: a permission problem, a
+            # half-written file, invalid UTF-8. Distinguished from absent
+            # because the operator needs to know their saved preferences were
+            # ignored rather than never existed — but still not fatal, since
+            # a preferences file must not be able to break the morning.
+            log.error(
+                "settings at %s exist but could not be read; using the "
+                "environment. Saved preferences are NOT being applied.",
+                path, exc_info=True,
+            )
             return None
         try:
             return UserSettings.model_validate_json(raw)
@@ -420,9 +434,31 @@ class LocalFilesystemStorage:
             return None
 
     def save_settings(self, settings: UserSettings) -> None:
-        (self._base_dir / SETTINGS_KEY).write_text(
-            settings.model_dump_json(indent=2)
-        )
+        """Written to a temporary file and renamed over the live one.
+
+        `os.replace` is atomic within a filesystem, so a reader either sees
+        the whole previous file or the whole new one. A direct overwrite
+        interrupted mid-write leaves a truncated file, which parses as
+        corrupt, which silently falls back to the environment — the user's
+        settings gone because a process was killed at the wrong moment.
+        """
+        import os
+        import tempfile
+
+        target = self._base_dir / SETTINGS_KEY
+        self._base_dir.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=self._base_dir, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as handle:
+                handle.write(settings.model_dump_json(indent=2))
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp, target)
+        except BaseException:
+            # Including KeyboardInterrupt: the point is not to leave the
+            # temporary file behind either.
+            os.unlink(tmp) if os.path.exists(tmp) else None
+            raise
 
     def audio_exists(self, briefing_id: str) -> bool:
         for fmt in KNOWN_AUDIO_FORMATS:

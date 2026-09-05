@@ -378,10 +378,14 @@ class UserSettings(BaseModel):
 
     # The briefing
     briefing_length: str | None = None
-    # Segment ids to skip. Named as an exclusion rather than an inclusion so
-    # a segment added in a later release is ON by default — an allow-list
-    # would silently hide every new segment from anyone with saved settings.
-    disabled_segments: list[str] = Field(default_factory=list)
+
+    # NO `disabled_segments`. It was here for one round and is deliberately
+    # gone: `_has_valid_segment_coverage_and_order` requires EVERY canonical
+    # segment to be present, so making one optional is a change to the script
+    # chain and its validator, not a value this artifact can carry. Shipping
+    # the field before the pipeline honoured it would have been a toggle that
+    # did nothing — the exact failure this artifact exists to prevent.
+    # ROADMAP task 15.
 
     # Voice
     tts_provider: str | None = None

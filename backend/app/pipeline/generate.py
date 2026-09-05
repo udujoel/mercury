@@ -114,6 +114,12 @@ async def generate_briefing(
     calendar_fixture: Path | None = None,
     weather_fixture: Path | None = None,
     rss_fixture: Path | None = None,
+    # Empty means the curated defaults, not "no news": an empty list is what
+    # a client that has never touched the setting produces, and a briefing
+    # with no news is not something anyone asks for by accident.
+    feeds: list[str] | None = None,
+    # Senders whose mail never reaches the briefing.
+    muted_senders: list[str] | None = None,
     max_messages: int = 60,
     # PRD F-02 and the ROADMAP both specify today plus 72 hours. What is
     # SPOKEN is decided by select_for_briefing; this is only the fetch
@@ -148,7 +154,25 @@ async def generate_briefing(
         hours_ahead=hours_ahead,
         user_lat=settings.user_lat,
         user_lon=settings.user_lon,
+        feeds=feeds,
     )
+
+    # Muted senders, dropped AFTER the fetch rather than narrowed in the
+    # Gmail query. Case-insensitive, and matched as a substring so "Substack"
+    # mutes every newsletter from a sender whose name contains it — which is
+    # how a person thinks about muting a publication.
+    if muted_senders:
+        wanted = [s.strip().lower() for s in muted_senders if s.strip()]
+        if wanted:
+            before = len(emails)
+            emails = [
+                em for em in emails
+                if not any(w in em.source_name.lower() for w in wanted)
+            ]
+            log.info(
+                "muted %d of %d emails from %d muted sender(s)",
+                before - len(emails), before, len(wanted),
+            )
 
     # Newsletters and articles cluster TOGETHER, in one call, which is the
     # whole reason every source normalises into `Item` before anything else
@@ -299,6 +323,7 @@ async def _ingest_concurrently(
     hours_ahead: int,
     user_lat: float,
     user_lon: float,
+    feeds: list[str] | None = None,
 ) -> tuple[tuple[list[Item], list[Any], Any, list[Item]], list[str]]:
     """Fetch all four sources concurrently.
 
@@ -345,7 +370,7 @@ async def _ingest_concurrently(
             raise RuntimeError(
                 "fetch_articles not available (app.ingestion.rss.fetch_articles)"
             )
-        return await fetch_articles(fixture=rss_fixture)
+        return await fetch_articles(fixture=rss_fixture, feeds=feeds or None)
 
     labels = ("email", "calendar", "weather", "news")
     defaults: tuple[Any, Any, Any, Any] = ([], [], None, [])

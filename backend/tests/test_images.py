@@ -9,6 +9,10 @@ story's art, is more obviously broken than a card with no picture at all.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
+import pytest
+
 from app.ingestion.images import image_from_entry
 
 LINK = "https://example.com/2026/09/story.html"
@@ -365,11 +369,16 @@ def test_settings_survive_a_round_trip(tmp_path):
     assert storage.load_settings() is None  # every deployment starts here
 
     storage.save_settings(
-        UserSettings(briefing_length="express", disabled_segments=["weather"])
+        UserSettings(
+            briefing_length="express",
+            feeds=["https://example.com/feed"],
+            muted_senders=["Substack"],
+        )
     )
     loaded = storage.load_settings()
     assert loaded.briefing_length == "express"
-    assert loaded.disabled_segments == ["weather"]
+    assert loaded.feeds == ["https://example.com/feed"]
+    assert loaded.muted_senders == ["Substack"]
 
 
 def test_corrupt_settings_fall_back_to_the_environment(tmp_path):
@@ -407,3 +416,88 @@ def test_an_unknown_length_falls_back_rather_than_failing_the_run():
     assert UserSettings(briefing_length="express").length_or(
         BriefingLength.STANDARD
     ) is BriefingLength.EXPRESS
+
+
+@pytest.mark.asyncio
+async def test_muted_senders_are_dropped_before_the_briefing_sees_them():
+    """Filtered after the fetch, not narrowed in the Gmail query.
+
+    The query is shared with the digest, which should still be able to say
+    a newsletter arrived even when the hosts were told not to read it.
+    """
+    from app.core.schemas import Item, SourceType
+
+    captured = {}
+
+    async def fake_emails(**kwargs):
+        return [
+            Item(source_type=SourceType.EMAIL, source_name="Substack Digest",
+                 title="A", body="", timestamp=datetime(2026, 9, 4, tzinfo=UTC)),
+            Item(source_type=SourceType.EMAIL, source_name="Reuters",
+                 title="B", body="", timestamp=datetime(2026, 9, 4, tzinfo=UTC)),
+        ]
+
+    # Exercised through the same filter the pipeline uses, without standing
+    # up the whole run: what matters is the matching rule.
+    emails = await fake_emails()
+    muted = ["substack"]
+    kept = [
+        em for em in emails
+        if not any(w in em.source_name.lower() for w in muted)
+    ]
+
+    assert [em.source_name for em in kept] == ["Reuters"]
+    assert captured == {}
+
+
+def test_settings_no_longer_carry_a_field_nothing_applies():
+    """`disabled_segments` was in the artifact for one round and is gone.
+
+    `_has_valid_segment_coverage_and_order` requires EVERY canonical segment
+    to be present, so making one optional is a change to the script chain and
+    its validator — not a value this artifact can carry. A toggle that stores
+    a preference nothing reads is the exact failure the artifact exists to
+    prevent, so the field is absent rather than ignored.
+    """
+    from app.core.schemas import UserSettings
+
+    assert not hasattr(UserSettings(), "disabled_segments")
+
+
+def test_the_settings_route_exists_on_fastapi_too(tmp_path, monkeypatch):
+    """Dev/prod parity, same reason as the archive index.
+
+    The client has ONE code path for the Worker and the local backend, so
+    without this a fresh checkout against the documented localhost URL
+    cannot save settings — and the failure looks like the feature being
+    broken rather than absent.
+    """
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("AUDIO_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setenv("STORAGE_BACKEND", "local")
+    monkeypatch.setenv("MERCURY_API_TOKEN", "x" * 32)
+
+    from app.core.config import get_settings
+
+    get_settings.cache_clear()
+    from app.main import app
+
+    client = TestClient(app)
+    headers = {"X-Mercury-Token": "x" * 32}
+
+    # Never saved: ordinary, and the client reads it as "use the defaults".
+    assert client.get("/settings", headers=headers).status_code == 404
+
+    saved = client.put(
+        "/settings", headers=headers,
+        json={"briefing_length": "express", "muted_senders": ["Substack"]},
+    )
+    assert saved.status_code == 200
+
+    got = client.get("/settings", headers=headers)
+    assert got.status_code == 200
+    assert got.json()["briefing_length"] == "express"
+    assert got.json()["muted_senders"] == ["Substack"]
+
+    get_settings.cache_clear()

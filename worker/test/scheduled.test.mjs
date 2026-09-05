@@ -218,16 +218,67 @@ describe("settings", () => {
     };
   }
 
-  test("GET /settings returns what was saved", async () => {
+  test("GET /settings returns the stored body, not just a 200", async () => {
+    // The first version of this asserted only the status and the header, and
+    // `bucket()` serves a literal "body" string — so it would have passed
+    // even if the route returned the wrong object entirely.
+    const env = envFor({});
+    env.BRIEFINGS = {
+      get: async (key) =>
+        key === "settings.json"
+          ? { body: JSON.stringify({ briefing_length: "express" }) }
+          : null,
+      list: async () => ({ objects: [] }),
+    };
+
     const res = await worker.fetch(
       new Request("https://x/settings", { headers: { "x-mercury-token": TOKEN } }),
-      envFor({ "settings.json": { json: { briefing_length: "deep" } } }),
+      env,
     );
 
     assert.equal(res.status, 200);
-    // Never cached: a stale read would show a preference the user just
-    // replaced.
+    assert.deepEqual(await res.json(), { briefing_length: "express" });
+    // Never cached: a stale read would show a preference just replaced.
     assert.equal(res.headers.get("cache-control"), "no-store");
+  });
+
+  test("PUT /settings refuses a field of the wrong type", async () => {
+    const env = envFor({});
+    env.BRIEFINGS = writableBucket({});
+
+    const res = await worker.fetch(
+      new Request("https://x/settings", {
+        method: "PUT",
+        headers: { "x-mercury-token": TOKEN },
+        // Passed the name filter before and was stored; Pydantic would then
+        // reject the whole artifact on the next run, silently reverting
+        // every setting to the environment.
+        body: JSON.stringify({ briefing_length: 123 }),
+      }),
+      env,
+    );
+
+    assert.equal(res.status, 400);
+    assert.equal(Object.keys(env.BRIEFINGS.written).length, 0);
+  });
+
+  test("PUT /settings measures the cap in bytes, not characters", async () => {
+    const env = envFor({});
+    env.BRIEFINGS = writableBucket({});
+
+    // Each of these is one JS character and three UTF-8 bytes, so the body
+    // is well under 16k by `String.length` and well over it in bytes.
+    const res = await worker.fetch(
+      new Request("https://x/settings", {
+        method: "PUT",
+        headers: { "x-mercury-token": TOKEN },
+        body: JSON.stringify({ feeds: ["\u3042".repeat(7000)] }),
+      }),
+      env,
+    );
+
+    assert.equal(res.status, 413);
+    assert.equal(Object.keys(env.BRIEFINGS.written).length, 0);
   });
 
   test("GET /settings 404s when none were ever saved", async () => {

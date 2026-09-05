@@ -271,13 +271,12 @@ Added 2026-09-04, after the ElevenLabs go-ahead:
       and the key stays on the server. The screen takes voice ids as text
       and says so rather than pretending to be a picker. Finishing this
       means a Worker route that proxies the voice list.
-- [ ] 12b. **Voice chosen in the app, not in the environment.** The two
-      ElevenLabs voice ids are `ELEVENLABS_VOICE_A` / `ELEVENLABS_VOICE_B`
-      today, which means changing a host means editing a GitHub secret. They
-      belong in settings, with the voice library fetched from ElevenLabs
-      (`GET /v1/voices`) so the picker lists real voices with samples rather
-      than asking for an id to be pasted. **Needs 11a** — the env var is the
-      fallback, and the artifact is what lets the phone change it.
+- [ ] 12b. **A real voice picker.** What remains of 12 once 11a landed: the
+      screen takes voice ids as text, which means going to elevenlabs.io,
+      finding a voice and copying an opaque string. A picker needs the voice
+      library from `GET /v1/voices`, which needs the API key — and the key
+      stays on the server, so this is a Worker route that proxies the list,
+      not a client-side call.
 - [ ] 13. **Regenerate against what has arrived since.** Today's briefing is
       made overnight, so by 9am it is describing an inbox that has moved on.
       A "regenerate" action re-runs ingestion NOW and rebuilds the briefing
@@ -320,6 +319,17 @@ Added 2026-09-04, after the ElevenLabs go-ahead:
       - The empty first morning. There is no briefing until the cron has run
         once, and nothing currently explains that: a new user reaches Home
         and sees a card that fetches nothing.
+
+- [ ] 15. **Segments the user can turn off.** Removed from the settings
+      artifact rather than shipped as a toggle that does nothing.
+      `_has_valid_segment_coverage_and_order` requires EVERY canonical
+      segment to be present, and `_CANONICAL_SEGMENT_ORDER` is `list(Segment)`
+      — so "skip the weather" is a change to the script chain, its validator
+      and the repair path, not a value the artifact can carry. Doing it
+      properly means threading the enabled set through generation and
+      teaching the validator to expect only those; doing it cheaply means a
+      preference nothing reads, which is the failure the artifact exists to
+      prevent.
 
 **Start 1, 5 and 8 in parallel** — provider, player view, new feature module.
 None blocks the others, and everything else falls out of them in order.

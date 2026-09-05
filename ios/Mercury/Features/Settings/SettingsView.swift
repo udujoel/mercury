@@ -13,11 +13,22 @@ import SwiftUI
 /// things is exactly how a settings page becomes decoration.
 struct SettingsView: View {
     @Environment(AppState.self) private var appState
-    @Environment(\.dismiss) private var dismiss
 
     @State private var settings = UserSettings()
-    @State private var loaded = false
+    @State private var loadState: LoadState = .loading
+    @State private var edited = false
     @State private var saveState: SaveState = .idle
+
+    enum LoadState: Equatable {
+        case loading
+        /// Loaded, or confirmed never-saved. Both are safe to edit from.
+        case ready
+        /// The request failed. Saving from here would PUT this screen's
+        /// defaults over settings the server still holds — silently
+        /// replacing preferences with the ones a blank form happens to
+        /// contain. So editing and saving are both blocked.
+        case failed(String)
+    }
 
     enum SaveState: Equatable {
         case idle
@@ -26,9 +37,9 @@ struct SettingsView: View {
         case failed(String)
     }
 
-    var body: some View {
-        @Bindable var state = appState
+    private var isEditable: Bool { loadState == .ready && saveState != .saving }
 
+    var body: some View {
         Form {
             Section {
                 DatePicker(
@@ -53,19 +64,14 @@ struct SettingsView: View {
                     }
                 }
 
-                ForEach(UserSettings.optionalSegments, id: \.id) { segment in
-                    Toggle(segment.label, isOn: segmentBinding(segment.id))
-                }
             } header: {
                 Text("The briefing")
             } footer: {
-                // Naming the cold open and sign-off explicitly, because their
-                // absence from this list is a decision rather than an
-                // oversight: a briefing that starts mid-sentence and stops
-                // dead is not a shorter briefing.
-                Text("Which parts the hosts cover. The opening and the "
-                     + "sign-off are always there. Takes effect on the next "
-                     + "briefing, not this morning's.")
+                // No segment toggles. They were here for one round and are
+                // deliberately gone: the script chain requires every
+                // canonical segment to be present, so a toggle would have
+                // stored a preference nothing reads. ROADMAP task 15.
+                Text("Takes effect on the next briefing, not this morning's.")
             }
 
             Section {
@@ -104,6 +110,25 @@ struct SettingsView: View {
             }
 
             Section {
+                LineListEditor(
+                    title: "News feeds",
+                    placeholder: "One feed URL per line",
+                    lines: linesBinding(\.feeds),
+                    emptyNote: "Empty means Mercury's curated feeds."
+                )
+                LineListEditor(
+                    title: "Muted senders",
+                    placeholder: "One sender per line",
+                    lines: linesBinding(\.mutedSenders),
+                    emptyNote: "Matched loosely, so \"Substack\" mutes every "
+                        + "sender whose name contains it. Muted mail still "
+                        + "appears on the desk — it just is not read aloud."
+                )
+            } header: {
+                Text("Sources")
+            }
+
+            Section {
                 Link("Manage access", destination: Self.googlePermissions)
                 Link("Privacy policy", destination: Self.privacyPolicy)
             } header: {
@@ -123,11 +148,22 @@ struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
+        // The whole form, not just the Save button. An edit made during the
+        // request was marked `.saved` without ever being sent, so leaving the
+        // screen lost it.
+        .disabled(!isEditable)
         .task {
-            guard !loaded else { return }
-            loaded = true
-            if let saved = try? await appState.fetchSavedSettings() {
-                settings = saved
+            guard loadState == .loading, !edited else { return }
+            do {
+                let saved = try await appState.fetchSavedSettings()
+                // Only when nothing has been typed. A slow response landing
+                // after the user changed something would overwrite the edit
+                // and then save the OLD values.
+                guard !edited else { return }
+                settings = saved ?? UserSettings()
+                loadState = .ready
+            } catch {
+                loadState = .failed(error.localizedDescription)
             }
         }
     }
@@ -149,12 +185,22 @@ struct SettingsView: View {
                 }
             }
         }
-        .disabled(saveState == .saving)
+        // Enabled by the section, but stated here too: with a failed load
+        // this button would PUT a blank form over real settings.
+        .disabled(!isEditable)
     }
 
     @ViewBuilder
     private var footerText: some View {
-        if case .failed(let message) = saveState {
+        if case .failed(let message) = loadState {
+            // Named as a LOAD failure, not a save failure. "Could not save"
+            // over a screen that never loaded would send the user looking in
+            // the wrong place.
+            Text("Could not load your settings, so they cannot be changed "
+                 + "from here yet — saving now would replace them with this "
+                 + "screen's defaults. \(message)")
+                .foregroundStyle(.red)
+        } else if case .failed(let message) = saveState {
             Text("Not saved. \(message)")
                 .foregroundStyle(.red)
         } else {
@@ -168,6 +214,7 @@ struct SettingsView: View {
         do {
             try await appState.saveSettings(settings)
             saveState = .saved
+            edited = false
         } catch {
             saveState = .failed(error.localizedDescription)
         }
@@ -181,6 +228,7 @@ struct SettingsView: View {
     /// else is the screen claiming the new value is stored when it is not.
     private func edit(_ change: (inout UserSettings) -> Void) {
         change(&settings)
+        edited = true
         if saveState == .saved { saveState = .idle }
     }
 
@@ -198,22 +246,6 @@ struct SettingsView: View {
         )
     }
 
-    /// Inverted: the model stores what is OFF, the toggle shows what is ON.
-    private func segmentBinding(_ id: String) -> Binding<Bool> {
-        Binding(
-            get: { !settings.disabledSegments.contains(id) },
-            set: { isOn in
-                edit {
-                    if isOn {
-                        $0.disabledSegments.removeAll { $0 == id }
-                    } else if !$0.disabledSegments.contains(id) {
-                        $0.disabledSegments.append(id)
-                    }
-                }
-            }
-        )
-    }
-
     /// Empty text and "unset" are the same thing here: a blank field must
     /// clear the value rather than save an empty string the server would
     /// then treat as a configured voice id.
@@ -227,8 +259,76 @@ struct SettingsView: View {
         )
     }
 
+    /// A `[String]` edited as lines of text.
+    ///
+    /// Blank lines are dropped on the way in, so trailing newlines while
+    /// typing do not become empty feed URLs the backend would then try to
+    /// fetch.
+    private func linesBinding(
+        _ key: WritableKeyPath<UserSettings, [String]>
+    ) -> Binding<String> {
+        Binding(
+            get: { settings[keyPath: key].joined(separator: "\n") },
+            set: { text in
+                let lines = text
+                    .split(separator: "\n", omittingEmptySubsequences: true)
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty }
+                edit { $0[keyPath: key] = lines }
+            }
+        )
+    }
+
     private static let googlePermissions =
         URL(string: "https://myaccount.google.com/permissions")!
     private static let privacyPolicy =
         URL(string: "https://joeludu.com/mercury/privacy")!
+}
+
+/// A list of strings, edited as lines.
+///
+/// A `TextEditor` rather than an add/remove list: these are pasted far more
+/// often than they are typed one at a time — a feed URL comes off a
+/// clipboard, and a set of senders is easier to review as a block than as
+/// eight rows with delete buttons.
+struct LineListEditor: View {
+    let title: String
+    let placeholder: String
+    @Binding var lines: String
+    let emptyNote: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MercurySpace.tight) {
+            Text(title)
+                .font(MercuryType.cardBody)
+                .foregroundStyle(MercuryColor.ink.color)
+
+            ZStack(alignment: .topLeading) {
+                if lines.isEmpty {
+                    // `TextEditor` has no placeholder of its own, and an
+                    // empty box gives no clue what belongs in it.
+                    Text(placeholder)
+                        .font(MercuryType.cardBody)
+                        .foregroundStyle(MercuryColor.inkFaint.color)
+                        .padding(.top, 8)
+                        .padding(.leading, 5)
+                        .allowsHitTesting(false)
+                }
+                TextEditor(text: $lines)
+                    .font(MercuryType.cardBody)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .frame(minHeight: 88)
+                    .scrollContentBackground(.hidden)
+            }
+
+            Text(emptyNote)
+                .font(MercuryType.figureCaption)
+                .foregroundStyle(MercuryColor.inkFaint.color)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, MercurySpace.tight)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(title)
+    }
 }

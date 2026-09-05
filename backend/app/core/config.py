@@ -2,6 +2,10 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# What the environment held before any artifact overrode it, so a setting
+# cleared later can be undone rather than left in place.
+_ORIGINAL_ENVIRONMENT: dict[str, str | None] = {}
+
 
 def apply_to_environment(user_settings) -> None:
     """Write saved settings into the process environment, then rebuild.
@@ -25,7 +29,19 @@ def apply_to_environment(user_settings) -> None:
     }
     for key, value in mapping.items():
         if value:
+            _ORIGINAL_ENVIRONMENT.setdefault(key, os.environ.get(key))
             os.environ[key] = value
+        elif key in _ORIGINAL_ENVIRONMENT:
+            # Cleared in the artifact after having been set. Null means "use
+            # the environment", so the environment has to come back — in a
+            # long-lived process (the API, the scheduler) a stale override
+            # would outlive the setting that created it and null would
+            # quietly mean "keep the last value".
+            previous = _ORIGINAL_ENVIRONMENT.pop(key)
+            if previous is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = previous
 
     # Cleared so the next `get_settings()` sees what was just written.
     # Without this the whole function is a no-op with a log line, which is
