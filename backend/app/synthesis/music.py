@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from shutil import which
 
 from pydub import AudioSegment
 
@@ -73,6 +74,25 @@ def load_music_set(name: str | None) -> MusicSet | None:
     """
     chosen = (name or DEFAULT_SET).strip().lower()
     if chosen == NO_MUSIC:
+        return None
+
+    # Checked ONCE, up front, rather than discovered three times inside
+    # `_load`. Without it a machine with no ffmpeg logged the same failure
+    # per track and said nothing about the cause being shared.
+    #
+    # Not a reason to bundle WAV instead. ffmpeg is already a hard
+    # requirement of the production audio path — `_export` needs it for
+    # mp4/aac and falls back to WAV without it — so a run that cannot
+    # decode these mp3s is a run already shipping uncompressed audio. Both
+    # workflows install it. Trading 1.7 MB of mp3 for roughly 10 MB of WAV
+    # to remove a dependency the pipeline still has either way is the wrong
+    # side of that bargain.
+    if not which("ffmpeg"):
+        log.error(
+            "ffmpeg is not installed, so the music cannot be decoded and "
+            "this briefing will ship WITHOUT it. The same missing binary "
+            "also forces uncompressed WAV output — install ffmpeg.",
+        )
         return None
 
     directory = MUSIC_ROOT / chosen
