@@ -79,11 +79,7 @@ struct HomeView: View {
                             .padding(.top, MercurySpace.section)
                             .padding(.bottom, MercurySpace.snug)
 
-                        StoryCards(stories: deskStories) { selectedStory = $0 }
-                            // Cancels the gutter for this row only: the cards
-                            // must reach the screen edge, or the row stops
-                            // reading as something that scrolls.
-                            .padding(.horizontal, -MercurySpace.gutter)
+                        DeskFeed(stories: deskStories) { selectedStory = $0 }
                     }
 
                     if !rows.isEmpty {
@@ -233,6 +229,9 @@ struct HomeView: View {
         guard let digest = appState.digest,
               digest.briefingId == appState.manifest?.briefingId
         else { return [] }
+        // Uncapped on purpose. `DeskFeed` applies the limit AFTER choosing
+        // its lead — capping here picked the most-covered story of the first
+        // twelve rather than of the morning.
         return digest.covered + digest.uncovered
     }
 

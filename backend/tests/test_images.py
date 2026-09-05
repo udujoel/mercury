@@ -884,3 +884,63 @@ async def test_an_interlude_shifts_everything_after_the_segment_it_opens():
     # And its chapter marker moved with it, rather than pointing at the
     # interlude that precedes it.
     assert with_music.segments[1]["start_ms"] == with_music.turns[1].start_ms
+
+
+def test_a_blank_env_var_falls_back_to_the_default(monkeypatch):
+    """The bug that made a configured ElevenLabs key do nothing.
+
+    `briefing.yml` passes `TTS_PROVIDER: ${{ secrets.TTS_PROVIDER }}`, and
+    an UNSET secret interpolates to the empty string rather than being
+    omitted. So the variable was present, pydantic preferred it to the
+    field default, and every run used `tts_provider == ""` — which fell
+    through to Google. The defaults added so the API key alone would be
+    enough were defeated by their own absence.
+
+    Confirmed from the live run log, which showed `TTS_PROVIDER:` with
+    nothing after it.
+    """
+    from app.core.config import (
+        DEFAULT_ELEVENLABS_VOICE_A,
+        DEFAULT_ELEVENLABS_VOICE_B,
+        get_settings,
+    )
+
+    for blank in ("", "   "):
+        monkeypatch.setenv("TTS_PROVIDER", blank)
+        monkeypatch.setenv("ELEVENLABS_VOICE_A", blank)
+        monkeypatch.setenv("ELEVENLABS_VOICE_B", blank)
+        get_settings.cache_clear()
+
+        s = get_settings()
+        assert s.tts_provider == "elevenlabs", f"blank {blank!r} won"
+        assert s.elevenlabs_voice_a == DEFAULT_ELEVENLABS_VOICE_A
+        assert s.elevenlabs_voice_b == DEFAULT_ELEVENLABS_VOICE_B
+
+    # An explicit value still wins — the fix must not make the setting
+    # unsettable, which would be the opposite bug.
+    monkeypatch.setenv("TTS_PROVIDER", "google")
+    get_settings.cache_clear()
+    assert get_settings().tts_provider == "google"
+
+    # And surrounding whitespace is stripped rather than carried into a
+    # provider-name comparison that would then miss.
+    monkeypatch.setenv("TTS_PROVIDER", "  elevenlabs  ")
+    get_settings.cache_clear()
+    assert get_settings().tts_provider == "elevenlabs"
+
+    get_settings.cache_clear()
+
+
+def test_the_blank_fallback_map_agrees_with_the_field_defaults():
+    """A blank env var and an ABSENT one must configure the same thing.
+
+    The fallback is an explicit map rather than `model_fields[...].default`,
+    because that lookup returns a `FieldInfo` the moment a field gains a
+    `default_factory` — silently handing a settings object to code that
+    expects a string. The cost of naming them twice is that they can drift,
+    so this asserts they have not.
+    """
+    from app.core.config import _BLANK_DEFAULTS, Settings
+
+    for name, blank_default in _BLANK_DEFAULTS.items():
+        assert Settings.model_fields[name].default == blank_default, name

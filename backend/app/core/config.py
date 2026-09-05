@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # What the environment held before any artifact overrode it, so a setting
@@ -72,6 +73,16 @@ DEFAULT_ELEVENLABS_VOICE_A = "3Drdg7QWqr45nZmYpXRP"
 DEFAULT_ELEVENLABS_VOICE_B = "nPczCjzI2devNBz1zQrb"
 
 
+# What a blank environment variable falls back to. Named here rather than
+# read off the model, so the fallback cannot change shape when a field's
+# declaration does.
+_BLANK_DEFAULTS = {
+    "tts_provider": "elevenlabs",
+    "elevenlabs_voice_a": DEFAULT_ELEVENLABS_VOICE_A,
+    "elevenlabs_voice_b": DEFAULT_ELEVENLABS_VOICE_B,
+}
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
@@ -105,6 +116,39 @@ class Settings(BaseSettings):
     # overridable from Settings, and from the environment.
     elevenlabs_voice_a: str = DEFAULT_ELEVENLABS_VOICE_A
     elevenlabs_voice_b: str = DEFAULT_ELEVENLABS_VOICE_B
+
+    @field_validator(
+        "tts_provider", "elevenlabs_voice_a", "elevenlabs_voice_b",
+        mode="before",
+    )
+    @classmethod
+    def _blank_means_unset(cls, value, info):
+        """An empty environment variable means "not set", not "empty".
+
+        This is the bug that made a configured ElevenLabs key do nothing.
+        `briefing.yml` passes `TTS_PROVIDER: ${{ secrets.TTS_PROVIDER }}`,
+        and an unset secret interpolates to the EMPTY STRING rather than
+        being omitted — so the variable is present, pydantic takes it over
+        the field default, and `tts_provider` became "" on every run. The
+        defaults added specifically so the API key alone would be enough
+        were overridden by their own absence.
+
+        Fixed here rather than in the workflow. A `|| 'elevenlabs'` in YAML
+        would put the default in two places and only cover the one caller
+        that remembered it; this covers the workflow, a local `.env` with a
+        blank line, and an exported shell variable alike.
+        """
+        if value is None or (isinstance(value, str) and not value.strip()):
+            # An explicit map, not `model_fields[...].default`.
+            #
+            # That lookup works today and returns a `FieldInfo` the moment
+            # any of these three gains a `default_factory` — which pydantic
+            # makes an easy thing to reach for — so the "blank means
+            # default" path would start handing a settings object to code
+            # expecting a string, silently, with no type error until
+            # something compared it to "elevenlabs" and lost.
+            return _BLANK_DEFAULTS[info.field_name]
+        return value.strip() if isinstance(value, str) else value
 
     # Google OAuth
     google_client_id: str = ""

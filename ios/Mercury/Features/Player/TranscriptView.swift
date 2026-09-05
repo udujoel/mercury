@@ -47,7 +47,16 @@ struct TranscriptView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: MercurySpace.comfortable) {
+                // VStack, not LazyVStack.
+                //
+                // A lazy stack measures rows as they scroll into view, so an
+                // animated `scrollTo` lands on an offset computed from
+                // heights that are still being decided — the content shifts
+                // under the animation and the whole view visibly wobbles as
+                // it settles. A briefing is thirty to sixty short paragraphs;
+                // laying them all out once costs nothing and removes the
+                // entire class of problem.
+                VStack(alignment: .leading, spacing: MercurySpace.comfortable) {
                     ForEach(Array(turns.enumerated()), id: \.element.id) { index, turn in
                         line(turn, at: index)
                             .id(turn.id)
@@ -110,7 +119,16 @@ struct TranscriptView: View {
         .contentShape(Rectangle())
         .onTapGesture { onSelect(turn) }
         .allowsHitTesting(isEnabled)
-        .animation(motion.resolve(MercuryMotion.crossfade), value: state)
+        // NO animation on the line itself.
+        //
+        // `.animation(_, value:)` animates every animatable property of the
+        // view, position included. With the scroll already animating, each
+        // visible row animated its own frame at the same time — two
+        // animations moving the same pixels, which is what made the
+        // transcript shake as it moved to a new speaker.
+        //
+        // The colour simply changes. Next to a scroll that is already
+        // moving, a 220ms fade on it is imperceptible; the wobble was not.
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityLabel("\(turn.speaker): \(turn.text)")
