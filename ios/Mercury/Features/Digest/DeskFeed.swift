@@ -16,7 +16,19 @@ import SwiftUI
 /// important is a feed, and the reason to have a desk rather than a feed is
 /// that something is the biggest story of the morning.
 struct DeskFeed: View {
+    /// EVERY story on the desk, uncapped.
+    ///
+    /// The cap is applied here rather than by the caller, and that is not a
+    /// tidying preference: choosing the lead from an already-truncated list
+    /// picks the most-covered story of the first twelve, not of the morning.
+    /// A day where coverage concentrates on something that happens to sort
+    /// thirteenth would lead with the wrong story and look deliberate.
     let stories: [DigestStory]
+    /// How many rows to show beneath the lead. Enough to feel like a desk,
+    /// few enough to still be a briefing — this morning's digest holds 174
+    /// browsable stories, and rendering them all is the feed Mercury exists
+    /// to replace.
+    var limit: Int = 12
     let onSelect: (DigestStory) -> Void
 
     /// The lead is the most-covered story the hosts actually discussed.
@@ -31,8 +43,8 @@ struct DeskFeed: View {
     }
 
     private var rest: [DigestStory] {
-        guard let lead else { return stories }
-        return stories.filter { $0.id != lead.id }
+        let others = lead.map { l in stories.filter { $0.id != l.id } } ?? stories
+        return Array(others.prefix(limit))
     }
 
     var body: some View {
@@ -50,8 +62,11 @@ struct DeskFeed: View {
                     .padding(.vertical, MercurySpace.snug)
             }
 
-            ForEach(Array(rest.dropFirst(2))) { story in
-                if story.id != rest.dropFirst(2).first?.id { divider }
+            // `enumerated`, so the "is this the first one" test is an index
+            // comparison rather than re-slicing the same array on every
+            // iteration to look at its head.
+            ForEach(Array(rest.dropFirst(2).enumerated()), id: \.element.id) { i, story in
+                if i > 0 { divider }
                 DeskRow(story: story) { onSelect(story) }
             }
         }
@@ -139,7 +154,11 @@ struct LeadCard: View {
                 }
                 .padding(MercurySpace.comfortable)
             }
-            .frame(height: 320)
+            // MINIMUM, not fixed. At accessibility type sizes a three-line
+            // headline plus a two-line standfirst plus 32pt of padding does
+            // not fit in 320pt, and a fixed height clips the text rather
+            // than the card growing to hold it.
+            .frame(minHeight: 320)
             .frame(maxWidth: .infinity)
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .contentShape(Rectangle())

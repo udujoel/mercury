@@ -229,15 +229,11 @@ struct HomeView: View {
         guard let digest = appState.digest,
               digest.briefingId == appState.manifest?.briefingId
         else { return [] }
-        // Capped. A real morning produces 174 browsable stories, and a Home
-        // screen that renders all of them is a feed you scroll for a minute
-        // before reaching anything else — which is the thing Mercury exists
-        // to replace. The rest are reachable, just not on the front page.
-        return Array((digest.covered + digest.uncovered).prefix(Self.deskLimit))
+        // Uncapped on purpose. `DeskFeed` applies the limit AFTER choosing
+        // its lead — capping here picked the most-covered story of the first
+        // twelve rather than of the morning.
+        return digest.covered + digest.uncovered
     }
-
-    /// Enough to feel like a desk, few enough to still be a briefing.
-    private static let deskLimit = 12
 
     /// Opens the player at the turn where this story was discussed.
     ///

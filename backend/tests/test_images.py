@@ -929,3 +929,18 @@ def test_a_blank_env_var_falls_back_to_the_default(monkeypatch):
     assert get_settings().tts_provider == "elevenlabs"
 
     get_settings.cache_clear()
+
+
+def test_the_blank_fallback_map_agrees_with_the_field_defaults():
+    """A blank env var and an ABSENT one must configure the same thing.
+
+    The fallback is an explicit map rather than `model_fields[...].default`,
+    because that lookup returns a `FieldInfo` the moment a field gains a
+    `default_factory` — silently handing a settings object to code that
+    expects a string. The cost of naming them twice is that they can drift,
+    so this asserts they have not.
+    """
+    from app.core.config import _BLANK_DEFAULTS, Settings
+
+    for name, blank_default in _BLANK_DEFAULTS.items():
+        assert Settings.model_fields[name].default == blank_default, name

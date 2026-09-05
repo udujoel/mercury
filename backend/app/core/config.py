@@ -73,6 +73,16 @@ DEFAULT_ELEVENLABS_VOICE_A = "3Drdg7QWqr45nZmYpXRP"
 DEFAULT_ELEVENLABS_VOICE_B = "nPczCjzI2devNBz1zQrb"
 
 
+# What a blank environment variable falls back to. Named here rather than
+# read off the model, so the fallback cannot change shape when a field's
+# declaration does.
+_BLANK_DEFAULTS = {
+    "tts_provider": "elevenlabs",
+    "elevenlabs_voice_a": DEFAULT_ELEVENLABS_VOICE_A,
+    "elevenlabs_voice_b": DEFAULT_ELEVENLABS_VOICE_B,
+}
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
@@ -129,7 +139,15 @@ class Settings(BaseSettings):
         blank line, and an exported shell variable alike.
         """
         if value is None or (isinstance(value, str) and not value.strip()):
-            return cls.model_fields[info.field_name].default
+            # An explicit map, not `model_fields[...].default`.
+            #
+            # That lookup works today and returns a `FieldInfo` the moment
+            # any of these three gains a `default_factory` — which pydantic
+            # makes an easy thing to reach for — so the "blank means
+            # default" path would start handing a settings object to code
+            # expecting a string, silently, with no type error until
+            # something compared it to "elevenlabs" and lost.
+            return _BLANK_DEFAULTS[info.field_name]
         return value.strip() if isinstance(value, str) else value
 
     # Google OAuth
