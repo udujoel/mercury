@@ -16,8 +16,15 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Protocol
 
+from pydantic import ValidationError
+
 from app.core.config import get_settings
-from app.core.schemas import BriefingDigest, BriefingManifest
+from app.core.schemas import (
+    SETTINGS_KEY,
+    BriefingDigest,
+    BriefingManifest,
+    UserSettings,
+)
 
 log = logging.getLogger(__name__)
 
@@ -159,6 +166,19 @@ class BriefingStorage(Protocol):
 
     def load_audio(self, briefing_id: str) -> tuple[bytes, str] | None:
         """Returns (audio_bytes, media_type), or None if not found."""
+        ...
+
+    def load_settings(self) -> UserSettings | None:
+        """The user's saved settings, or None when none have been written.
+
+        None is the state every deployment starts in and stays in until the
+        app saves something, so it must be the easy path rather than an
+        error — the caller falls back to the environment.
+        """
+        ...
+
+    def save_settings(self, settings: UserSettings) -> None:
+        """Persist settings. Overwrites; there is only ever one."""
         ...
 
     def audio_exists(self, briefing_id: str) -> bool:
@@ -380,6 +400,65 @@ class LocalFilesystemStorage:
                 media_type = AUDIO_MEDIA_TYPES.get(fmt, "application/octet-stream")
                 return path.read_bytes(), media_type
         return None
+
+    def load_settings(self) -> UserSettings | None:
+        path = self._base_dir / SETTINGS_KEY
+        try:
+            raw = path.read_text()
+        except FileNotFoundError:
+            # Never saved. The state every deployment starts in, and the only
+            # one that is silent.
+            return None
+        except (OSError, UnicodeError):
+            # An existing file that cannot be read: a permission problem, a
+            # half-written file, invalid UTF-8. Distinguished from absent
+            # because the operator needs to know their saved preferences were
+            # ignored rather than never existed — but still not fatal, since
+            # a preferences file must not be able to break the morning.
+            log.error(
+                "settings at %s exist but could not be read; using the "
+                "environment. Saved preferences are NOT being applied.",
+                path, exc_info=True,
+            )
+            return None
+        try:
+            return UserSettings.model_validate_json(raw)
+        except ValidationError:
+            # Corrupt or written by an incompatible client. The environment
+            # is a working configuration; a half-parsed one is not, and
+            # failing the run over a settings file would make a preferences
+            # screen able to break the morning.
+            log.error(
+                "settings at %s will not parse; using the environment", path
+            )
+            return None
+
+    def save_settings(self, settings: UserSettings) -> None:
+        """Written to a temporary file and renamed over the live one.
+
+        `os.replace` is atomic within a filesystem, so a reader either sees
+        the whole previous file or the whole new one. A direct overwrite
+        interrupted mid-write leaves a truncated file, which parses as
+        corrupt, which silently falls back to the environment — the user's
+        settings gone because a process was killed at the wrong moment.
+        """
+        import os
+        import tempfile
+
+        target = self._base_dir / SETTINGS_KEY
+        self._base_dir.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=self._base_dir, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as handle:
+                handle.write(settings.model_dump_json(indent=2))
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp, target)
+        except BaseException:
+            # Including KeyboardInterrupt: the point is not to leave the
+            # temporary file behind either.
+            os.unlink(tmp) if os.path.exists(tmp) else None
+            raise
 
     def audio_exists(self, briefing_id: str) -> bool:
         for fmt in KNOWN_AUDIO_FORMATS:

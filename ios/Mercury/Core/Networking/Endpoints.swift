@@ -63,6 +63,10 @@ enum Endpoint {
     /// data rather than hardcoding a number that can drift from the
     /// sweeper's.
     case briefingIndex
+    /// The settings artifact. The ONE writable object — see the note on the
+    /// PUT branch in `worker/src/index.js` for why the read-only property
+    /// this narrows is about briefing DATA, not about Google scopes.
+    case settings
     // Week 11 addition: hands the APNs device token to the backend so the
     // server cron can send the PRIMARY-layer silent push (ADR-001, PRD 3.6).
     // See backend/app/api/devices.py — guarded by the same X-Mercury-Token
@@ -84,6 +88,8 @@ enum Endpoint {
             return base.appendingPathComponent("briefing/\(id)/digest")
         case .briefingIndex:
             return base.appendingPathComponent("briefings")
+        case .settings:
+            return base.appendingPathComponent("settings")
         case .registerDevice:
             return base.appendingPathComponent("devices/register")
         }
@@ -92,7 +98,8 @@ enum Endpoint {
     var method: String {
         switch self {
         case .generate, .registerDevice: return "POST"
-        case .manifest, .audio, .status, .digest, .briefingIndex: return "GET"
+        case .manifest, .audio, .status, .digest, .briefingIndex, .settings:
+            return "GET"
         }
     }
 }

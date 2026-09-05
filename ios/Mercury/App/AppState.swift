@@ -273,6 +273,65 @@ final class AppState {
         }
     }
 
+    /// The settings the generation job will read, or nil if never saved.
+    ///
+    /// Goes through `AppState` rather than handing the view the `APIClient`:
+    /// `api` is private for a reason, and a screen reaching past it would be
+    /// the second place that knows how Mercury talks to the server.
+    @MainActor
+    func fetchSavedSettings() async throws -> UserSettings? {
+        try await api.fetchSettings()
+    }
+
+    /// Saves settings for the JOB, not for this device.
+    ///
+    /// `UserDefaults` cannot serve these: the cron runs at 04:00 on a machine
+    /// that has never seen this phone. A preference written only here would
+    /// be a control that appears to work — the thing ROADMAP task 11a exists
+    /// to prevent.
+    @MainActor
+    func saveSettings(_ settings: UserSettings) async throws {
+        try await api.saveSettings(settings)
+    }
+
+    /// The wake time as a `Date`, for a `DatePicker`.
+    ///
+    /// Stored as minutes since midnight because that is what the scheduler
+    /// wants and what survives a date rolling over; the picker wants a Date,
+    /// and this is the one place the two meet.
+    @MainActor
+    var wakeTimeDate: Date {
+        get {
+            var components = DateComponents()
+            components.hour = wakeTimeMinutesFromMidnight / 60
+            components.minute = wakeTimeMinutesFromMidnight % 60
+            return Calendar.current.date(from: components) ?? .now
+        }
+        set {
+            let parts = Calendar.current.dateComponents([.hour, .minute], from: newValue)
+            wakeTimeMinutesFromMidnight = (parts.hour ?? 7) * 60 + (parts.minute ?? 0)
+            // Both layers re-armed here, not at the next cold launch.
+            //
+            // `BGTaskScheduler` holds the date it was given, so without this
+            // the device kept prefetching at the OLD time until the app
+            // happened to be launched from cold.
+            //
+            // The local wake notification is a REPEATING calendar trigger,
+            // deliberately, so it survives the app not being launched — which
+            // also means it survives a wake-time change. If APNs registration
+            // failed, that notification is the user's only alert, and it
+            // would have gone on firing at the old time indefinitely.
+            BackgroundScheduler.schedule(wakeTime: nextWakeDate)
+
+            let minutes = wakeTimeMinutesFromMidnight
+            Task { @MainActor in
+                await PushService.shared.rescheduleLocalWakeNotificationIfArmed(
+                    hour: minutes / 60, minute: minutes % 60
+                )
+            }
+        }
+    }
+
     /// The mornings still on the server, for the archive screen.
     ///
     /// `archiveFailed` exists because an empty list and a failed request are

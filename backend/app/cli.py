@@ -38,7 +38,7 @@ import sys
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from app.core.config import get_settings
+from app.core.config import apply_to_environment, get_settings
 from app.core.providers import build_embedding_provider
 from app.core.schemas import BriefingLength
 
@@ -353,6 +353,44 @@ async def _generate(
         log.info("--force: regenerating %s over the existing briefing",
                  briefing_id)
 
+    # The settings the app saved, if it ever has.
+    #
+    # Read BEFORE the providers are built, because it can change which
+    # provider is built at all. This is what makes the settings screen more
+    # than decoration: a value the phone writes and the cron never reads is
+    # a control that appears to work, which is worse than no control.
+    #
+    # `apply_to_environment` rather than threading a settings object through
+    # every call site: `get_settings()` is already the one place every
+    # component asks about configuration, and adding a second source of
+    # truth beside it is how the two drift.
+    try:
+        user_settings = await asyncio.to_thread(storage.load_settings)
+    except Exception:
+        # `load_settings` handles a missing or corrupt FILE, but not a
+        # transient R2 error or a 403 from a rotated token — those raise, and
+        # raising here aborted the run before generation started. A
+        # preferences read must never be able to cost the morning; the
+        # environment is a working configuration.
+        log.error(
+            "could not read saved settings; using the environment. Saved "
+            "preferences are NOT being applied to this run.",
+            exc_info=True,
+        )
+        user_settings = None
+
+    if user_settings is not None:
+        length = user_settings.length_or(length)
+        apply_to_environment(user_settings)
+        log.info(
+            "applied saved settings (length=%s, provider=%s, feeds=%d, "
+            "muted senders=%d)",
+            length.value,
+            user_settings.tts_provider or "unset",
+            len(user_settings.feeds),
+            len(user_settings.muted_senders),
+        )
+
     try:
         from app.core.providers import build_tts_provider
         from app.providers.gemini import GeminiProvider
@@ -379,6 +417,8 @@ async def _generate(
             embeddings=embeddings,
             storage=storage,
             previous_degraded_attempts=previous_degraded_attempts,
+            feeds=user_settings.feeds if user_settings else None,
+            muted_senders=user_settings.muted_senders if user_settings else None,
         )
     except EmptyBriefingError as exc:
         # Named separately from a generic failure because the operator action

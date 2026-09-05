@@ -209,6 +209,22 @@ final class PushService: NSObject {
         }
     }
 
+    /// Moves an EXISTING local wake notification to a new time.
+    ///
+    /// Only when one is already pending. The local notification is the
+    /// fallback for a device where APNs registration failed; arming it from
+    /// a settings change on a device where the silent push works would give
+    /// that user two alerts every morning.
+    @MainActor
+    func rescheduleLocalWakeNotificationIfArmed(hour: Int, minute: Int) async {
+        let pending = await UNUserNotificationCenter.current()
+            .pendingNotificationRequests()
+        guard pending.contains(where: { $0.identifier == Self.localWakeIdentifier })
+        else { return }
+
+        await scheduleLocalWakeNotification(hour: hour, minute: minute)
+    }
+
     /// Supplies the configured wake time. Injected rather than read directly
     /// so `PushService` does not depend on `AppState`, which owns it.
     var wakeTimeMinutesFromMidnight: (() -> Int)?

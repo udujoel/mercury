@@ -204,6 +204,184 @@ describe("GET /briefings", () => {
   });
 });
 
+describe("settings", () => {
+  /** A bucket that also records writes, which `bucket()` does not. */
+  function writableBucket(objects = {}) {
+    const base = bucket(objects);
+    const written = {};
+    return {
+      ...base,
+      written,
+      put: async (key, body) => {
+        written[key] = body;
+      },
+    };
+  }
+
+  test("GET /settings returns the stored body, not just a 200", async () => {
+    // The first version of this asserted only the status and the header, and
+    // `bucket()` serves a literal "body" string — so it would have passed
+    // even if the route returned the wrong object entirely.
+    const env = envFor({});
+    env.BRIEFINGS = {
+      get: async (key) =>
+        key === "settings.json"
+          ? { body: JSON.stringify({ briefing_length: "express" }) }
+          : null,
+      list: async () => ({ objects: [] }),
+    };
+
+    const res = await worker.fetch(
+      new Request("https://x/settings", { headers: { "x-mercury-token": TOKEN } }),
+      env,
+    );
+
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { briefing_length: "express" });
+    // Never cached: a stale read would show a preference just replaced.
+    assert.equal(res.headers.get("cache-control"), "no-store");
+  });
+
+  test("PUT /settings refuses a field of the wrong type", async () => {
+    const env = envFor({});
+    env.BRIEFINGS = writableBucket({});
+
+    const res = await worker.fetch(
+      new Request("https://x/settings", {
+        method: "PUT",
+        headers: { "x-mercury-token": TOKEN },
+        // Passed the name filter before and was stored; Pydantic would then
+        // reject the whole artifact on the next run, silently reverting
+        // every setting to the environment.
+        body: JSON.stringify({ briefing_length: 123 }),
+      }),
+      env,
+    );
+
+    assert.equal(res.status, 400);
+    assert.equal(Object.keys(env.BRIEFINGS.written).length, 0);
+  });
+
+  test("PUT /settings measures the cap in bytes, not characters", async () => {
+    const env = envFor({});
+    env.BRIEFINGS = writableBucket({});
+
+    // Each of these is one JS character and three UTF-8 bytes, so the body
+    // is well under 16k by `String.length` and well over it in bytes.
+    const res = await worker.fetch(
+      new Request("https://x/settings", {
+        method: "PUT",
+        headers: { "x-mercury-token": TOKEN },
+        body: JSON.stringify({ feeds: ["\u3042".repeat(7000)] }),
+      }),
+      env,
+    );
+
+    assert.equal(res.status, 413);
+    assert.equal(Object.keys(env.BRIEFINGS.written).length, 0);
+  });
+
+  test("GET /settings 404s when none were ever saved", async () => {
+    const res = await worker.fetch(
+      new Request("https://x/settings", { headers: { "x-mercury-token": TOKEN } }),
+      envFor({}),
+    );
+    // Ordinary, not an error: every deployment starts here.
+    assert.equal(res.status, 404);
+  });
+
+  test("PUT /settings stores only declared fields", async () => {
+    const env = envFor({});
+    env.BRIEFINGS = writableBucket({});
+
+    const res = await worker.fetch(
+      new Request("https://x/settings", {
+        method: "PUT",
+        headers: { "x-mercury-token": TOKEN },
+        body: JSON.stringify({
+          briefing_length: "quick",
+          voice_a: "v1",
+          // Not a declared field. The generation job parses this file, so a
+          // write path that forwards unknown keys is a write path that
+          // forwards whatever a future client bug puts in them.
+          arbitrary: { nested: "junk" },
+        }),
+      }),
+      env,
+    );
+
+    assert.equal(res.status, 200);
+    const stored = JSON.parse(env.BRIEFINGS.written["settings.json"]);
+    assert.equal(stored.briefing_length, "quick");
+    assert.equal(stored.voice_a, "v1");
+    assert.equal("arbitrary" in stored, false);
+  });
+
+  test("PUT /settings needs the token", async () => {
+    const env = envFor({});
+    env.BRIEFINGS = writableBucket({});
+
+    const res = await worker.fetch(
+      new Request("https://x/settings", {
+        method: "PUT",
+        body: JSON.stringify({ briefing_length: "quick" }),
+      }),
+      env,
+    );
+
+    assert.equal(res.status, 401);
+    assert.equal(Object.keys(env.BRIEFINGS.written).length, 0);
+  });
+
+  test("PUT /settings refuses a body that is not a JSON object", async () => {
+    const env = envFor({});
+    env.BRIEFINGS = writableBucket({});
+
+    for (const body of ["not json", "[1,2,3]", "null"]) {
+      const res = await worker.fetch(
+        new Request("https://x/settings", {
+          method: "PUT",
+          headers: { "x-mercury-token": TOKEN },
+          body,
+        }),
+        env,
+      );
+      assert.equal(res.status, 400, body);
+    }
+    assert.equal(Object.keys(env.BRIEFINGS.written).length, 0);
+  });
+
+  test("PUT /settings caps the size", async () => {
+    const env = envFor({});
+    env.BRIEFINGS = writableBucket({});
+
+    const res = await worker.fetch(
+      new Request("https://x/settings", {
+        method: "PUT",
+        headers: { "x-mercury-token": TOKEN },
+        body: JSON.stringify({ feeds: [Array(20000).join("x")] }),
+      }),
+      env,
+    );
+
+    assert.equal(res.status, 413);
+    assert.equal(Object.keys(env.BRIEFINGS.written).length, 0);
+  });
+
+  test("PUT to anything else is still refused", async () => {
+    const res = await worker.fetch(
+      new Request("https://x/briefing/2026-08-30", {
+        method: "PUT",
+        headers: { "x-mercury-token": TOKEN },
+        body: "{}",
+      }),
+      envFor({}),
+    );
+    // The write exception is settings and nothing else.
+    assert.equal(res.status, 405);
+  });
+});
+
 function envFor(objects) {
   return {
     BRIEFINGS: bucket(objects),

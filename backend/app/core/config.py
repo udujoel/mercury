@@ -2,6 +2,59 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# What the environment held before any artifact overrode it, so a setting
+# cleared later can be undone rather than left in place.
+_ORIGINAL_ENVIRONMENT: dict[str, str | None] = {}
+
+
+def apply_to_environment(user_settings) -> None:
+    """Write saved settings into the process environment, then rebuild.
+
+    Not elegant, and deliberate. `get_settings()` is already the single
+    place every component asks about configuration — providers, feeds, the
+    script chain — and it is `lru_cache`d. Threading a `UserSettings` object
+    through all of them would create a SECOND source of truth for the same
+    questions, and the two would drift the first time one call site was
+    missed. Writing the values where `Settings` already looks keeps one.
+
+    Only non-empty values are applied: a null field means "use the
+    environment", which is what the artifact is missing entirely.
+    """
+    import os
+
+    mapping = {
+        "TTS_PROVIDER": user_settings.tts_provider,
+        "ELEVENLABS_VOICE_A": user_settings.voice_a,
+        "ELEVENLABS_VOICE_B": user_settings.voice_b,
+    }
+    for key, value in mapping.items():
+        if value:
+            _ORIGINAL_ENVIRONMENT.setdefault(key, os.environ.get(key))
+            os.environ[key] = value
+        elif key in _ORIGINAL_ENVIRONMENT:
+            # Cleared in the artifact after having been set. Null means "use
+            # the environment", so the environment has to come back — in a
+            # long-lived process (the API, the scheduler) a stale override
+            # would outlive the setting that created it and null would
+            # quietly mean "keep the last value".
+            #
+            # The record is READ, not popped. Popping it made this work
+            # exactly once: a second call with the same field still null
+            # found nothing to restore and left the first call's override in
+            # place, so "null means the environment" quietly stopped being
+            # true after one round trip. The entry is only meaningful while
+            # the process lives, and keeping it costs nothing.
+            previous = _ORIGINAL_ENVIRONMENT[key]
+            if previous is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = previous
+
+    # Cleared so the next `get_settings()` sees what was just written.
+    # Without this the whole function is a no-op with a log line, which is
+    # the exact failure mode it exists to prevent one level up.
+    get_settings.cache_clear()
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(

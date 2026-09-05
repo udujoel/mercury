@@ -300,6 +300,20 @@ final class RecordingAPI: APIClientProtocol {
         return archiveResult
     }
 
+    /// Nil is the never-saved state every deployment starts in.
+    var settingsResult: UserSettings?
+    var savedSettings: [UserSettings] = []
+
+    func fetchSettings() async throws -> UserSettings? {
+        calls.append("fetchSettings")
+        return settingsResult
+    }
+
+    func saveSettings(_ settings: UserSettings) async throws {
+        calls.append("saveSettings")
+        savedSettings.append(settings)
+    }
+
     func generateBriefing(length: BriefingLength) async throws -> BriefingManifest {
         calls.append("generateBriefing")
         return ManifestFixtures.minimal

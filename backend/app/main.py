@@ -52,6 +52,9 @@ app.include_router(briefing.router, prefix="/briefing", tags=["briefing"])
 # serves the archive index at "/briefings" and the client has one code path
 # for both backends.
 app.include_router(briefing.index_router, prefix="/briefings", tags=["briefing"])
+# The settings artifact. Mirrors the Worker's own /settings so the client
+# has one code path for both backends.
+app.include_router(briefing.settings_router, prefix="/settings", tags=["settings"])
 app.include_router(devices.router, prefix="/devices", tags=["devices"])
 # from app.api import auth
 # app.include_router(auth.router,  prefix="/auth")

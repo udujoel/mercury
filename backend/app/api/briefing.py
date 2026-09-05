@@ -26,7 +26,12 @@ from app.api import jobs
 from app.core.auth import require_api_token
 from app.core.config import get_settings
 from app.core.providers import EmbeddingProvider, build_embedding_provider
-from app.core.schemas import BriefingDigest, BriefingLength, BriefingManifest
+from app.core.schemas import (
+    BriefingDigest,
+    BriefingLength,
+    BriefingManifest,
+    UserSettings,
+)
 from app.pipeline.generate import generate_briefing
 from app.providers.fake import FakeLLMProvider
 from app.providers.fake_tts import FakeTTSProvider
@@ -311,6 +316,40 @@ class BriefingIndexResponse(BaseModel):
 
 
 index_router = APIRouter(dependencies=[Depends(require_api_token)])
+
+
+settings_router = APIRouter(dependencies=[Depends(require_api_token)])
+
+
+@settings_router.get("", response_model=UserSettings)
+async def get_user_settings() -> UserSettings:
+    """The saved settings, or 404 when none were ever written.
+
+    404 is ORDINARY here and the client treats it as "use the defaults" —
+    every deployment starts in this state.
+    """
+    storage = build_storage()
+    settings = await asyncio.to_thread(storage.load_settings)
+    if settings is None:
+        raise HTTPException(status_code=404, detail="No settings saved.")
+    return settings
+
+
+@settings_router.put("", response_model=UserSettings)
+async def put_user_settings(settings: UserSettings) -> UserSettings:
+    """Mirrors `PUT /settings` in the Worker.
+
+    Exists for the same reason the index route does: the client has ONE code
+    path for both backends, so without it a fresh checkout against the
+    documented localhost URL cannot save settings at all — and the failure
+    would look like the feature being broken rather than absent.
+
+    Pydantic does the field filtering the Worker does by hand; unknown keys
+    are dropped by the model rather than stored.
+    """
+    storage = build_storage()
+    await asyncio.to_thread(storage.save_settings, settings)
+    return settings
 
 
 @index_router.get("", response_model=BriefingIndexResponse)

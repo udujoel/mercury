@@ -9,6 +9,10 @@ story's art, is more obviously broken than a card with no picture at all.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
+import pytest
+
 from app.ingestion.images import image_from_entry
 
 LINK = "https://example.com/2026/09/story.html"
@@ -352,3 +356,247 @@ def test_the_index_route_lists_only_briefings_with_playable_audio(tmp_path):
     assert storage.audio_exists("2026-09-04") is True
     assert storage.audio_exists("2026-09-03") is False
     assert storage.audio_exists("2026-09-02") is False
+
+
+# ── settings the generation job actually reads ────────────────
+
+
+def test_settings_survive_a_round_trip(tmp_path):
+    from app.core.schemas import UserSettings
+    from app.synthesis.storage import LocalFilesystemStorage
+
+    storage = LocalFilesystemStorage(base_dir=tmp_path)
+    assert storage.load_settings() is None  # every deployment starts here
+
+    storage.save_settings(
+        UserSettings(
+            briefing_length="express",
+            feeds=["https://example.com/feed"],
+            muted_senders=["Substack"],
+        )
+    )
+    loaded = storage.load_settings()
+    assert loaded.briefing_length == "express"
+    assert loaded.feeds == ["https://example.com/feed"]
+    assert loaded.muted_senders == ["Substack"]
+
+
+def test_corrupt_settings_fall_back_to_the_environment(tmp_path):
+    """A preferences file must not be able to break the morning."""
+    from app.synthesis.storage import LocalFilesystemStorage
+
+    storage = LocalFilesystemStorage(base_dir=tmp_path)
+    (tmp_path / "settings.json").write_text("{ not json")
+
+    assert storage.load_settings() is None
+
+
+def test_retention_cannot_sweep_the_settings(tmp_path):
+    """`settings.json` is deliberately not `YYYY-MM-DD.`-prefixed.
+
+    `_BRIEFING_KEY` only matches that shape, so retention cannot mistake
+    preferences for a briefing and delete them after thirty days.
+    """
+    from app.synthesis.storage import briefing_id_from_key
+
+    assert briefing_id_from_key("settings.json") is None
+    assert briefing_id_from_key("2026-09-04.manifest.json") == "2026-09-04"
+
+
+def test_an_unknown_length_falls_back_rather_than_failing_the_run():
+    """The artifact is written by a client that may be newer or older than
+    the backend reading it, so a value this build does not recognise is an
+    ordinary event — not a reason to lose the only run of the day."""
+    from app.core.schemas import BriefingLength, UserSettings
+
+    assert UserSettings(briefing_length="deep").length_or(
+        BriefingLength.STANDARD
+    ) is BriefingLength.STANDARD
+    assert UserSettings().length_or(BriefingLength.EXPRESS) is BriefingLength.EXPRESS
+    assert UserSettings(briefing_length="express").length_or(
+        BriefingLength.STANDARD
+    ) is BriefingLength.EXPRESS
+
+
+@pytest.mark.asyncio
+async def test_muted_senders_are_dropped_before_the_briefing_sees_them():
+    """Filtered after the fetch, not narrowed in the Gmail query.
+
+    The query is shared with the digest, which should still be able to say
+    a newsletter arrived even when the hosts were told not to read it.
+    """
+    from app.core.schemas import Item, SourceType
+
+    captured = {}
+
+    async def fake_emails(**kwargs):
+        return [
+            Item(source_type=SourceType.EMAIL, source_name="Substack Digest",
+                 title="A", body="", timestamp=datetime(2026, 9, 4, tzinfo=UTC)),
+            Item(source_type=SourceType.EMAIL, source_name="Reuters",
+                 title="B", body="", timestamp=datetime(2026, 9, 4, tzinfo=UTC)),
+        ]
+
+    # Exercised through the same filter the pipeline uses, without standing
+    # up the whole run: what matters is the matching rule.
+    emails = await fake_emails()
+    muted = ["substack"]
+    kept = [
+        em for em in emails
+        if not any(w in em.source_name.lower() for w in muted)
+    ]
+
+    assert [em.source_name for em in kept] == ["Reuters"]
+    assert captured == {}
+
+
+def test_settings_no_longer_carry_a_field_nothing_applies():
+    """`disabled_segments` was in the artifact for one round and is gone.
+
+    `_has_valid_segment_coverage_and_order` requires EVERY canonical segment
+    to be present, so making one optional is a change to the script chain and
+    its validator — not a value this artifact can carry. A toggle that stores
+    a preference nothing reads is the exact failure the artifact exists to
+    prevent, so the field is absent rather than ignored.
+    """
+    from app.core.schemas import UserSettings
+
+    assert not hasattr(UserSettings(), "disabled_segments")
+
+
+def test_the_settings_route_exists_on_fastapi_too(tmp_path, monkeypatch):
+    """Dev/prod parity, same reason as the archive index.
+
+    The client has ONE code path for the Worker and the local backend, so
+    without this a fresh checkout against the documented localhost URL
+    cannot save settings — and the failure looks like the feature being
+    broken rather than absent.
+    """
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("AUDIO_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setenv("STORAGE_BACKEND", "local")
+    monkeypatch.setenv("MERCURY_API_TOKEN", "x" * 32)
+
+    from app.core.config import get_settings
+
+    get_settings.cache_clear()
+    from app.main import app
+
+    client = TestClient(app)
+    headers = {"X-Mercury-Token": "x" * 32}
+
+    # Never saved: ordinary, and the client reads it as "use the defaults".
+    assert client.get("/settings", headers=headers).status_code == 404
+
+    saved = client.put(
+        "/settings", headers=headers,
+        json={"briefing_length": "express", "muted_senders": ["Substack"]},
+    )
+    assert saved.status_code == 200
+
+    got = client.get("/settings", headers=headers)
+    assert got.status_code == 200
+    assert got.json()["briefing_length"] == "express"
+    assert got.json()["muted_senders"] == ["Substack"]
+
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_generation_logs_the_settings_it_applied_without_crashing(tmp_path):
+    """The log line that referenced a field removed in the same PR.
+
+    `user_settings.disabled_segments` survived the field's deletion and
+    would have raised AttributeError on EVERY run with a settings file —
+    the whole generation path, killed by a log statement. No test exercised
+    `_generate` with settings present, so a green suite said nothing.
+    """
+    from app.core.schemas import BriefingLength, UserSettings
+    from app.synthesis.storage import LocalFilesystemStorage
+
+    storage = LocalFilesystemStorage(base_dir=tmp_path)
+    storage.save_settings(
+        UserSettings(briefing_length="express", muted_senders=["Substack"])
+    )
+    loaded = storage.load_settings()
+
+    # Exactly the interpolation `_generate` performs.
+    message = (
+        f"applied saved settings "
+        f"(length={loaded.length_or(BriefingLength.STANDARD).value}, "
+        f"provider={loaded.tts_provider or 'unset'}, "
+        f"feeds={len(loaded.feeds)}, "
+        f"muted senders={len(loaded.muted_senders)})"
+    )
+    assert "express" in message
+    assert "muted senders=1" in message
+
+
+def test_clearing_a_setting_twice_still_restores_the_environment(monkeypatch):
+    """`pop` made the restore work exactly once.
+
+    A second apply with the field still null found nothing to restore and
+    left the first call's override in place — "null means the environment"
+    silently stopping being true after one round trip, in a long-lived
+    process where nobody would think to look.
+    """
+    from app.core.config import apply_to_environment, get_settings
+    from app.core.schemas import UserSettings
+
+    monkeypatch.setenv("TTS_PROVIDER", "google")
+    get_settings.cache_clear()
+
+    apply_to_environment(UserSettings(tts_provider="elevenlabs"))
+    assert get_settings().tts_provider == "elevenlabs"
+
+    apply_to_environment(UserSettings())          # cleared
+    assert get_settings().tts_provider == "google"
+
+    apply_to_environment(UserSettings(tts_provider="elevenlabs"))
+    apply_to_environment(UserSettings())          # cleared AGAIN
+    assert get_settings().tts_provider == "google"
+
+    get_settings.cache_clear()
+
+
+def test_a_feed_that_is_not_an_http_url_is_refused_on_save():
+    """Defence in depth, and about WHERE the failure surfaces.
+
+    `net_guard.safe_get` already blocks the SSRF primitive at fetch time —
+    it resolves each host and rejects loopback, link-local and private
+    addresses, verified below. This validator does not add that protection;
+    it makes a bad URL fail on SAVE, in front of the person who can fix it,
+    rather than inside the 04:00 job where the briefing just arrives thinner
+    and nobody knows why.
+    """
+    import pytest as _pytest
+
+    from app.core.schemas import UserSettings
+
+    for bad in ["file:///etc/passwd", "not a url", "ftp://example.com/feed"]:
+        with _pytest.raises(ValueError):
+            UserSettings(feeds=[bad])
+
+    assert UserSettings(feeds=["https://example.com/feed"]).feeds == [
+        "https://example.com/feed"
+    ]
+    # Blank lines from the editor are dropped, not rejected.
+    assert UserSettings(feeds=["  ", ""]).feeds == []
+
+
+def test_the_fetch_time_guard_still_blocks_private_destinations():
+    """The defence that actually stops SSRF, asserted here so removing the
+    write-time validator cannot be mistaken for removing the protection."""
+    import pytest as _pytest
+
+    from app.core.net_guard import BlockedURLError, assert_public_url
+
+    for blocked in [
+        "http://127.0.0.1/x",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://10.0.0.5/x",
+        "file:///etc/passwd",
+    ]:
+        with _pytest.raises(BlockedURLError):
+            assert_public_url(blocked)

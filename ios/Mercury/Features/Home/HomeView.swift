@@ -19,6 +19,7 @@ struct HomeView: View {
     @State private var showPlayer = false
     @State private var selectedStory: DigestStory?
     @State private var showArchive = false
+    @State private var showSettings = false
 
     private var rows: [BriefingDigest.Row] { BriefingDigest.rows(for: appState.manifest) }
 
@@ -135,6 +136,20 @@ struct HomeView: View {
             }
             .navigationDestination(isPresented: $showPlayer) {
                 PlayerView()
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { showSettings = true } label: {
+                        Image(systemName: "gearshape")
+                            .foregroundStyle(MercuryColor.inkMuted.color)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .accessibilityLabel("Settings")
+                }
+            }
+            .navigationDestination(isPresented: $showSettings) {
+                SettingsView()
             }
             .navigationDestination(isPresented: $showArchive) {
                 ArchiveView(

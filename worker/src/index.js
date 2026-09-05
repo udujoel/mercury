@@ -153,6 +153,26 @@ export default {
       });
     }
 
+    // Settings are the ONE writable thing, and the exception is narrow on
+    // purpose.
+    //
+    // What "read-only" protects here is the BRIEFING data: audio, manifests
+    // and digests are produced by the overnight job and a Worker has no
+    // business rewriting them. It is not a claim that this Worker never
+    // writes a byte — and it is unrelated to the Google read-only scopes,
+    // which are enforced by Google and untouched by anything here.
+    //
+    // Without a write path the settings screen is decoration: the phone
+    // saves a preference the 04:00 job never sees, and the control appears
+    // to work. That is worse than no control.
+    //
+    // The blast radius is one fixed key holding preferences the user
+    // themselves chose, behind the same bearer token as everything else,
+    // size-capped, and validated before it is stored.
+    if (request.method === "PUT" && new URL(request.url).pathname === "/settings") {
+      return handleSettingsWrite(request, env);
+    }
+
     if (request.method !== "GET") {
       // Generation is a scheduled batch job (ADR-008), not something a Worker
       // can do — no Python pipeline, no 127-second budget.
@@ -191,6 +211,10 @@ export default {
       const id = briefingIdFor(new Date(), resolvedTimeZone(env));
       const state = await briefingState(env, id);
       return json({ briefing_id: id, state, ok: state === "ok" });
+    }
+
+    if (url.pathname === "/settings") {
+      return serveSettings(env);
     }
 
     // Which mornings are still here.
@@ -580,6 +604,114 @@ async function serveBriefingList(env) {
 }
 
 const SUFFIX = ".manifest.json";
+const SETTINGS_KEY = "settings.json";
+
+// Preferences are a few hundred bytes. The cap is not about storage cost,
+// it is about the write path never becoming a way to put an arbitrary blob
+// in the bucket.
+const MAX_SETTINGS_BYTES = 16 * 1024;
+
+// The keys this Worker will store, WITH the shape each must have.
+//
+// Anything else is dropped rather than passed through: the artifact is
+// parsed by the generation job, and a write path that forwards unknown
+// fields forwards whatever a future client bug puts in them.
+//
+// Types are checked too, not just names. `briefing_length: 123` passed the
+// name filter and was stored, and Pydantic would then reject the whole
+// artifact on the next run — one bad write silently reverting every setting
+// to the environment.
+const SETTINGS_FIELDS = {
+  schema_version: "number",
+  updated_at: "string",
+  briefing_length: "string",
+  tts_provider: "string",
+  voice_a: "string",
+  voice_b: "string",
+  feeds: "string[]",
+  muted_senders: "string[]",
+};
+
+function matchesShape(value, shape) {
+  if (shape === "string[]") {
+    return Array.isArray(value) && value.every((v) => typeof v === "string");
+  }
+  return typeof value === shape;
+}
+
+async function serveSettings(env) {
+  const object = await env.BRIEFINGS.get(SETTINGS_KEY);
+  // 404 is ORDINARY and means "never saved" — every deployment starts here.
+  // The client shows its defaults rather than an error.
+  if (!object) return json({ detail: "No settings saved." }, 404);
+  return new Response(object.body, {
+    headers: {
+      "content-type": "application/json",
+      // Never cached: the point of this object is that a change takes
+      // effect, and a stale read would show the user a preference they
+      // just replaced.
+      "cache-control": "no-store",
+    },
+  });
+}
+
+async function handleSettingsWrite(request, env) {
+  if (!env.MERCURY_API_TOKEN) {
+    return json({ detail: "Worker is not configured with MERCURY_API_TOKEN." }, 503);
+  }
+  if (env.MERCURY_API_TOKEN.length < MIN_TOKEN_LENGTH) {
+    return json(
+      { detail: `MERCURY_API_TOKEN must be at least ${MIN_TOKEN_LENGTH} characters.` },
+      503,
+    );
+  }
+  if (!tokensMatch(request.headers.get(TOKEN_HEADER) || "", env.MERCURY_API_TOKEN)) {
+    return json({ detail: `Missing or invalid ${TOKEN_HEADER}.` }, 401);
+  }
+
+  const raw = await request.text();
+  // BYTES, not characters. `String.length` counts UTF-16 code units, so a
+  // body of non-ASCII feed titles could pass a 16KB check and store 30KB.
+  if (new TextEncoder().encode(raw).length > MAX_SETTINGS_BYTES) {
+    return json({ detail: "Settings are too large." }, 413);
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return json({ detail: "Settings must be valid JSON." }, 400);
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return json({ detail: "Settings must be a JSON object." }, 400);
+  }
+
+  // Rebuilt from known keys rather than stored as received. The generation
+  // job parses this file; forwarding fields nobody has declared is how an
+  // unrelated bug on the client ends up shaping a briefing.
+  const clean = {};
+  const wrongType = [];
+  for (const [key, shape] of Object.entries(SETTINGS_FIELDS)) {
+    if (!(key in parsed) || parsed[key] === null) continue;
+    if (!matchesShape(parsed[key], shape)) {
+      wrongType.push(`${key} must be ${shape}`);
+      continue;
+    }
+    clean[key] = parsed[key];
+  }
+  // Refused rather than silently dropped. A setting that vanishes on save is
+  // indistinguishable from one that never applied, and the client can only
+  // tell you which if the server says so.
+  if (wrongType.length) {
+    return json({ detail: `Invalid settings: ${wrongType.join("; ")}.` }, 400);
+  }
+
+  await env.BRIEFINGS.put(SETTINGS_KEY, JSON.stringify(clean, null, 2), {
+    httpMetadata: { contentType: "application/json" },
+  });
+
+  return json({ status: "saved" });
+}
 const AUDIO_EXTS = [".m4a", ".wav"];
 
 function serveManifest(request, env, id) {
