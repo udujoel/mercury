@@ -219,13 +219,17 @@ class ElevenLabsTTSProvider:
                         "elevenlabs rejected the request (%d): %.300s",
                         status, exc.response.text,
                     )
-                    # 402 has exactly one cause worth naming, and it cost a
-                    # whole briefing: a LIBRARY voice on a free plan. The
-                    # raw body says "paid_plan_required" and leaves the
-                    # reader to work out which of the two voices it was and
-                    # what to do, while the run goes green and ships a
-                    # briefing in the wrong voice.
-                    if status == 402:
+                    # A 402 that names `paid_plan_required` is about the
+                    # VOICE, and cost a whole briefing once: a library voice
+                    # on a free plan. The raw body leaves the reader to work
+                    # out which of the two voices it was and what to do,
+                    # while the run goes green and ships in the wrong voice.
+                    #
+                    # Gated on the code rather than on the status, because
+                    # 402 also carries `insufficient_credits` — a spent
+                    # quota, where the voice is blameless and advice to go
+                    # and change it wastes the reader's afternoon.
+                    if status == 402 and "paid_plan_required" in exc.response.text:
                         logger.error(
                             "voice %s cannot be used on this ElevenLabs plan. "
                             "Free plans can only synthesise PREMADE voices — "

@@ -34,6 +34,32 @@ def _alignment(text: str, ms_per_char: int = 100) -> dict:
     }
 
 
+def _provider_answering(monkeypatch, *, status: int, body: str):
+    """An `ElevenLabsTTSProvider` whose HTTP call returns one fixed response.
+
+    Patched at the client rather than over the network: what is under test
+    is which sentence reaches the log for which error code, and that needs
+    no socket.
+    """
+    import httpx
+
+    from app.core.config import get_settings
+    from app.providers.elevenlabs_tts import ElevenLabsTTSProvider
+
+    # The provider reads the key from settings rather than taking one, so
+    # the environment is where a test supplies it.
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "k")
+    get_settings.cache_clear()
+    provider = ElevenLabsTTSProvider()
+
+    async def _post(self, url, **kwargs):
+        request = httpx.Request("POST", url)
+        return httpx.Response(status, text=body, request=request)
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", _post)
+    return provider
+
+
 # ── collapsing characters into words ──────────────────────────
 
 
@@ -461,3 +487,64 @@ async def test_a_provider_without_timings_leaves_words_none():
     )
 
     assert manifest.turns[0].words is None
+
+
+# ── what a 402 is allowed to claim ────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_paid_plan_402_names_the_voice(caplog, monkeypatch):
+    """The one 402 that IS about the voice says so.
+
+    A library voice on a free plan returns `paid_plan_required`, and that
+    cost a whole briefing: the free tier refused host A, the run degraded
+    to Google for that host alone, and shipped a two-man briefing while
+    reporting success. The raw body names a code and no remedy.
+    """
+    import logging
+
+    import httpx
+
+    provider = _provider_answering(
+        monkeypatch,
+        status=402,
+        body='{"detail":{"status":"paid_plan_required",'
+        '"message":"Free users cannot use library voices via the API."}}',
+    )
+
+    with caplog.at_level(logging.ERROR), pytest.raises(httpx.HTTPStatusError):
+        await provider.synthesize("hello", "voice-xyz")
+
+    assert any("PREMADE" in r.getMessage() for r in caplog.records), (
+        "a paid_plan_required 402 must say what to do about it"
+    )
+    assert any("voice-xyz" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_a_spent_quota_402_does_not_blame_the_voice(caplog, monkeypatch):
+    """402 also means `insufficient_credits`, where the voice is blameless.
+
+    Advice to go and pick a different voice sends the reader after a
+    perfectly good one while synthesis stays unavailable for the real
+    reason. The body is still logged; only the remedy is withheld.
+    """
+    import logging
+
+    import httpx
+
+    provider = _provider_answering(
+        monkeypatch,
+        status=402,
+        body='{"detail":{"status":"insufficient_credits",'
+        '"message":"You have run out of credits."}}',
+    )
+
+    with caplog.at_level(logging.ERROR), pytest.raises(httpx.HTTPStatusError):
+        await provider.synthesize("hello", "voice-xyz")
+
+    rendered = " ".join(r.getMessage() for r in caplog.records)
+    assert "insufficient_credits" in rendered, "the body still goes to the log"
+    assert "PREMADE" not in rendered, (
+        "a spent quota is not a reason to change the voice"
+    )
