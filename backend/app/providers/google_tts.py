@@ -25,6 +25,7 @@ import random
 from pathlib import Path
 
 from app.core.config import get_settings
+from app.core.providers import Speech
 
 logger = logging.getLogger(__name__)
 
@@ -103,16 +104,26 @@ class GoogleTTSProvider:
         )
         return response.audio_content
 
-    async def synthesize(self, text: str, voice_id: str) -> bytes:
+    async def synthesize(self, text: str, voice_id: str) -> Speech:
+        """No word timings.
+
+        Neural2 can only produce them through SSML `<mark>` injection plus
+        the v1beta1 timepoints API — a word-level markup pipeline built to
+        be thrown away the moment ElevenLabs is the default. Empty rather
+        than None so consumers stay on one code path; transcript
+        highlighting degrades to whole-line, which is what the client
+        already does for every manifest generated before timings existed.
+        """
         last_error: Exception | None = None
         for attempt in range(1, MAX_ATTEMPTS + 1):
             try:
                 # The SDK is synchronous; run it in a thread so this
                 # provider never blocks the event loop the rest of the
                 # pipeline runs on.
-                return await asyncio.to_thread(
+                audio = await asyncio.to_thread(
                     self._sync_synthesize, text, voice_id
                 )
+                return Speech(audio=audio)
             except Exception as exc:  # noqa: BLE001 - SDK raises varied types
                 last_error = exc
                 if attempt == MAX_ATTEMPTS:

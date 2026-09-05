@@ -129,10 +129,10 @@ def _build_live_providers() -> tuple[LLMProvider, TTSProvider]:
     from app.providers.fake_tts import FakeTTSProvider
 
     if _credentials_configured():
+        from app.core.providers import build_tts_provider
         from app.providers.gemini import GeminiProvider
-        from app.providers.google_tts import GoogleTTSProvider
 
-        return GeminiProvider(), GoogleTTSProvider()
+        return GeminiProvider(), build_tts_provider()
     return FakeLLMProvider(), FakeTTSProvider()
 
 

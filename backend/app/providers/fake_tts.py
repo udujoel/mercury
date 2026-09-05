@@ -21,6 +21,8 @@ import math
 import struct
 import wave
 
+from app.core.providers import Speech, WordTiming
+
 # Natural conversational speech, per app/core/schemas.py LENGTH_BUDGETS.
 WORDS_PER_MINUTE = 150
 MIN_DURATION_S = 0.6
@@ -35,6 +37,19 @@ _FREQUENCY_BY_VOICE = {
     VOICE_A_ID: 220.0,  # low tone — host A
     VOICE_B_ID: 330.0,  # higher tone — host B
 }
+
+
+def _even_words(text: str, duration_s: float) -> tuple[WordTiming, ...]:
+    """Word timings spread evenly across the clip."""
+    words = text.split()
+    if not words:
+        return ()
+    total_ms = int(duration_s * 1000)
+    each = max(total_ms // len(words), 1)
+    return tuple(
+        WordTiming(word=w, start_ms=i * each, end_ms=min((i + 1) * each, total_ms))
+        for i, w in enumerate(words)
+    )
 
 
 def _synthesize_tone(frequency: float, duration_s: float) -> bytes:
@@ -70,8 +85,16 @@ class FakeTTSProvider:
     def voice_b(self) -> str:
         return VOICE_B_ID
 
-    async def synthesize(self, text: str, voice_id: str) -> bytes:
+    async def synthesize(self, text: str, voice_id: str) -> Speech:
         word_count = max(len(text.split()), 1)
         duration_s = max(word_count / WORDS_PER_MINUTE * 60.0, MIN_DURATION_S)
         frequency = _FREQUENCY_BY_VOICE.get(voice_id, _FREQUENCY_BY_VOICE[VOICE_B_ID])
-        return _synthesize_tone(frequency, duration_s)
+        return Speech(
+            audio=_synthesize_tone(frequency, duration_s),
+            # Evenly divided across the clip. Not real timings — nothing here
+            # is really spoken — but real ENOUGH that the manifest a test
+            # builds has word data in the right shape and the right total
+            # span, so the offsetting in `stitch` and the client's decoding
+            # can both be exercised without a live ElevenLabs call.
+            words=_even_words(text, duration_s),
+        )

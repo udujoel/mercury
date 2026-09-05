@@ -25,12 +25,13 @@ from pydub import AudioSegment
 from pydub.effects import normalize
 from pydub.utils import which
 
-from app.core.providers import TTSProvider
+from app.core.providers import TTSProvider, WordTiming
 from app.core.schemas import (
     SEGMENT_LABELS,
     BriefingManifest,
     SourceRef,
     Turn,
+    WordSpan,
 )
 
 log = logging.getLogger(__name__)
@@ -110,8 +111,8 @@ async def synthesize_briefing(
     # Old index -> new index, for remapping SourceRefs after compaction.
     index_map: dict[int, int] = {}
 
-    for idx, (turn, clip) in enumerate(zip(turns, clips, strict=True)):
-        if clip is None:
+    for idx, (turn, synthesized) in enumerate(zip(turns, clips, strict=True)):
+        if synthesized is None:
             log.error(
                 "turn %d failed to synthesize; dropping it from the manifest "
                 "so transcript sync stays aligned: %.60s",
@@ -119,6 +120,9 @@ async def synthesize_briefing(
             )
             continue
 
+        clip, word_timings = synthesized
+        # Loudness normalisation is gain only; it does not change duration,
+        # so the timings stay valid across it.
         clip = _normalize_loudness(clip)
 
         if idx > 0:
@@ -133,6 +137,18 @@ async def synthesize_briefing(
 
         turn.start_ms = cursor_ms
         turn.end_ms = cursor_ms + len(clip)
+        # Relative to the clip -> absolute in the stitched file, computed
+        # HERE and only here. When intro music is prepended (ROADMAP task 3)
+        # it moves `cursor_ms`, and every word moves with it for free — the
+        # failure ADR-006 named is a second place doing this arithmetic.
+        turn.words = [
+            WordSpan(
+                word=w.word,
+                start_ms=cursor_ms + w.start_ms,
+                end_ms=cursor_ms + w.end_ms,
+            )
+            for w in word_timings
+        ] or None
         index_map[idx] = len(rendered)
         rendered.append(turn)
         combined += clip
@@ -245,16 +261,26 @@ def _export(combined: AudioSegment) -> tuple[bytes, str]:
 
 async def _synthesize_all(
     turns: list[Turn], tts: TTSProvider
-) -> list[AudioSegment | None]:
+) -> list[tuple[AudioSegment, tuple[WordTiming, ...]] | None]:
+    """The clip for each turn and its word timings, or None where TTS failed.
+
+    The timings come back RELATIVE to their own clip, because the provider
+    has no idea where the turn will land. They are made absolute in
+    `synthesize_and_stitch`, at the one point that knows.
+    """
     sem = asyncio.Semaphore(MAX_CONCURRENT_TTS)
 
-    async def one(turn: Turn) -> AudioSegment | None:
+    async def one(turn: Turn) -> tuple[AudioSegment, tuple[WordTiming, ...]] | None:
         async with sem:
             voice = tts.voice_a if turn.speaker == "A" else tts.voice_b
             try:
-                raw = await tts.synthesize(turn.text, voice)
-                return AudioSegment.from_file(
-                    io.BytesIO(raw), format=_sniff_format(raw)
+                speech = await tts.synthesize(turn.text, voice)
+                raw = speech.audio
+                return (
+                    AudioSegment.from_file(
+                        io.BytesIO(raw), format=_sniff_format(raw)
+                    ),
+                    speech.words,
                 )
             except Exception as exc:
                 # Log the cause inline, not just a traceback: these failures

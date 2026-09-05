@@ -37,9 +37,9 @@ def _turns() -> list[Turn]:
 
 async def test_fake_tts_produces_valid_wav_bytes():
     tts = FakeTTSProvider()
-    audio = await tts.synthesize("Hello there, this is a test.", tts.voice_a)
+    speech = await tts.synthesize("Hello there, this is a test.", tts.voice_a)
     # Must be openable as a real WAV file, no ffmpeg involved.
-    with wave.open(BytesIO(audio), "rb") as wf:
+    with wave.open(BytesIO(speech.audio), "rb") as wf:
         assert wf.getnchannels() == 1
         assert wf.getnframes() > 0
 
@@ -53,7 +53,7 @@ async def test_fake_tts_duration_scales_with_word_count():
         with wave.open(BytesIO(audio), "rb") as wf:
             return wf.getnframes() / wf.getframerate()
 
-    assert _duration_s(long) > _duration_s(short)
+    assert _duration_s(long.audio) > _duration_s(short.audio)
 
 
 async def test_fake_tts_voice_a_and_b_are_different_pitch():
@@ -64,7 +64,7 @@ async def test_fake_tts_voice_a_and_b_are_different_pitch():
     clip_a = await tts.synthesize("Same text here for both.", tts.voice_a)
     clip_b = await tts.synthesize("Same text here for both.", tts.voice_b)
     # Same text, same duration, different pitch -> different sample bytes.
-    assert clip_a != clip_b
+    assert clip_a.audio != clip_b.audio
 
 
 # ──────────────────────────────────────────────────────────────

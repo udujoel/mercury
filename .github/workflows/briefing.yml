@@ -164,6 +164,18 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GOOGLE_TTS_CREDENTIALS: ./credentials/gcp-tts.json
+          # Voice. `TTS_PROVIDER` selects; with it unset or ElevenLabs
+          # unavailable, `build_tts_provider` falls back to Google and logs
+          # loudly — rule 6 keeps Google behind the protocol so a paid tier
+          # going down at 4am costs the voice, not the briefing.
+          #
+          # The two voice ids are not secret, but they live in secrets
+          # alongside the key so there is one screen to set all of this on
+          # rather than two. They become app settings in ROADMAP task 11.
+          TTS_PROVIDER: ${{ secrets.TTS_PROVIDER }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_VOICE_A: ${{ secrets.ELEVENLABS_VOICE_A }}
+          ELEVENLABS_VOICE_B: ${{ secrets.ELEVENLABS_VOICE_B }}
           GOOGLE_TOKEN_FILE: ${{ github.workspace }}/token.json
           MERCURY_API_TOKEN: ${{ secrets.MERCURY_API_TOKEN }}
           USER_EMAIL: ${{ secrets.USER_EMAIL }}

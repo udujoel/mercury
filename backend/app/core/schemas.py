@@ -166,6 +166,25 @@ class Turn(BaseModel):
     text: str
     start_ms: int | None = None           # filled in after synthesis
     end_ms: int | None = None
+    # Word timings, ABSOLUTE in the stitched file, when the TTS provider
+    # supplied them. None for Google, and None for every manifest generated
+    # before ElevenLabs — the client falls back to whole-line highlighting.
+    words: list[WordSpan] | None = None
+
+
+class WordSpan(BaseModel):
+    """One word, and when it is spoken in the finished audio.
+
+    Absolute, unlike `providers.WordTiming` which is relative to its own
+    clip. `stitch` converts between the two at the one point that knows
+    where a turn landed — and that is the same point that will know how much
+    intro music sits in front of it (ROADMAP task 3), which is why the
+    offset is applied there and nowhere else.
+    """
+
+    word: str
+    start_ms: int
+    end_ms: int
 
 
 class SourceRef(BaseModel):
