@@ -651,7 +651,15 @@ function matchesShape(value, shape) {
 // nothing else; here it spends it on one read-only GET and returns four
 // fields per voice.
 const VOICE_CACHE_SECONDS = 60 * 60 * 6;
-const MAX_VOICES = 120;
+
+// A ceiling on the RESPONSE, not on the library.
+//
+// 120 was too low and truncated silently: an account with cloned voices
+// passes it easily, and the dropped ones simply were not in the picker
+// with nothing saying why. This is high enough that reaching it means
+// something unusual, and reaching it now says so in the payload rather
+// than quietly shortening the list.
+const MAX_VOICES = 500;
 
 async function serveVoices(env) {
   if (!env.ELEVENLABS_API_KEY) {
@@ -676,7 +684,8 @@ async function serveVoices(env) {
   // Reshaped, not proxied. The upstream response carries settings, sharing
   // metadata and fine-tuning state that the picker has no use for and that
   // would grow the payload on a phone for nothing.
-  const voices = (payload.voices || []).slice(0, MAX_VOICES).map((v) => ({
+  const all = payload.voices || [];
+  const voices = all.slice(0, MAX_VOICES).map((v) => ({
     voice_id: v.voice_id,
     name: v.name,
     // The sample the picker plays. Present for library voices and absent
@@ -686,7 +695,13 @@ async function serveVoices(env) {
     labels: v.labels || {},
   }));
 
-  return new Response(JSON.stringify({ voices }), {
+  const body = { voices };
+  if (all.length > MAX_VOICES) {
+    body.detail =
+      `Showing the first ${MAX_VOICES} of ${all.length} voices.`;
+  }
+
+  return new Response(JSON.stringify(body), {
     headers: {
       "content-type": "application/json",
       // Voices change rarely and the list costs an upstream call, so this

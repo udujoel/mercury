@@ -123,7 +123,13 @@ def _tts_configured(s) -> bool:
 
 
 def _google_tts_credentials_present(s) -> bool:
-    tts_creds = Path(s.google_tts_credentials)
+    # `expanduser` first. `GOOGLE_TTS_CREDENTIALS=~/keys/gcp-tts.json` is an
+    # ordinary way to write a path, and a literal "~" directory does not
+    # exist — so the check said "no Google credentials" for a machine that
+    # has them, and auto-mode chose fixtures over a working provider.
+    # `GoogleTTSProvider._resolve_credentials_path` already expands; this
+    # did not, so the gate and the provider disagreed about the same file.
+    tts_creds = Path(s.google_tts_credentials).expanduser()
     if not tts_creds.is_absolute():
         tts_creds = (Path(__file__).resolve().parents[2] / tts_creds).resolve()
     return tts_creds.is_file()

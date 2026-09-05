@@ -56,10 +56,20 @@ def apply_to_environment(user_settings) -> None:
     get_settings.cache_clear()
 
 
-# Brian — deep, resonant and comforting. Host A.
-DEFAULT_ELEVENLABS_VOICE_A = "nPczCjzI2devNBz1zQrb"
-# A poised British woman. Host B.
-DEFAULT_ELEVENLABS_VOICE_B = "3Drdg7QWqr45nZmYpXRP"
+# Matched to the HOST NAMES below, not to the order they were suggested in.
+#
+# `host_a_name` is "Mara" and `host_b_name` is "Theo", so host A takes the
+# British woman and host B takes Brian. Assigning them the other way round
+# gave Mara a deep male voice and Theo a woman's — a gender-swapped
+# conversation that reads as a bug in every single briefing, and one nobody
+# would think to look for in a config file.
+#
+# If the host names change, these move with them.
+
+# A poised British woman. Host A — Mara.
+DEFAULT_ELEVENLABS_VOICE_A = "3Drdg7QWqr45nZmYpXRP"
+# Brian: deep, resonant, comforting. Host B — Theo.
+DEFAULT_ELEVENLABS_VOICE_B = "nPczCjzI2devNBz1zQrb"
 
 
 class Settings(BaseSettings):

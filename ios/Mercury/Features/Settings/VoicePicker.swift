@@ -96,6 +96,9 @@ struct VoicePicker: View {
     @State private var state: LoadState = .loading
     @State private var previewing: String?
     @State private var player: AVPlayer?
+    /// Removed in `stopPreview`. An observer per sample, left registered,
+    /// would fire for players that no longer exist.
+    @State private var endObserver: NSObjectProtocol?
 
     enum LoadState: Equatable {
         case loading
@@ -248,13 +251,31 @@ struct VoicePicker: View {
             return
         }
         stopPreview()
+
         let player = AVPlayer(url: url)
         self.player = player
         previewing = id
+
+        // Cleared when the sample ENDS, not only when it is stopped.
+        // Without this a finished sample stayed marked as playing, so the
+        // row still showed a stop button and the next tap only cleared the
+        // state — you had to tap twice to hear it again.
+        endObserver = NotificationCenter.default.addObserver(
+            forName: AVPlayerItem.didPlayToEndTimeNotification,
+            object: player.currentItem,
+            queue: .main
+        ) { _ in
+            Task { @MainActor in stopPreview() }
+        }
+
         player.play()
     }
 
     private func stopPreview() {
+        if let endObserver {
+            NotificationCenter.default.removeObserver(endObserver)
+        }
+        endObserver = nil
         player?.pause()
         player = nil
         previewing = nil

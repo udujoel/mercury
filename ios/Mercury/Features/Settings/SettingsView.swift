@@ -172,10 +172,21 @@ struct SettingsView: View {
 
     // MARK: - Voice
 
+    /// Every spelling `build_tts_provider` accepts, not just the canonical
+    /// one. A saved `11labs` left the voice ids live for generation while
+    /// both controls were hidden, so the setting was in effect and
+    /// invisible.
+    private static let elevenLabsAliases: Set<String> =
+        ["elevenlabs", "eleven_labs", "eleven-labs", "11labs"]
+
     private var usesElevenLabs: Bool {
-        // Nil counts: ElevenLabs is the server default now, so an unset
-        // provider means the voices are relevant rather than hidden.
-        settings.ttsProvider == nil || settings.ttsProvider == "elevenlabs"
+        // Nil counts. It means "server default", and the server default is
+        // now ElevenLabs — so the voices are relevant rather than hidden.
+        // The client cannot read the server's environment, so a deployment
+        // that overrides it to Google will show these controls; the footer
+        // says which provider is actually in use is the server's to decide.
+        guard let provider = settings.ttsProvider?.lowercased() else { return true }
+        return Self.elevenLabsAliases.contains(provider)
     }
 
     /// A row that opens the picker, showing the chosen voice's NAME rather
@@ -230,7 +241,7 @@ struct SettingsView: View {
     /// were a picker: listing real voices needs the ElevenLabs key, and the
     /// key belongs on the server.
     private var voiceNote: String {
-        if settings.ttsProvider == "elevenlabs" {
+        if usesElevenLabs {
             return "Voice IDs from elevenlabs.io \u{2014} Voices, then Copy "
                 + "Voice ID. A picker needs the API key, which stays on the "
                 + "server."
