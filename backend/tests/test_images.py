@@ -558,3 +558,45 @@ def test_clearing_a_setting_twice_still_restores_the_environment(monkeypatch):
     assert get_settings().tts_provider == "google"
 
     get_settings.cache_clear()
+
+
+def test_a_feed_that_is_not_an_http_url_is_refused_on_save():
+    """Defence in depth, and about WHERE the failure surfaces.
+
+    `net_guard.safe_get` already blocks the SSRF primitive at fetch time —
+    it resolves each host and rejects loopback, link-local and private
+    addresses, verified below. This validator does not add that protection;
+    it makes a bad URL fail on SAVE, in front of the person who can fix it,
+    rather than inside the 04:00 job where the briefing just arrives thinner
+    and nobody knows why.
+    """
+    import pytest as _pytest
+
+    from app.core.schemas import UserSettings
+
+    for bad in ["file:///etc/passwd", "not a url", "ftp://example.com/feed"]:
+        with _pytest.raises(ValueError):
+            UserSettings(feeds=[bad])
+
+    assert UserSettings(feeds=["https://example.com/feed"]).feeds == [
+        "https://example.com/feed"
+    ]
+    # Blank lines from the editor are dropped, not rejected.
+    assert UserSettings(feeds=["  ", ""]).feeds == []
+
+
+def test_the_fetch_time_guard_still_blocks_private_destinations():
+    """The defence that actually stops SSRF, asserted here so removing the
+    write-time validator cannot be mistaken for removing the protection."""
+    import pytest as _pytest
+
+    from app.core.net_guard import BlockedURLError, assert_public_url
+
+    for blocked in [
+        "http://127.0.0.1/x",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://10.0.0.5/x",
+        "file:///etc/passwd",
+    ]:
+        with _pytest.raises(BlockedURLError):
+            assert_public_url(blocked)

@@ -31,7 +31,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI
 
-from app.core.config import get_settings
+from app.core.config import apply_to_environment, get_settings
 from app.core.providers import (
     EmbeddingProvider,
     LLMProvider,
@@ -220,6 +220,28 @@ async def run_daily_briefing_job(
         )
         return
 
+    # Saved settings, applied here as well as in `app/cli.py`.
+    #
+    # The Actions workflow runs the CLI, so that was the production path and
+    # this one was left behind — but "scheduled" is exactly the run these
+    # settings exist to change, and an in-process scheduler honouring
+    # different configuration from the CLI is the kind of divergence nobody
+    # notices until a briefing comes out wrong on one path only.
+    #
+    # Before the providers are built, because it can change which provider
+    # is built. Never fatal: the environment is a working configuration.
+    user_settings = None
+    try:
+        user_settings = await asyncio.to_thread(storage.load_settings)
+    except Exception:
+        log.error(
+            "could not read saved settings; this run uses the environment",
+            exc_info=True,
+        )
+    if user_settings is not None:
+        apply_to_environment(user_settings)
+        settings = get_settings()
+
     if llm is None or tts is None:
         built_llm, built_tts = _build_live_providers()
         llm = llm if llm is not None else built_llm
@@ -242,7 +264,15 @@ async def run_daily_briefing_job(
             tts=tts,
             storage=storage,
             embeddings=embeddings,
-            length=_configured_length(settings.briefing_length),
+            length=(
+                user_settings.length_or(
+                    _configured_length(settings.briefing_length)
+                )
+                if user_settings is not None
+                else _configured_length(settings.briefing_length)
+            ),
+            feeds=user_settings.feeds if user_settings else None,
+            muted_senders=user_settings.muted_senders if user_settings else None,
         )
     except Exception:
         log.exception(

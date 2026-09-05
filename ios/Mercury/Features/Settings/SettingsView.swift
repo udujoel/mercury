@@ -243,6 +243,15 @@ struct SettingsView: View {
         saveState = .saving
         do {
             try await appState.saveSettings(settings)
+            // The artifact is read by the overnight job; `briefingLength` in
+            // UserDefaults is what an ON-DEMAND generate uses. Without this
+            // they disagree the moment the length is changed here, and
+            // tapping the card would generate at the old length while every
+            // scheduled run used the new one.
+            if let raw = settings.briefingLength,
+               let length = BriefingLength(rawValue: raw) {
+                appState.briefingLength = length
+            }
             saveState = .saved
             edited = false
         } catch {

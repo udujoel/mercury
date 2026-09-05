@@ -14,8 +14,9 @@ import hashlib
 from datetime import datetime
 from enum import Enum
 from typing import Any
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class SourceType(str, Enum):
@@ -398,6 +399,41 @@ class UserSettings(BaseModel):
     # for by accident.
     feeds: list[str] = Field(default_factory=list)
     muted_senders: list[str] = Field(default_factory=list)
+
+    @field_validator("feeds")
+    @classmethod
+    def _feeds_must_be_http_urls(cls, value: list[str]) -> list[str]:
+        """Refuse anything that is not an http(s) URL, at write time.
+
+        `net_guard.safe_get` already blocks the SSRF primitive at FETCH time
+        — it resolves each host and rejects loopback, link-local and private
+        addresses, so `http://169.254.169.254/` never reaches the network
+        however it got into the list. This is not that defence; it is the
+        second one.
+
+        What this adds is WHERE the failure surfaces. Without it, a typo or
+        a `file:///` paste is accepted silently and then fails inside the
+        morning job, where nobody sees it and the briefing simply arrives
+        thinner. Rejecting on save puts the error in front of the person who
+        can fix it.
+
+        Deliberately does NOT resolve DNS: a save must not block on the
+        network, and a feed that is unreachable today may be fine tomorrow.
+        Reachability is the fetcher's question. Shape is this one's.
+        """
+        cleaned: list[str] = []
+        for raw in value:
+            url = raw.strip()
+            if not url:
+                continue
+            parsed = urlsplit(url)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise ValueError(
+                    f"feed {url!r} is not an http(s) URL. Feeds are fetched "
+                    "over the network, so they need a scheme and a host."
+                )
+            cleaned.append(url)
+        return cleaned
 
     def length_or(self, fallback: BriefingLength) -> BriefingLength:
         """The configured length, or the fallback when unset or unknown.
