@@ -216,7 +216,7 @@ final class AppState {
         // Only while STOPPED. Interrupting playback to swap the file under
         // a listener is the thing `prefetchBriefing` refuses to do, and
         // pressing pause is not a request for a different briefing.
-        if rebuild != nil, !playback.isPlaying {
+        if isRegenerating, !playback.isPlaying {
             await playBriefing()
             return
         }
@@ -388,8 +388,15 @@ final class AppState {
     /// so the button comes back and the next play stops refetching.
     private func noteRebuildLanded(_ manifest: BriefingManifest) {
         guard let rebuild else { return }
-        if let supersedes = rebuild.supersedes,
-           manifest.generatedAt <= supersedes { return }
+        // With nothing on screen when the rebuild was asked for there is no
+        // server timestamp to compare against, so the request time stands in.
+        // That is a server clock against a device one, and it is the only
+        // comparison here that crosses clocks — but it is reached only when
+        // nothing has been played today, where the alternative was treating
+        // the FIRST manifest to arrive as the rebuild regardless of when it
+        // was made.
+        let floor = rebuild.supersedes ?? rebuild.requestedAt
+        if manifest.generatedAt <= floor { return }
         self.rebuild = nil
     }
 

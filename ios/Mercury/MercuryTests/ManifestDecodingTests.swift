@@ -543,6 +543,24 @@ final class PendingRebuildTests: XCTestCase {
                        "a briefing generated after the request IS the rebuild")
     }
 
+    /// Nothing played yet, so there is no briefing timestamp to beat.
+    ///
+    /// The floor falls back to the request time. Without that fallback a
+    /// nil `supersedes` cleared on the FIRST manifest to arrive — including
+    /// the pre-rebuild one the server is still serving — which re-enabled
+    /// the button and stopped the next play refetching, both early.
+    @MainActor
+    func testAnOlderBriefingDoesNotEndARebuildAskedForCold() async throws {
+        let api = RecordingAPI(manifestResult: .success(ManifestFixtures.minimal))
+        let state = AppState(api: api)
+
+        _ = try await state.regenerateToday()   // nothing on screen
+        await state.playBriefing()              // fixture predates the request
+
+        XCTAssertTrue(state.isRegenerating,
+                      "a briefing made before the request cannot be the rebuild")
+    }
+
     /// Left open overnight, the app kept yesterday's `remaining == 0` and
     /// disabled a button whose allowance had reset hours before.
     @MainActor
