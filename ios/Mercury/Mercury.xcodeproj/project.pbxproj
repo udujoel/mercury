@@ -42,6 +42,7 @@
 		9695A139C8F440429BBB599D /* ArchiveView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71543CF72C0A4219A8DCDE3F /* ArchiveView.swift */; };
 		396AAC77AABF462C85365D5C /* StoryDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66E662F71C2A42E181965E12 /* StoryDetailView.swift */; };
 		21BEBB0EF0364119812F4D00 /* StoryCards.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22AEAAD7312E47F6B0FC77BC /* StoryCards.swift */; };
+		38F00DA481CC44D4BABF92DD /* DeskFeed.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FA51AF6B2404C2FAD4B4B69 /* DeskFeed.swift */; };
 		75A24BF137A9486EB3C3C718 /* ConnectAccountsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57E9C51EBFF642BFA5DFC240 /* ConnectAccountsView.swift */; };
 		7A6EB2262FAE4FE4BBEFC626 /* Endpoints.swift in Sources */ = {isa = PBXBuildFile; fileRef = C07D32533485477A94ED0028 /* Endpoints.swift */; };
 		7CCEBA62BD6243E6A7B925D5 /* ManifestDecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21B43020023E45A79EFA6674 /* ManifestDecodingTests.swift */; };
@@ -117,6 +118,7 @@
 		71543CF72C0A4219A8DCDE3F /* ArchiveView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArchiveView.swift; sourceTree = "<group>"; };
 		66E662F71C2A42E181965E12 /* StoryDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryDetailView.swift; sourceTree = "<group>"; };
 		22AEAAD7312E47F6B0FC77BC /* StoryCards.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryCards.swift; sourceTree = "<group>"; };
+		4FA51AF6B2404C2FAD4B4B69 /* DeskFeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeskFeed.swift; sourceTree = "<group>"; };
 		6734BCFCE5C04CDA9EB44FF1 /* MiniPlayerBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniPlayerBar.swift; sourceTree = "<group>"; };
 		2E6D208506BB47919431D65F /* TodaysBriefingCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodaysBriefingCard.swift; sourceTree = "<group>"; };
 		DDC079C69CB342979682EDCA /* BriefingDigest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BriefingDigest.swift; sourceTree = "<group>"; };
@@ -211,6 +213,7 @@
 				71543CF72C0A4219A8DCDE3F /* ArchiveView.swift */,
 				66E662F71C2A42E181965E12 /* StoryDetailView.swift */,
 				22AEAAD7312E47F6B0FC77BC /* StoryCards.swift */,
+				4FA51AF6B2404C2FAD4B4B69 /* DeskFeed.swift */,
 			);
 			path = Digest;
 			sourceTree = "<group>";
@@ -518,6 +521,7 @@
 				9695A139C8F440429BBB599D /* ArchiveView.swift in Sources */,
 				396AAC77AABF462C85365D5C /* StoryDetailView.swift in Sources */,
 				21BEBB0EF0364119812F4D00 /* StoryCards.swift in Sources */,
+				38F00DA481CC44D4BABF92DD /* DeskFeed.swift in Sources */,
 				1235DE202D3043F8B746BDED /* MiniPlayerBar.swift in Sources */,
 				F5E6D44FEA8F4D0E9A6DF08B /* TodaysBriefingCard.swift in Sources */,
 				255DE9E1FA154B7B9B54468E /* BriefingDigest.swift in Sources */,

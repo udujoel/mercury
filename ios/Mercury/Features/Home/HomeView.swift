@@ -79,11 +79,7 @@ struct HomeView: View {
                             .padding(.top, MercurySpace.section)
                             .padding(.bottom, MercurySpace.snug)
 
-                        StoryCards(stories: deskStories) { selectedStory = $0 }
-                            // Cancels the gutter for this row only: the cards
-                            // must reach the screen edge, or the row stops
-                            // reading as something that scrolls.
-                            .padding(.horizontal, -MercurySpace.gutter)
+                        DeskFeed(stories: deskStories) { selectedStory = $0 }
                     }
 
                     if !rows.isEmpty {
@@ -233,8 +229,15 @@ struct HomeView: View {
         guard let digest = appState.digest,
               digest.briefingId == appState.manifest?.briefingId
         else { return [] }
-        return digest.covered + digest.uncovered
+        // Capped. A real morning produces 174 browsable stories, and a Home
+        // screen that renders all of them is a feed you scroll for a minute
+        // before reaching anything else — which is the thing Mercury exists
+        // to replace. The rest are reachable, just not on the front page.
+        return Array((digest.covered + digest.uncovered).prefix(Self.deskLimit))
     }
+
+    /// Enough to feel like a desk, few enough to still be a briefing.
+    private static let deskLimit = 12
 
     /// Opens the player at the turn where this story was discussed.
     ///

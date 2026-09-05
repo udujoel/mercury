@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # What the environment held before any artifact overrode it, so a setting
@@ -105,6 +106,31 @@ class Settings(BaseSettings):
     # overridable from Settings, and from the environment.
     elevenlabs_voice_a: str = DEFAULT_ELEVENLABS_VOICE_A
     elevenlabs_voice_b: str = DEFAULT_ELEVENLABS_VOICE_B
+
+    @field_validator(
+        "tts_provider", "elevenlabs_voice_a", "elevenlabs_voice_b",
+        mode="before",
+    )
+    @classmethod
+    def _blank_means_unset(cls, value, info):
+        """An empty environment variable means "not set", not "empty".
+
+        This is the bug that made a configured ElevenLabs key do nothing.
+        `briefing.yml` passes `TTS_PROVIDER: ${{ secrets.TTS_PROVIDER }}`,
+        and an unset secret interpolates to the EMPTY STRING rather than
+        being omitted — so the variable is present, pydantic takes it over
+        the field default, and `tts_provider` became "" on every run. The
+        defaults added specifically so the API key alone would be enough
+        were overridden by their own absence.
+
+        Fixed here rather than in the workflow. A `|| 'elevenlabs'` in YAML
+        would put the default in two places and only cover the one caller
+        that remembered it; this covers the workflow, a local `.env` with a
+        blank line, and an exported shell variable alike.
+        """
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return cls.model_fields[info.field_name].default
+        return value.strip() if isinstance(value, str) else value
 
     # Google OAuth
     google_client_id: str = ""
