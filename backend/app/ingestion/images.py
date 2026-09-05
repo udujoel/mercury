@@ -53,10 +53,18 @@ def _plausible(url: str | None, *, base: str | None = None) -> str | None:
     if not url or url.startswith("data:"):
         return None
 
-    if base and not urlparse(url).scheme:
-        url = urljoin(base, url)
+    # `urlparse` RAISES on some malformed input — `https://[` is a
+    # ValueError, not a parse with empty fields. Uncaught it escapes
+    # `_entry_to_item` into rss.py's per-entry handler, which drops the whole
+    # story: one bad image URL costing an article, and the log saying only
+    # that an entry failed.
+    try:
+        if base and not urlparse(url).scheme:
+            url = urljoin(base, url)
+        parsed = urlparse(url)
+    except ValueError:
+        return None
 
-    parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return None
     return url

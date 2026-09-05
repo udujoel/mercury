@@ -535,8 +535,20 @@ async function serveBriefingList(env) {
   // place `YYYY-MM-DD` being a string is an advantage rather than a trap.
   ids.sort().reverse();
 
+  // A manifest is necessary and not sufficient. `--force` used to leave
+  // exactly this shape when a regeneration failed after deleting the old
+  // audio — 200 on the manifest, 404 on the file — and an archive row for
+  // one of those is a date that does nothing when tapped.
+  //
+  // `briefingState` is the same check `/status` answers with, so the archive
+  // and the "did it run?" question cannot disagree about what playable
+  // means. Concurrently, because thirty sequential round trips would make
+  // this the slowest route in the Worker.
+  const states = await Promise.all(ids.map((id) => briefingState(env, id)));
+  const playable = ids.filter((_, i) => states[i] === "ok");
+
   return json(
-    { briefings: ids, count: ids.length },
+    { briefings: playable, count: playable.length },
     200,
     // Short, not immutable: this list changes once a day, in both
     // directions — a new briefing at the top, an expired one off the

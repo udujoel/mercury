@@ -216,3 +216,20 @@ def test_a_newsletter_only_story_simply_has_no_image():
     story = Story(cluster_id="c1", canonical=email, members=[email])
 
     assert _lead_image(story, [email]) is None
+
+
+def test_a_url_that_cannot_even_be_parsed_costs_the_image_not_the_story():
+    """`urlparse` RAISES on some malformed input — `https://[` is a
+    ValueError, not a parse with empty fields. Uncaught it escapes into
+    rss.py's per-entry handler, which drops the whole entry: one bad image
+    URL costing an article, with the log saying only that an entry failed."""
+    entry = {
+        "media_content": [{"url": "https://[", "medium": "image"}],
+        "summary": '<img src="https://cdn.example.com/good.jpg">',
+    }
+    assert image_from_entry(entry, link=LINK) == "https://cdn.example.com/good.jpg"
+
+
+def test_a_malformed_url_with_no_alternative_is_simply_no_image():
+    entry = {"media_content": [{"url": "https://[", "medium": "image"}]}
+    assert image_from_entry(entry, link=LINK) is None
