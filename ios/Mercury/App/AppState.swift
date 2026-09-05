@@ -303,12 +303,18 @@ final class AppState {
         guard loadState != .loading else { return }
         loadState = .loading
         do {
-            let manifest = try await api.fetchManifest(briefingId: id)
-            self.manifest = manifest
-            await persist(manifest, audioPath: nil)
+            let fetched = try await api.fetchManifest(briefingId: id)
+            await persist(fetched, audioPath: nil)
             let audioURL = try await api.downloadAudio(briefingId: id)
-            await persist(manifest, audioPath: audioURL.path)
-            try playback.load(manifest: manifest, audioURL: audioURL)
+            await persist(fetched, audioPath: audioURL.path)
+            try playback.load(manifest: fetched, audioURL: audioURL)
+            // Assigned only once the audio is in the engine. Setting it
+            // before the download meant a failure left the PREVIOUS
+            // briefing playing while `manifest` named the requested one —
+            // so `isPlaybackCurrent` went false, every control greyed out,
+            // and the screen described a briefing that was not playing.
+            self.manifest = fetched
+            let manifest = fetched
             loadState = .ready
             // `startPlayback`, not a bare `play()`. It re-wires
             // `onPositionPersist` and `onFinished` to THIS briefing id —

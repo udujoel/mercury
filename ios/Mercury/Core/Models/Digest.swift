@@ -12,7 +12,15 @@ import Foundation
 /// without `points` or `image_url`, and briefings older than that have no
 /// digest at all. A missing field is an empty state, never a decode failure —
 /// the same rule `Turn` follows for its timings.
-struct Digest: Codable, Equatable {
+/// `Decodable`, not `Codable`: `schema_version` is a coding key the client
+/// reads and has no stored property for, so there is nothing to synthesise
+/// an encoder from — and nothing in the app writes a digest anyway. The
+/// artifact is produced by the backend and only ever read here.
+struct Digest: Decodable, Equatable {
+    /// The newest shape this build understands. Matches
+    /// `DIGEST_SCHEMA_VERSION` in `app/core/schemas.py`.
+    static let supportedSchemaVersion = 1
+
     let briefingId: String
     let generatedAt: Date?
     let stories: [DigestStory]
@@ -22,10 +30,31 @@ struct Digest: Codable, Equatable {
         case briefingId = "briefing_id"
         case generatedAt = "generated_at"
         case stories, newsletters
+        case schemaVersion = "schema_version"
+    }
+
+    /// Thrown for a digest this build is too old to read.
+    struct UnsupportedSchema: Error, LocalizedError {
+        let version: Int
+        var errorDescription: String? {
+            "digest schema version \(version) is newer than this build supports"
+        }
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+
+        // Checked FIRST, and it is the one field that refuses rather than
+        // degrades. Every other default here turns a missing field into an
+        // empty state, which is right for a digest written by an OLDER
+        // backend — but applying the same leniency to a NEWER one renders
+        // an empty desk for a briefing that has stories, and says nothing.
+        // Absent means version 1, which is what the field's own default is.
+        let version = try c.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+        guard version <= Self.supportedSchemaVersion else {
+            throw UnsupportedSchema(version: version)
+        }
+
         briefingId = try c.decodeIfPresent(String.self, forKey: .briefingId) ?? ""
         generatedAt = try c.decodeIfPresent(Date.self, forKey: .generatedAt)
         stories = try c.decodeIfPresent([DigestStory].self, forKey: .stories) ?? []

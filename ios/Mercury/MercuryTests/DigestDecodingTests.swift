@@ -144,6 +144,32 @@ final class DigestDecodingTests: XCTestCase {
         XCTAssertEqual(digest.covered.map(\.id), ["second", "nowhere"])
     }
 
+    // MARK: - A digest this build is too old to read
+
+    /// The one field that refuses rather than degrades.
+    ///
+    /// Every other default turns a missing field into an empty state, which
+    /// is right for a digest written by an OLDER backend. Applying the same
+    /// leniency to a NEWER one renders an empty desk for a briefing that
+    /// has stories, and says nothing about why.
+    func testADigestFromANewerBackendIsRejectedRatherThanShownEmpty() {
+        XCTAssertThrowsError(try decode("""
+        {"briefing_id": "x", "schema_version": 99, "shelves": []}
+        """))
+    }
+
+    func testTheCurrentSchemaVersionIsAccepted() throws {
+        let digest = try decode("""
+        {"briefing_id": "x", "schema_version": 1, "stories": []}
+        """)
+        XCTAssertEqual(digest.briefingId, "x")
+    }
+
+    /// Absent means version 1 — that is what the backend field defaults to.
+    func testAMissingSchemaVersionReadsAsTheOriginalShape() throws {
+        XCTAssertNoThrow(try decode(#"{"briefing_id": "x"}"#))
+    }
+
     // MARK: - The archive index
 
     /// The field the backend actually emits is `in_briefing`, a BOOL.
@@ -220,17 +246,27 @@ final class DigestDecodingTests: XCTestCase {
         XCTAssertTrue(shown.contains("6"), shown)
     }
 
-    /// Relative to now, computed rather than hardcoded, for the same reason.
+    /// Relative to now, computed rather than hardcoded — and built in the
+    /// SERVER's zone, because that is the zone `display` parses in.
+    ///
+    /// The first version of this used `.current` for both the formatter and
+    /// the day arithmetic, which is the exact timezone mismatch this PR was
+    /// written to fix, reproduced inside its own test. It passes on a
+    /// machine whose clock agrees with the server and flips silently on one
+    /// that does not.
     func testTodayAndYesterdayAreNamedRatherThanDated() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = BriefingClock.serverTimeZone
+
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
-        f.calendar = Calendar(identifier: .gregorian)
-        f.timeZone = .current
+        f.calendar = calendar
+        f.timeZone = BriefingClock.serverTimeZone
         f.dateFormat = "yyyy-MM-dd"
 
         let today = f.string(from: .now)
         let yesterday = f.string(
-            from: Calendar.current.date(byAdding: .day, value: -1, to: .now)!)
+            from: calendar.date(byAdding: .day, value: -1, to: .now)!)
 
         XCTAssertEqual(ArchiveView.display(today), "Today")
         XCTAssertEqual(ArchiveView.display(yesterday), "Yesterday")

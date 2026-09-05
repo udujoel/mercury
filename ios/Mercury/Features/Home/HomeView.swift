@@ -142,6 +142,7 @@ struct HomeView: View {
                     currentId: appState.manifest?.briefingId,
                     failed: appState.archiveFailed,
                     loading: appState.archiveLoading,
+                    busy: appState.loadState == .loading,
                     onSelect: { id in
                         showArchive = false
                         Task { await appState.openBriefing(id: id) }

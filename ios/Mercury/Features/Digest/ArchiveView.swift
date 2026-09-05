@@ -29,6 +29,9 @@ struct ArchiveView: View {
     /// then replaces it with a list — telling the user their briefings are
     /// gone and then taking it back.
     var loading: Bool = false
+    /// True while a briefing is being opened. Distinct from `loading`,
+    /// which is about the index request.
+    var busy: Bool = false
     let onSelect: (String) -> Void
     /// Retry. The failure state tells you to pull down, so there has to be
     /// something to pull.
@@ -76,10 +79,11 @@ struct ArchiveView: View {
     }
 
     private func row(_ id: String) -> some View {
-        // Inert when it is the one already loaded. Selecting it again would
-        // re-download the audio and reset playback to zero — the same
-        // restart-on-tap complaint the mini player bar exists to fix.
-        Button { if id != currentId { onSelect(id) } } label: {
+        // Inert when it is the one already loaded, and while ANY load is in
+        // flight. `openBriefing` returns immediately when one is running,
+        // but the archive has already dismissed itself by then — so the tap
+        // put the user back on Home with nothing loading and no explanation.
+        Button { if isSelectable(id) { onSelect(id) } } label: {
             HStack(spacing: MercurySpace.snug) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(Self.display(id))
@@ -104,10 +108,19 @@ struct ArchiveView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(id == currentId)
+        .disabled(!isSelectable(id))
         .accessibilityElement(children: .combine)
-        .accessibilityHint(
-            id == currentId ? "Already loaded" : "Loads this morning's briefing")
+        .accessibilityHint(hint(for: id))
+    }
+
+    private func isSelectable(_ id: String) -> Bool {
+        id != currentId && !busy
+    }
+
+    private func hint(for id: String) -> String {
+        if id == currentId { return "Already loaded" }
+        if busy { return "Loading a briefing" }
+        return "Loads this morning\u{2019}s briefing"
     }
 
     private var unreachable: some View {
