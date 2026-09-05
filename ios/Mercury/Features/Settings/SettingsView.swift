@@ -295,7 +295,20 @@ struct SettingsView: View {
         Binding(
             get: { settings.ttsProvider ?? Self.unsetTag },
             set: { value in
-                edit { $0.ttsProvider = value.isEmpty ? nil : value }
+                edit {
+                    if value.isEmpty {
+                        // "Server default" means the environment decides ALL
+                        // of it. Leaving the voice ids behind sent them
+                        // anyway, so the provider deferred to the server
+                        // while the voices still overrode it — a state no
+                        // control on this screen was asking for.
+                        $0.ttsProvider = nil
+                        $0.voiceA = nil
+                        $0.voiceB = nil
+                    } else {
+                        $0.ttsProvider = value
+                    }
+                }
             }
         )
     }
