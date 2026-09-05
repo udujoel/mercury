@@ -60,7 +60,9 @@ function bucket(objects = {}) {
       const page = keys.slice(start, start + limit);
       const next = start + limit;
       return {
-        objects: page.map((key) => ({ key })),
+        // Size included, as R2 does — the archive route reads it from the
+        // listing rather than spending a `head` per briefing.
+        objects: page.map((key) => ({ key, size: objects[key]?.size ?? 1 })),
         truncated: next < keys.length,
         cursor: next < keys.length ? keys[next] : undefined,
       };

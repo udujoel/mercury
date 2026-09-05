@@ -43,7 +43,7 @@ from collections import Counter
 from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.core.providers import LLMProvider
 from app.core.schemas import (
@@ -245,6 +245,11 @@ def build_enrichment_prompt(stories: list[Story]) -> str:
     return DIGEST_PROMPT.format(stories=_fence_untrusted("\n".join(blocks)))
 
 
+# The prompt asks for two to four. This caps rather than requires — see
+# `_tidy_points`.
+_MAX_POINTS = 4
+
+
 class StoryCard(BaseModel):
     """One enriched story, as the LLM returned it."""
 
@@ -253,6 +258,29 @@ class StoryCard(BaseModel):
     points: list[str] = Field(default_factory=list)
     why_it_matters: str | None = None
     topics: list[str] = Field(default_factory=list)
+
+    @field_validator("points", mode="after")
+    @classmethod
+    def _tidy_points(cls, value: list[str]) -> list[str]:
+        """Normalised, not required.
+
+        The prompt asks for two to four lines. Making that a hard schema
+        requirement would mean one card with three-and-a-bit bullets fails
+        validation and the story ships with NO summary at all — rule 7
+        applied to a screen: a slightly-wrong bullet list beats a headline
+        with nothing under it.
+
+        So: blanks dropped, leading bullet characters stripped (models add
+        them despite being told not to, and the client draws its own), and
+        the list capped. A single bullet is left alone rather than promoted
+        or deleted — it is a thin card, not a broken one.
+        """
+        cleaned: list[str] = []
+        for point in value:
+            text = str(point).strip().lstrip("-*•\u2013\u2014 ").strip()
+            if text:
+                cleaned.append(text)
+        return cleaned[:_MAX_POINTS]
 
 
 def _lead_image(story: Story, members: list[Item]) -> str | None:

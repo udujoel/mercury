@@ -233,3 +233,71 @@ def test_a_url_that_cannot_even_be_parsed_costs_the_image_not_the_story():
 def test_a_malformed_url_with_no_alternative_is_simply_no_image():
     entry = {"media_content": [{"url": "https://[", "medium": "image"}]}
     assert image_from_entry(entry, link=LINK) is None
+
+
+# ── the bullet list, normalised rather than rejected ──────────
+
+
+def test_bullet_characters_the_model_adds_anyway_are_stripped():
+    """The prompt says not to include them and models do it regardless. The
+    client draws its own, so a literal "- " ships as a double bullet."""
+    from app.pipeline.digest import StoryCard
+
+    card = StoryCard(headline="h", points=["- four point two billion", "• regulators"])
+    assert card.points == ["four point two billion", "regulators"]
+
+
+def test_blank_points_are_dropped_not_rendered_as_empty_rows():
+    from app.pipeline.digest import StoryCard
+
+    assert StoryCard(headline="h", points=["real", "   ", ""]).points == ["real"]
+
+
+def test_too_many_points_are_capped_rather_than_failing_the_card():
+    """Rule 7 applied to a screen. Making 2-4 a hard requirement would mean
+    one over-long list costs that story its whole summary — a headline with
+    nothing under it, to punish a bullet."""
+    from app.pipeline.digest import StoryCard
+
+    card = StoryCard(headline="h", points=[f"p{i}" for i in range(9)])
+    assert card.points == ["p0", "p1", "p2", "p3"]
+
+
+def test_a_single_point_is_left_alone():
+    """A thin card, not a broken one."""
+    from app.pipeline.digest import StoryCard
+
+    assert StoryCard(headline="h", points=["only one"]).points == ["only one"]
+
+
+# ── the HTML fallback held to the same standard ───────────────
+
+
+def test_a_beacon_in_the_body_is_skipped_like_one_in_a_feed_node():
+    """Capturing only `src` meant the fallback path skipped the size check
+    every feed node goes through — and a 1x1 in the body is far MORE likely
+    than one in `media:content`."""
+    entry = {
+        "summary": '<img src="https://t.example.com/px.gif" width="1" height="1">'
+                   '<img src="https://cdn.example.com/lead.jpg">'
+    }
+    assert image_from_entry(entry, link=LINK) == "https://cdn.example.com/lead.jpg"
+
+
+def test_an_html_entity_in_the_src_is_decoded():
+    """`&amp;` stored literally makes a signed CDN URL fail its own
+    signature check, and the image 403s with nothing in the log."""
+    entry = {"summary": '<img src="https://cdn.example.com/a.jpg?w=1&amp;s=abc">'}
+    assert image_from_entry(entry, link=LINK) == "https://cdn.example.com/a.jpg?w=1&s=abc"
+
+
+def test_a_port_out_of_range_is_rejected_rather_than_stored():
+    """`urlparse` defers port validation until the property is READ, so this
+    parses happily and only raises when something looks at it."""
+    entry = {
+        "media_content": [
+            {"url": "https://cdn.example.com:99999/x.jpg", "medium": "image"}
+        ],
+        "summary": '<img src="https://cdn.example.com/ok.jpg">',
+    }
+    assert image_from_entry(entry, link=LINK) == "https://cdn.example.com/ok.jpg"

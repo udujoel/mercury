@@ -21,6 +21,7 @@ than guessed at.
 
 from __future__ import annotations
 
+import html
 import re
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -37,7 +38,26 @@ _IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif")
 # only tell in a feed is the declared size.
 _MIN_PIXELS = 64
 
-_IMG_SRC = re.compile(r"""<img\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']""", re.I)
+# The whole tag, so its own width/height can be read. Capturing only `src`
+# meant a beacon declared `<img src="…" width="1" height="1">` skipped the
+# size check every feed node goes through — the fallback path quietly held
+# to a lower standard than the paths above it.
+_IMG_TAG = re.compile(r"<img\b[^>]*>", re.I)
+_ATTR = re.compile(r"""\b(src|width|height)\s*=\s*["']([^"']*)["']""", re.I)
+
+
+def _img_node(tag: str) -> dict[str, Any]:
+    """An `<img>` tag as the same shape a feed node has, so one set of
+    eligibility rules covers both."""
+    attrs = {k.lower(): v for k, v in _ATTR.findall(tag)}
+    return {
+        # HTML-encoded, so `&amp;` in a query string arrives as a literal
+        # five characters. Stored that way a signed CDN URL fails its own
+        # signature check and the image silently 403s.
+        "url": html.unescape(attrs.get("src", "")),
+        "width": attrs.get("width"),
+        "height": attrs.get("height"),
+    }
 
 
 def _plausible(url: str | None, *, base: str | None = None) -> str | None:
@@ -62,6 +82,12 @@ def _plausible(url: str | None, *, base: str | None = None) -> str | None:
         if base and not urlparse(url).scheme:
             url = urljoin(base, url)
         parsed = urlparse(url)
+        # `urlparse` defers port validation until the property is READ, so
+        # `https://host:99999/x.jpg` parses happily and only raises here.
+        # Reading it inside the try is what turns that into another rejected
+        # candidate rather than a stored URL nothing can load. Assigned
+        # rather than left bare so it does not read as dead code.
+        _port = parsed.port  # noqa: F841 - read for its ValueError
     except ValueError:
         return None
 
@@ -145,9 +171,15 @@ def image_from_entry(entry: dict[str, Any], *, link: str | None = None) -> str |
         if isinstance(value, str):
             html_parts.append(value)
 
-    for html in html_parts:
-        for match in _IMG_SRC.finditer(html):
-            found = _plausible(match.group(1), base=link)
+    for markup in html_parts:
+        for match in _IMG_TAG.finditer(markup):
+            node = _img_node(match.group(0))
+            # The same eligibility rules the feed nodes go through. A tracking
+            # beacon is far MORE likely here than in `media:content` — it is
+            # the first thing in the body of a great many newsletters.
+            if not _big_enough(node):
+                continue
+            found = _plausible(node["url"], base=link)
             if found:
                 return found
 

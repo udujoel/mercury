@@ -515,37 +515,58 @@ async function serveJsonObject(request, env, id, key, missingDetail) {
  * truncate this list.
  */
 async function serveBriefingList(env) {
-  const ids = [];
+  const manifests = new Set();
+  const audible = new Set();
   let cursor;
 
   do {
     const page = await env.BRIEFINGS.list({ cursor, limit: 1000 });
     for (const object of page.objects) {
-      if (!object.key.endsWith(SUFFIX)) continue;
-      const id = object.key.slice(0, -SUFFIX.length);
       // The same validation every id-taking route applies, because a key
       // that does not parse as a briefing id is not one — and it would be
       // handed straight back to a client that will put it in a URL.
-      if (validBriefingId(id)) ids.push(id);
+      if (object.key.endsWith(SUFFIX)) {
+        const id = object.key.slice(0, -SUFFIX.length);
+        if (validBriefingId(id)) manifests.add(id);
+        continue;
+      }
+      for (const ext of AUDIO_EXTS) {
+        if (!object.key.endsWith(ext)) continue;
+        const id = object.key.slice(0, -ext.length);
+        // Size, not existence. A zero-byte key is an upload that died
+        // mid-flight and `head` returns an object for one, which is the
+        // trap `briefingState` already documents.
+        if (validBriefingId(id) && object.size >= MIN_PLAYABLE_AUDIO_BYTES) {
+          audible.add(id);
+        }
+      }
     }
     cursor = page.truncated ? page.cursor : undefined;
   } while (cursor);
-
-  // Ids are ISO dates, so lexicographic ordering IS chronological — the one
-  // place `YYYY-MM-DD` being a string is an advantage rather than a trap.
-  ids.sort().reverse();
 
   // A manifest is necessary and not sufficient. `--force` used to leave
   // exactly this shape when a regeneration failed after deleting the old
   // audio — 200 on the manifest, 404 on the file — and an archive row for
   // one of those is a date that does nothing when tapped.
   //
-  // `briefingState` is the same check `/status` answers with, so the archive
-  // and the "did it run?" question cannot disagree about what playable
-  // means. Concurrently, because thirty sequential round trips would make
-  // this the slowest route in the Worker.
-  const states = await Promise.all(ids.map((id) => briefingState(env, id)));
-  const playable = ids.filter((_, i) => states[i] === "ok");
+  // Decided from the LISTING rather than by asking `briefingState` per id.
+  // That version cost a manifest `get` plus an audio `head` each, so a
+  // thirty-day archive spent sixty-plus subrequests against the Workers
+  // free-plan limit of 50 — the route would not have failed a test, it
+  // would have failed in production, on the plan ADR-008 is built on.
+  // `list` already carries every key and its size, so this costs nothing
+  // beyond the pages already being walked.
+  //
+  // The deliberate gap: this does NOT check that the manifest PARSES and
+  // has turns, which `briefingState` does. That needs a read per briefing
+  // and is the whole cost being avoided. Existence plus audio size covers
+  // the failure modes that actually happen; a manifest that is present,
+  // sized, and internally broken shows up when it is opened.
+  const playable = [...manifests].filter((id) => audible.has(id));
+
+  // Ids are ISO dates, so lexicographic ordering IS chronological — the one
+  // place `YYYY-MM-DD` being a string is an advantage rather than a trap.
+  playable.sort().reverse();
 
   return json(
     { briefings: playable, count: playable.length },
@@ -559,6 +580,7 @@ async function serveBriefingList(env) {
 }
 
 const SUFFIX = ".manifest.json";
+const AUDIO_EXTS = [".m4a", ".wav"];
 
 function serveManifest(request, env, id) {
   return serveJsonObject(
