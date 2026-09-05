@@ -20,6 +20,15 @@ struct HomeView: View {
     @State private var selectedStory: DigestStory?
     @State private var showArchive = false
     @State private var showSettings = false
+    @State private var regenerateNote: String?
+
+    /// Says what actually happens next, which is nothing visible for some
+    /// minutes. A spinner that finishes while the briefing is still being
+    /// made would read as "done" and send the user to a player holding the
+    /// old audio.
+    private static let startedNote =
+        "Rebuilding from your latest mail. It takes a few minutes; the new "
+        + "briefing appears the next time you press play."
 
     private var rows: [BriefingDigest.Row] { BriefingDigest.rows(for: appState.manifest) }
 
@@ -94,6 +103,30 @@ struct HomeView: View {
                         // for.
                         BriefingRows(rows: rows, onSelect: open(at:))
                             .disabled(appState.loadState == .loading)
+                    }
+
+                    RegenerateButton(
+                        isRunning: appState.isRegenerating,
+                        remaining: appState.regeneration?.remaining,
+                        onConfirm: {
+                            Task {
+                                do {
+                                    _ = try await appState.regenerateToday()
+                                    regenerateNote = Self.startedNote
+                                } catch {
+                                    regenerateNote = error.localizedDescription
+                                }
+                            }
+                        }
+                    )
+                    .padding(.top, MercurySpace.section)
+
+                    if let regenerateNote {
+                        Text(regenerateNote)
+                            .font(MercuryType.figureCaption)
+                            .foregroundStyle(MercuryColor.inkFaint.color)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, MercurySpace.tight)
                     }
 
                     Button { showArchive = true } label: {

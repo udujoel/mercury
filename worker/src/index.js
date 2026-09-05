@@ -173,6 +173,19 @@ export default {
       return handleSettingsWrite(request, env);
     }
 
+    // Rebuild today's briefing from mail that has arrived since.
+    //
+    // The second write this Worker accepts, and narrower than it looks: it
+    // does not generate anything. It asks GitHub to run the SAME workflow
+    // the cron runs, through the same helper, with `force=true`. The
+    // pipeline, the budget and the failure handling are all unchanged.
+    //
+    // Capped per day, because unlike every other route here a press costs
+    // real money — a full Gemini and ElevenLabs generation each time.
+    if (request.method === "POST" && new URL(request.url).pathname === "/regenerate") {
+      return handleRegenerate(request, env);
+    }
+
     if (request.method !== "GET") {
       // Generation is a scheduled batch job (ADR-008), not something a Worker
       // can do — no Python pipeline, no 127-second budget.
@@ -660,6 +673,92 @@ const VOICE_CACHE_SECONDS = 60 * 60 * 6;
 // something unusual, and reaching it now says so in the payload rather
 // than quietly shortening the list.
 const MAX_VOICES = 500;
+
+// How many forced regenerations a day is allowed to have.
+//
+// Not a rate limit against an attacker — the token already handles that —
+// but against a person tapping a button that costs a briefing's worth of
+// Gemini and ElevenLabs each time, on a morning where the news keeps
+// changing and one more refresh always seems reasonable.
+const MAX_REGENERATIONS_PER_DAY = 3;
+
+// Keyed as `<briefing id>.regenerations.json`, NOT under a prefix of its
+// own. `_BRIEFING_KEY` in `app/synthesis/storage.py` matches anything
+// beginning `YYYY-MM-DD.`, and `delete_briefing` removes every object under
+// an id — so this counter is swept by retention along with the briefing it
+// counts. A `regenerations/` prefix would have matched neither and left one
+// small object per day in the bucket forever.
+const regenCountKey = (id) => `${id}.regenerations.json`;
+
+async function handleRegenerate(request, env) {
+  if (!env.MERCURY_API_TOKEN || env.MERCURY_API_TOKEN.length < MIN_TOKEN_LENGTH) {
+    return json({ detail: "Worker is not configured with MERCURY_API_TOKEN." }, 503);
+  }
+  if (!tokensMatch(request.headers.get(TOKEN_HEADER) || "", env.MERCURY_API_TOKEN)) {
+    return json({ detail: `Missing or invalid ${TOKEN_HEADER}.` }, 401);
+  }
+
+  const id = briefingIdFor(new Date(), resolvedTimeZone(env));
+  const key = regenCountKey(id);
+
+  // Counted in R2 rather than in memory: Workers are not one long-lived
+  // process, so an in-memory counter resets whenever the isolate does and
+  // the cap would be no cap at all.
+  //
+  // Read-then-write is not atomic and two simultaneous taps could both see
+  // the same count. That is acceptable here — the failure mode is one extra
+  // generation, not an unbounded loop — and the alternative is a Durable
+  // Object for a counter that increments at most a handful of times a day.
+  let used = 0;
+  const existing = await env.BRIEFINGS.get(key);
+  if (existing) {
+    try {
+      used = JSON.parse(await existing.text()).count || 0;
+    } catch {
+      used = 0;
+    }
+  }
+
+  if (used >= MAX_REGENERATIONS_PER_DAY) {
+    return json(
+      {
+        detail:
+          `Already regenerated ${used} times today. The limit is ` +
+          `${MAX_REGENERATIONS_PER_DAY} — each one costs a full briefing.`,
+        used,
+        limit: MAX_REGENERATIONS_PER_DAY,
+      },
+      429,
+    );
+  }
+
+  const dispatched = await dispatchWorkflow(env, GENERATE_WORKFLOW, {
+    briefing_id: id,
+    force: "true",
+  });
+
+  if (!dispatched) {
+    // The reason is in the Worker log — a missing dispatch token, a repo the
+    // token cannot see, a GitHub outage. None of them are things the phone
+    // can act on, so it gets one honest sentence rather than a guess.
+    return json({ detail: "Could not start a regeneration." }, 502);
+  }
+
+  // Counted only AFTER a successful dispatch. Counting first would let a
+  // GitHub outage burn the day's allowance without generating anything.
+  await env.BRIEFINGS.put(
+    key,
+    JSON.stringify({ count: used + 1, briefing_id: id }),
+    { httpMetadata: { contentType: "application/json" } },
+  );
+
+  return json({
+    status: "started",
+    briefing_id: id,
+    used: used + 1,
+    limit: MAX_REGENERATIONS_PER_DAY,
+  });
+}
 
 async function serveVoices(env) {
   if (!env.ELEVENLABS_API_KEY) {

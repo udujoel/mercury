@@ -294,6 +294,29 @@ final class AppState {
         try await api.saveSettings(settings)
     }
 
+    /// Whether a regeneration this app asked for is still running.
+    var isRegenerating = false
+    /// The last thing the server said about the day's allowance, so the
+    /// screen can say "two left" rather than letting someone find the limit
+    /// by hitting it.
+    var regeneration: RegenerationStatus?
+
+    /// Ask the server to rebuild today's briefing from mail that has
+    /// arrived since.
+    ///
+    /// Deliberately does NOT touch what is playing. The new briefing takes
+    /// several minutes and reuses today's id, so swapping it in mid-listen
+    /// would replace the audio under the user — the same rule
+    /// `prefetchBriefing` follows. It is picked up on the next play.
+    @MainActor
+    func regenerateToday() async throws -> RegenerationStatus {
+        isRegenerating = true
+        defer { isRegenerating = false }
+        let status = try await api.requestRegeneration()
+        regeneration = status
+        return status
+    }
+
     /// The voice library, for the picker.
     @MainActor
     func fetchVoices() async throws -> VoiceList {

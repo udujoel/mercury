@@ -70,6 +70,9 @@ enum Endpoint {
     /// The ElevenLabs voice library, proxied by the Worker so the API key
     /// never has to live on the phone.
     case voices
+    /// Rebuild today's briefing from mail that has arrived since.
+    /// POST, and the only route here that costs money to call.
+    case regenerate
     // Week 11 addition: hands the APNs device token to the backend so the
     // server cron can send the PRIMARY-layer silent push (ADR-001, PRD 3.6).
     // See backend/app/api/devices.py — guarded by the same X-Mercury-Token
@@ -95,6 +98,8 @@ enum Endpoint {
             return base.appendingPathComponent("settings")
         case .voices:
             return base.appendingPathComponent("voices")
+        case .regenerate:
+            return base.appendingPathComponent("regenerate")
         case .registerDevice:
             return base.appendingPathComponent("devices/register")
         }
@@ -102,7 +107,7 @@ enum Endpoint {
 
     var method: String {
         switch self {
-        case .generate, .registerDevice: return "POST"
+        case .generate, .registerDevice, .regenerate: return "POST"
         case .manifest, .audio, .status, .digest, .briefingIndex, .settings,
              .voices:
             return "GET"

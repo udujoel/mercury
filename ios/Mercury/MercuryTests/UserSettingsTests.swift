@@ -153,3 +153,34 @@ final class VoiceListTests: XCTestCase {
                        ["broadsheet", "first-light", "paper"])
     }
 }
+
+/// Rebuilding today's briefing on demand.
+final class RegenerationStatusTests: XCTestCase {
+
+    func testItDecodesWhatTheWorkerReturns() throws {
+        let status = try JSONDecoder().decode(
+            RegenerationStatus.self,
+            from: Data(#"{"status":"started","briefing_id":"2026-09-05","used":1,"limit":3}"#.utf8))
+
+        XCTAssertEqual(status.briefingId, "2026-09-05")
+        XCTAssertEqual(status.used, 1)
+        XCTAssertEqual(status.remaining, 2)
+    }
+
+    /// The 429 body carries the same counts, so the screen can say how many
+    /// are left using one shape rather than two.
+    func testAtTheCapNothingIsRemaining() throws {
+        let status = try JSONDecoder().decode(
+            RegenerationStatus.self, from: Data(#"{"used":3,"limit":3}"#.utf8))
+
+        XCTAssertEqual(status.remaining, 0)
+    }
+
+    /// A server that reports more used than the limit — a cap lowered
+    /// between presses, say. Clamped, because "-1 rebuilds left" is not a
+    /// sentence anyone should read.
+    func testRemainingNeverGoesNegative() {
+        XCTAssertEqual(
+            RegenerationStatus(briefingId: "x", used: 9, limit: 3).remaining, 0)
+    }
+}

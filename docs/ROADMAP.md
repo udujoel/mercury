@@ -281,7 +281,7 @@ Added 2026-09-04, after the ElevenLabs go-ahead:
       library from `GET /v1/voices`, which needs the API key — and the key
       stays on the server, so this is a Worker route that proxies the list,
       not a client-side call.
-- [ ] 13. **Regenerate against what has arrived since.** Today's briefing is
+- [x] 13. **Regenerate against what has arrived since.** Today's briefing is
       made overnight, so by 9am it is describing an inbox that has moved on.
       A "regenerate" action re-runs ingestion NOW and rebuilds the briefing
       from current mail and calendar, rather than replaying the one built at
@@ -302,7 +302,7 @@ Added 2026-09-04, after the ElevenLabs go-ahead:
         you. The same rule the prefetch now follows: publish when the
         current one has finished, not while it is playing.
 
-- [ ] 14. **An app icon, and an onboarding worth the first launch.** Mercury
+- [x] 14. **An app icon, and an onboarding worth the first launch.** Mercury
       ships with the default template icon, which is the first thing anyone
       sees and currently says nothing.
 

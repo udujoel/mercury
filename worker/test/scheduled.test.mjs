@@ -426,6 +426,141 @@ describe("settings", () => {
     assert.equal(res.status, 401);
   });
 
+  test("POST /regenerate dispatches the same workflow the cron runs", async () => {
+    const original = globalThis.fetch;
+    const calls = [];
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url: String(url), body: JSON.parse(init.body) });
+      return new Response(null, { status: 204 });
+    };
+
+    try {
+      const env = { ...envFor({}), GITHUB_DISPATCH_TOKEN: "t", GITHUB_REPO: "o/r" };
+      env.BRIEFINGS = writableBucket({});
+
+      const res = await worker.fetch(
+        new Request("https://x/regenerate", {
+          method: "POST",
+          headers: { "x-mercury-token": TOKEN },
+        }),
+        env,
+      );
+
+      assert.equal(res.status, 200);
+      assert.equal(calls.length, 1);
+      assert.match(calls[0].url, /\/actions\/workflows\/.+\/dispatches$/);
+      // force, or the run is a no-op: today's briefing already exists,
+      // which is the entire reason someone is pressing this.
+      assert.equal(calls[0].body.inputs.force, "true");
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  test("POST /regenerate needs the token", async () => {
+    const env = { ...envFor({}), GITHUB_DISPATCH_TOKEN: "t", GITHUB_REPO: "o/r" };
+    env.BRIEFINGS = writableBucket({});
+
+    const res = await worker.fetch(
+      new Request("https://x/regenerate", { method: "POST" }),
+      env,
+    );
+
+    assert.equal(res.status, 401);
+    assert.equal(Object.keys(env.BRIEFINGS.written).length, 0);
+  });
+
+  test("POST /regenerate stops at the daily cap", async () => {
+    const original = globalThis.fetch;
+    let dispatches = 0;
+    globalThis.fetch = async () => {
+      dispatches += 1;
+      return new Response(null, { status: 204 });
+    };
+
+    try {
+      const env = { ...envFor({}), GITHUB_DISPATCH_TOKEN: "t", GITHUB_REPO: "o/r" };
+      const store = {};
+      env.BRIEFINGS = {
+        get: async (k) => (store[k] ? { text: async () => store[k] } : null),
+        put: async (k, v) => {
+          store[k] = v;
+        },
+        list: async () => ({ objects: [] }),
+      };
+
+      let last;
+      for (let i = 0; i < 5; i += 1) {
+        last = await worker.fetch(
+          new Request("https://x/regenerate", {
+            method: "POST",
+            headers: { "x-mercury-token": TOKEN },
+          }),
+          env,
+        );
+      }
+
+      // Three allowed, then refused — and no further dispatch after the cap.
+      assert.equal(dispatches, 3);
+      assert.equal(last.status, 429);
+      const body = await last.json();
+      assert.equal(body.used, 3);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  test("a failed dispatch does not burn the day's allowance", async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = async () => new Response("nope", { status: 500 });
+
+    try {
+      const env = { ...envFor({}), GITHUB_DISPATCH_TOKEN: "t", GITHUB_REPO: "o/r" };
+      env.BRIEFINGS = writableBucket({});
+
+      const res = await worker.fetch(
+        new Request("https://x/regenerate", {
+          method: "POST",
+          headers: { "x-mercury-token": TOKEN },
+        }),
+        env,
+      );
+
+      assert.equal(res.status, 502);
+      // Counted only AFTER a successful dispatch — otherwise a GitHub
+      // outage would spend the allowance without generating anything.
+      assert.equal(Object.keys(env.BRIEFINGS.written).length, 0);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  test("the regeneration counter is keyed so retention sweeps it", async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = async () => new Response(null, { status: 204 });
+
+    try {
+      const env = { ...envFor({}), GITHUB_DISPATCH_TOKEN: "t", GITHUB_REPO: "o/r" };
+      env.BRIEFINGS = writableBucket({});
+
+      await worker.fetch(
+        new Request("https://x/regenerate", {
+          method: "POST",
+          headers: { "x-mercury-token": TOKEN },
+        }),
+        env,
+      );
+
+      // `YYYY-MM-DD.` prefixed, which is what `briefing_id_from_key`
+      // matches — so `delete_briefing` removes it with the briefing rather
+      // than leaving one small object per day in the bucket forever.
+      const [key] = Object.keys(env.BRIEFINGS.written);
+      assert.match(key, /^\d{4}-\d{2}-\d{2}\.regenerations\.json$/);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
   test("PUT to anything else is still refused", async () => {
     const res = await worker.fetch(
       new Request("https://x/briefing/2026-08-30", {

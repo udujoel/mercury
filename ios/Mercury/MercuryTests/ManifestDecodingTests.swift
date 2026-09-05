@@ -321,6 +321,14 @@ final class RecordingAPI: APIClientProtocol {
         return voicesResult
     }
 
+    var regenerationResult = RegenerationStatus(
+        briefingId: "2026-09-05", used: 1, limit: 3)
+
+    func requestRegeneration() async throws -> RegenerationStatus {
+        calls.append("requestRegeneration")
+        return regenerationResult
+    }
+
     func generateBriefing(length: BriefingLength) async throws -> BriefingManifest {
         calls.append("generateBriefing")
         return ManifestFixtures.minimal
