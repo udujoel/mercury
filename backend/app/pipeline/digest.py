@@ -97,6 +97,7 @@ _ENRICHMENT_SCHEMA: dict[str, Any] = {
             "id": {"type": "string"},
             "headline": {"type": "string"},
             "summary": {"type": "string"},
+            "points": {"type": "array", "items": {"type": "string"}},
             "why_it_matters": {"type": "string", "nullable": True},
             "topics": {"type": "array", "items": {"type": "string"}},
         },
@@ -249,8 +250,31 @@ class StoryCard(BaseModel):
 
     headline: str
     summary: str | None = None
+    points: list[str] = Field(default_factory=list)
     why_it_matters: str | None = None
     topics: list[str] = Field(default_factory=list)
+
+
+def _lead_image(story: Story, members: list[Item]) -> str | None:
+    """The story's picture: the canonical member's, else the first that has one.
+
+    Preferring the canonical matters when a cluster spans publications. The
+    canonical is the version the ranking judged most authoritative, and its
+    art is the one most likely to actually be of this story rather than a
+    stock photo the third aggregator to run it reached for.
+
+    None is ordinary rather than exceptional. A newsletter-only story has no
+    image at all — rule 5 discards the body a newsletter's images live in,
+    so there is nowhere to get one — and that is most of the desk on a quiet
+    morning.
+    """
+    canonical = getattr(story, "canonical", None)
+    if canonical is not None and getattr(canonical, "image_url", None):
+        return canonical.image_url
+    for member in members:
+        if member.image_url:
+            return member.image_url
+    return None
 
 
 def _validate_cards(raw: Any) -> list[dict]:
@@ -461,7 +485,9 @@ def build_digest(
                 # and its subject line is not a headline.
                 headline=(card.headline if card else members[0].title),
                 summary=card.summary if card else None,
+                points=list(card.points) if card else [],
                 why_it_matters=card.why_it_matters if card else None,
+                image_url=_lead_image(story, members),
                 topics=list(card.topics) if card else [],
                 source_count=len(members),
                 sources=[

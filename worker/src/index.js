@@ -98,10 +98,10 @@ function tokensMatch(given, expected) {
   return diff === 0;
 }
 
-function json(body, status = 200) {
+function json(body, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...extraHeaders },
   });
 }
 
@@ -191,6 +191,21 @@ export default {
       const id = briefingIdFor(new Date(), resolvedTimeZone(env));
       const state = await briefingState(env, id);
       return json({ briefing_id: id, state, ok: state === "ok" });
+    }
+
+    // Which mornings are still here.
+    //
+    // `list_briefing_ids()` has existed in both storage backends since the
+    // R2 work and was reachable from nothing. Without this route an archive
+    // screen has to guess dates and probe, which is thirty 404s to draw one
+    // list — and thirty chances to be wrong about the timezone the ids were
+    // derived in.
+    //
+    // The window is whatever the retention sweep has left (ADR-011, 30
+    // days), so the client reads its horizon from the data rather than
+    // hardcoding a number that can drift away from the sweeper's.
+    if (url.pathname === "/briefings") {
+      return serveBriefingList(env);
     }
 
     const audio = url.pathname.match(/^\/briefing\/([^/]+)\/audio$/);
@@ -485,6 +500,53 @@ async function serveJsonObject(request, env, id, key, missingDetail) {
     },
   });
 }
+
+/**
+ * Every briefing id with a manifest in the bucket, newest first.
+ *
+ * Keyed off the MANIFEST, not the audio: a manifest with no audio is a
+ * broken briefing the client cannot play, and one that appeared in an
+ * archive list would be a row that does nothing when tapped.
+ *
+ * Paginated properly rather than trusting one page. Thirty days of
+ * briefings is about ninety objects today, comfortably inside R2's default
+ * page — but "comfortably inside" is a fact about the current retention
+ * setting, not about the code, and raising retention should not silently
+ * truncate this list.
+ */
+async function serveBriefingList(env) {
+  const ids = [];
+  let cursor;
+
+  do {
+    const page = await env.BRIEFINGS.list({ cursor, limit: 1000 });
+    for (const object of page.objects) {
+      if (!object.key.endsWith(SUFFIX)) continue;
+      const id = object.key.slice(0, -SUFFIX.length);
+      // The same validation every id-taking route applies, because a key
+      // that does not parse as a briefing id is not one — and it would be
+      // handed straight back to a client that will put it in a URL.
+      if (validBriefingId(id)) ids.push(id);
+    }
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+
+  // Ids are ISO dates, so lexicographic ordering IS chronological — the one
+  // place `YYYY-MM-DD` being a string is an advantage rather than a trap.
+  ids.sort().reverse();
+
+  return json(
+    { briefings: ids, count: ids.length },
+    200,
+    // Short, not immutable: this list changes once a day, in both
+    // directions — a new briefing at the top, an expired one off the
+    // bottom. A stale archive that hides this morning is worse than a
+    // request.
+    { "cache-control": "private, max-age=60" },
+  );
+}
+
+const SUFFIX = ".manifest.json";
 
 function serveManifest(request, env, id) {
   return serveJsonObject(
