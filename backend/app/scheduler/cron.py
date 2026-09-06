@@ -274,6 +274,14 @@ async def run_daily_briefing_job(
             feeds=user_settings.feeds if user_settings else None,
             muted_senders=user_settings.muted_senders if user_settings else None,
             music_set=user_settings.music_set if user_settings else None,
+            # The MORNING path, which is the one that actually runs. A
+            # setting honoured only by the CLI is honoured by nobody: the
+            # cron makes every briefing anyone hears, and this list being
+            # absent here would have made the segment toggles do nothing in
+            # exactly the way ROADMAP task 15 exists to prevent.
+            disabled_segments=(
+                user_settings.disabled_segments if user_settings else None
+            ),
         )
     except Exception:
         log.exception(

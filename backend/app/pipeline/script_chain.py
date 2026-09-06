@@ -536,6 +536,36 @@ def resolve_segments(disabled: Iterable[str] | None) -> list[Segment]:
     ]
 
 
+def _drop_disabled(turns: list[Turn], segments: list[Segment]) -> list[Turn]:
+    """Remove turns for segments the listener turned off.
+
+    Belt-and-braces, and needed. The model is told not to write them twice
+    over — the prompt never defines them and the response schema's enum
+    excludes them — but neither is a guarantee, and `_complete_json` only
+    runs its `repair_check` on a REPAIRED response, deliberately: a first
+    draft that is merely missing something is the critique pass's business.
+    That reasoning does not carry to a segment the user removed. With
+    `passes=2` there is no critique pass at all, and with `passes=4` the
+    chain keeps the draft whenever the revision scores worse — so an
+    unwanted segment in the first draft could reach the audio either way.
+
+    Dropped rather than retried. The user asked for the segment to be gone,
+    and removing it does that with certainty; a retry might not, and costs a
+    generation to find out.
+    """
+    allowed = set(segments)
+    kept = [turn for turn in turns if turn.segment in allowed]
+    if len(kept) != len(turns):
+        removed = {t.segment.value for t in turns if t.segment not in allowed}
+        logger.warning(
+            "dropped %d turn(s) for segment(s) the listener turned off: %s. "
+            "The model was given neither a definition nor a schema value for "
+            "them, so this means it ignored both.",
+            len(turns) - len(kept), ", ".join(sorted(removed)),
+        )
+    return kept
+
+
 def _has_valid_segment_coverage_and_order(
     turns: list[Turn], expected: list[Segment] | None = None
 ) -> bool:
@@ -1301,6 +1331,8 @@ async def generate_script(
         ),
     )
 
+    draft_turns = _drop_disabled(draft_turns, segments)
+
     if passes == 4 and draft_turns:
         final_turns = await _run_critique_and_revise(
             llm=llm,
@@ -1311,6 +1343,12 @@ async def generate_script(
         )
     else:
         final_turns = draft_turns
+
+    # Again after the revision. `_run_critique_and_revise` validates the
+    # revision and falls back to the draft, so this is normally a no-op —
+    # but "normally" is doing work in that sentence, and the cost of being
+    # sure is one set comparison.
+    final_turns = _drop_disabled(final_turns, segments)
 
     source_refs = _build_source_refs(final_turns, emails, events, stories)
 

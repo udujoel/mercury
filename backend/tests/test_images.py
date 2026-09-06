@@ -493,6 +493,62 @@ def test_disabled_segments_is_carried_and_honoured():
     ], "unknown names ignored; known ones matched case- and space-insensitively"
 
 
+@pytest.mark.asyncio
+async def test_a_first_draft_cannot_smuggle_a_disabled_segment_through():
+    """The model ignoring both the prompt and the schema must not reach audio.
+
+    `_complete_json` runs its `repair_check` only on a REPAIRED response, on
+    purpose: a first draft that is merely missing something is the critique
+    pass's business. That reasoning does not carry to a segment the listener
+    removed — with `passes=2` there is no critique pass at all, and with
+    `passes=4` the chain keeps the draft whenever the revision scores worse.
+    Either way an unwanted segment in the first draft would reach the audio.
+    """
+    import json
+
+    from app.core.schemas import BriefingLength
+    from app.pipeline.script_chain import generate_script
+
+    class _DisobedientLLM:
+        """Writes the weather regardless of what it was asked for."""
+
+        async def complete(self, system, prompt, *, temperature=0.7,
+                           json_mode=False, response_schema=None):
+            # Keyed on DRAFT_PROMPT's opening line, not on the word
+            # "outline" — the draft prompt EMBEDS the outline, so a
+            # substring check answered every pass with an outline and the
+            # draft pass then retried three times against a dict.
+            if not prompt.startswith("Write the full script"):
+                return json.dumps({
+                    "segments": [
+                        {"segment": "cold_open", "covers": "x",
+                         "angle": "y", "words": 20},
+                        {"segment": "sign_off", "covers": "x",
+                         "angle": "y", "words": 20},
+                    ]
+                })
+            return json.dumps([
+                {"speaker": "A", "segment": "cold_open", "text": "Morning."},
+                {"speaker": "B", "segment": "weather", "text": "It is raining."},
+                {"speaker": "A", "segment": "sign_off", "text": "See you."},
+            ])
+
+    turns, _ = await generate_script(
+        llm=_DisobedientLLM(),
+        emails=[], events=[], weather=None,
+        length=BriefingLength.STANDARD,
+        date=datetime(2026, 9, 6, tzinfo=UTC),
+        disabled_segments=[s for s in ("weather", "calendar", "inbox",
+                                       "world", "follow_ups")],
+    )
+
+    written = {t.segment.value for t in turns}
+    assert "weather" not in written, (
+        "a segment the listener turned off reached the script"
+    )
+    assert "cold_open" in written and "sign_off" in written
+
+
 def test_a_disabled_segment_is_rejected_if_the_model_writes_it_anyway():
     """Turning a segment off means it must not appear — either way round.
 
