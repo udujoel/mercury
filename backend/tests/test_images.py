@@ -953,7 +953,13 @@ def test_the_bed_ducks_under_the_voice_without_moving_a_single_timing():
     combined = intro + voice
 
     music = MusicSet(name="test", intro=intro, outro=outro, interlude=None)
-    ducked = _duck(combined, music, intro_ms=len(intro))
+    ducked, outro_played_ms = _duck(combined, music, intro_ms=len(intro))
+
+    # What the caller must not append twice. The outro's opening is heard
+    # under the sign-off; appending the whole outro afterwards restarts it
+    # at full level, which stutters more audibly than the hard cut this
+    # replaced.
+    assert outro_played_ms == DUCK_MS
 
     assert len(ducked) == len(combined), (
         "the file length must not move — every manifest offset is measured "
@@ -985,10 +991,13 @@ def test_a_briefing_too_short_to_duck_is_returned_unharmed():
         interlude=None,
     )
 
-    assert len(_duck(AudioSegment.silent(duration=0), music, intro_ms=0)) == 0
+    empty, played = _duck(AudioSegment.silent(duration=0), music, intro_ms=0)
+    assert len(empty) == 0 and played == 0
+
     # An intro and nothing after it: there is no voice to duck under.
     only_intro = AudioSegment.silent(duration=3000)
-    assert len(_duck(only_intro, music, intro_ms=3000)) == 3000
+    kept, _ = _duck(only_intro, music, intro_ms=3000)
+    assert len(kept) == 3000
 
 
 @pytest.mark.asyncio

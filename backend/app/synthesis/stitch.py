@@ -226,15 +226,19 @@ async def synthesize_briefing(
     # would push every following turn later; a crossfade would pull them
     # earlier. ADR-006's rule is that offsets are computed in one place, and
     # this is how a mixing change respects it.
+    outro_played_ms = 0
     if music is not None:
-        combined = _duck(combined, music, intro_ms=intro_ms)
+        combined, outro_played_ms = _duck(combined, music, intro_ms=intro_ms)
 
     # The outro, after every turn and after the last `end_ms` is fixed. It
     # carries no timings of its own, so nothing needs to move for it — but
     # it must be added before the export, which is why it is here rather
     # than anywhere more obvious.
     if music and music.outro is not None:
-        combined += music.outro
+        # From where the ducked pre-roll left off. Appending the whole outro
+        # would replay the seconds already heard under the sign-off, at full
+        # level — a restart, not a continuation.
+        combined += music.outro[outro_played_ms:]
 
     audio_bytes, audio_format = _export(combined)
 
@@ -316,7 +320,7 @@ def _exported_duration_ms(
 
 def _duck(
     combined: AudioSegment, music: MusicSet, *, intro_ms: int
-) -> AudioSegment:
+) -> tuple[AudioSegment, int]:
     """Let the bed run quietly under the first and last turns.
 
     The roadmap asked for the music to recede under the voice rather than
@@ -326,13 +330,21 @@ def _duck(
     exists, `len(combined)` is unchanged, and ADR-006's rule that offsets
     are computed in exactly one place is untouched.
 
+    Returns the mixed audio and HOW MUCH OF THE OUTRO has already been
+    heard, because the caller appends the rest. Getting that second value
+    back is not tidiness: the outro's opening is played quietly under the
+    sign-off, and appending the whole outro afterwards restarts that same
+    opening at full level — the bed stutters, which is more obviously wrong
+    than the hard cut this replaced.
+
     Silently does nothing when there is no room. A briefing shorter than the
     duck is not a briefing anyone is listening to the end of, and a mixing
     nicety must never be able to cost the morning (CLAUDE.md rule 7).
     """
     duration = len(combined)
     if duration <= 0:
-        return combined
+        return combined, 0
+    outro_played_ms = 0
 
     if music.intro is not None and intro_ms > 0:
         # The last DUCK_MS of the intro, faded out and laid under the voice
@@ -358,8 +370,9 @@ def _duck(
                 .fade_in(window)
             )
             combined = combined.overlay(head, position=duration - window)
+            outro_played_ms = window
 
-    return combined
+    return combined, outro_played_ms
 
 
 def _export(combined: AudioSegment) -> tuple[bytes, str]:
