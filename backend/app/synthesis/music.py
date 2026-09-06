@@ -41,6 +41,22 @@ NO_MUSIC = "none"
 # without this the intro arrives noticeably louder than the people.
 MUSIC_GAIN_DB = -8.0
 
+# How long the bed keeps playing UNDER the voice, and how far below the
+# music's own level it sits while it does.
+#
+# The roadmap asked for the music to be ducked under the first and last
+# turns rather than hard-cut, and the obvious implementations both move
+# every timing in the manifest: a crossfade shortens the file, and appending
+# a tail lengthens it. `overlay` does neither — it mixes the tail INTO audio
+# that already exists, so the file is exactly as long as it was and ADR-006's
+# rule that offsets are computed in one place survives untouched.
+#
+# 2.5 seconds is about a sentence: long enough to read as the bed receding
+# under the host rather than as a glitch, short enough that it is gone
+# before the first fact.
+DUCK_MS = 2500
+DUCK_GAIN_DB = -10.0
+
 
 @dataclass(frozen=True)
 class MusicSet:

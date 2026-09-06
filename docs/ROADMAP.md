@@ -46,21 +46,40 @@ iOS
 **Gate: you tap the greeting card and within ninety seconds two hosts are
 discussing your actual meetings and your actual inbox.**
 
-## Audio identity backlog (do before Phase 3)
+## Audio identity backlog — CLOSED, absorbed into "The show"
 
 Phase 0's gate passed on Google Neural2 — good, not great. See ADR-006.
 
-- [ ] ElevenLabs Flash v2.5 behind the existing `TTSProvider` protocol,
-      one new file in `app/providers/`, no pipeline change
-- [ ] A/B the same script through Neural2 and ElevenLabs, listen to both
-      cold opens, keep the winner
-- [ ] Short intro stinger before the cold open, short outro under the sign-off
-- [ ] Offset every manifest timing by the intro duration — `synthesize_briefing`
-      currently assumes turn zero starts at 0ms, so transcript sync silently
-      drifts by the length of the intro if this is missed
-- [ ] Duck the music under the first and last turns rather than hard-cutting
+This list was staged "do before Phase 3", and Phase 3 was dropped (ADR-009).
+Everything on it was done under tasks 1-3 below rather than here; it is kept
+so the trail from ADR-006 to the work is readable.
 
-## UI refinement backlog
+- [x] ElevenLabs Flash v2.5 behind the existing `TTSProvider` protocol,
+      one new file in `app/providers/`, no pipeline change — task 1
+- [x] A/B the same script through Neural2 and ElevenLabs, listen to both
+      cold opens, keep the winner — task 1, and settled again on 2026-09-05
+      by measuring the shipped audio when both hosts came out male: the
+      briefing's speakers sat at 132Hz and 94Hz against 219Hz for the same
+      voice's own preview, which is how the 402 on a library voice was found
+- [x] Short intro stinger before the cold open, short outro under the
+      sign-off — task 3
+- [x] Offset every manifest timing by the intro duration — task 3. Done by
+      moving `cursor_ms` before the turn loop rather than correcting numbers
+      afterwards, so there is one place that computes offsets
+- [x] Duck the music under the first and last turns rather than hard-cutting.
+      `stitch._duck` OVERLAYS the tail rather than crossfading or appending:
+      both of those move every timing in the manifest, which is ADR-006's
+      failure wearing a nicer coat. Overlay leaves `len(combined)` untouched.
+      Tested on both halves, because either alone passes for the wrong
+      reason — the length must not move AND the audio must actually change
+
+## UI refinement backlog — SUPERSEDED by ADR-012
+
+Every item below describes the dark ambient card deck. ADR-012 replaced that
+register with Particle's light editorial one, and the views these refer to —
+the translucent deck, the placeholder weather card — no longer exist. Left
+unticked rather than deleted, because "we changed our minds" is a more useful
+record than a clean list; do not treat them as work outstanding.
 
 Observed while testing the MVP on the simulator, none of it blocking:
 

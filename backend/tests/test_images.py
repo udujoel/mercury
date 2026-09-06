@@ -869,6 +869,72 @@ async def test_music_moves_every_timing_by_exactly_the_intro_length():
     )
 
 
+def test_the_bed_ducks_under_the_voice_without_moving_a_single_timing():
+    """The mix changes; the arithmetic does not.
+
+    The roadmap asked for the music to recede under the first and last turns
+    rather than stop dead. Both obvious ways of doing that move every timing
+    in the manifest — a crossfade shortens the file, appending a tail
+    lengthens it — which is the ADR-006 failure wearing a nicer coat.
+
+    So this asserts BOTH halves, because either alone passes for the wrong
+    reason: the length must be untouched, and the audio must actually have
+    changed. A duck that no-ops satisfies the first on its own.
+    """
+    from pydub.generators import Sine
+
+    from app.synthesis.music import DUCK_MS, MusicSet
+    from app.synthesis.stitch import _duck
+
+    # Real signal, not silence. The first cut of this test built the bed
+    # from `AudioSegment.silent().apply_gain(-1)` — and gained silence is
+    # still silence, so overlaying it produced byte-identical audio and the
+    # test failed against a duck that was working perfectly. A fixture that
+    # cannot demonstrate the thing it is asserting is worse than no test.
+    intro = Sine(440).to_audio_segment(duration=3000)
+    outro = Sine(330).to_audio_segment(duration=3000)
+    voice = Sine(220).to_audio_segment(duration=8000)
+    combined = intro + voice
+
+    music = MusicSet(name="test", intro=intro, outro=outro, interlude=None)
+    ducked = _duck(combined, music, intro_ms=len(intro))
+
+    assert len(ducked) == len(combined), (
+        "the file length must not move — every manifest offset is measured "
+        "against it"
+    )
+    assert ducked[: len(intro)].raw_data == combined[: len(intro)].raw_data, (
+        "the intro itself is untouched; only what follows it is mixed into"
+    )
+    assert (
+        ducked[len(intro) : len(intro) + DUCK_MS].raw_data
+        != combined[len(intro) : len(intro) + DUCK_MS].raw_data
+    ), "the bed must actually be audible under the first turn"
+    assert ducked[-DUCK_MS:].raw_data != combined[-DUCK_MS:].raw_data, (
+        "and under the last one"
+    )
+
+
+def test_a_briefing_too_short_to_duck_is_returned_unharmed():
+    """A mixing nicety must never be able to cost the morning (rule 7)."""
+    from pydub import AudioSegment
+
+    from app.synthesis.music import MusicSet
+    from app.synthesis.stitch import _duck
+
+    music = MusicSet(
+        name="test",
+        intro=AudioSegment.silent(duration=3000),
+        outro=AudioSegment.silent(duration=3000),
+        interlude=None,
+    )
+
+    assert len(_duck(AudioSegment.silent(duration=0), music, intro_ms=0)) == 0
+    # An intro and nothing after it: there is no voice to duck under.
+    only_intro = AudioSegment.silent(duration=3000)
+    assert len(_duck(only_intro, music, intro_ms=3000)) == 3000
+
+
 @pytest.mark.asyncio
 async def test_asking_for_no_music_gets_exactly_the_unmusical_briefing():
     """"none" is a real choice, and it must not quietly mean "the default"."""

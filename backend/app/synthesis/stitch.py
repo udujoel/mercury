@@ -33,7 +33,12 @@ from app.core.schemas import (
     Turn,
     WordSpan,
 )
-from app.synthesis.music import load_music_set
+from app.synthesis.music import (
+    DUCK_GAIN_DB,
+    DUCK_MS,
+    MusicSet,
+    load_music_set,
+)
 
 log = logging.getLogger(__name__)
 
@@ -110,6 +115,8 @@ async def synthesize_briefing(
 
     combined = AudioSegment.silent(duration=0)
     cursor_ms = 0
+    # Where the voice starts, so the duck knows what it is ducking under.
+    intro_ms = 0
 
     # The intro goes in FIRST, and `cursor_ms` moves with it.
     #
@@ -126,6 +133,7 @@ async def synthesize_briefing(
     if music and music.intro is not None:
         combined += music.intro
         cursor_ms += len(music.intro)
+        intro_ms = len(music.intro)
 
     # Only turns that actually made it into the audio belong in the manifest.
     # A skipped turn keeps start_ms/end_ms as None, and the manifest's whole
@@ -208,6 +216,18 @@ async def synthesize_briefing(
             "exit 0, look like success, and then block its own replacement "
             "for the rest of the day."
         )
+
+    # The bed ducked under the voice at each end, before the outro is
+    # appended and after every `end_ms` is fixed.
+    #
+    # `overlay` and not append or crossfade, which is the entire point: it
+    # mixes into audio that already exists, so `len(combined)` does not
+    # change and not one timing in the manifest moves. Appending a tail
+    # would push every following turn later; a crossfade would pull them
+    # earlier. ADR-006's rule is that offsets are computed in one place, and
+    # this is how a mixing change respects it.
+    if music is not None:
+        combined = _duck(combined, music, intro_ms=intro_ms)
 
     # The outro, after every turn and after the last `end_ms` is fixed. It
     # carries no timings of its own, so nothing needs to move for it — but
@@ -292,6 +312,54 @@ def _exported_duration_ms(
             "which may differ by a frame", audio_format,
         )
         return len(fallback)
+
+
+def _duck(
+    combined: AudioSegment, music: MusicSet, *, intro_ms: int
+) -> AudioSegment:
+    """Let the bed run quietly under the first and last turns.
+
+    The roadmap asked for the music to recede under the voice rather than
+    stop dead. Both obvious implementations move every timing in the
+    manifest — a crossfade shortens the file, appending a tail lengthens it
+    — so this OVERLAYS instead: the tail is mixed into audio that already
+    exists, `len(combined)` is unchanged, and ADR-006's rule that offsets
+    are computed in exactly one place is untouched.
+
+    Silently does nothing when there is no room. A briefing shorter than the
+    duck is not a briefing anyone is listening to the end of, and a mixing
+    nicety must never be able to cost the morning (CLAUDE.md rule 7).
+    """
+    duration = len(combined)
+    if duration <= 0:
+        return combined
+
+    if music.intro is not None and intro_ms > 0:
+        # The last DUCK_MS of the intro, faded out and laid under the voice
+        # that follows it — so the bed thins away under the greeting rather
+        # than stopping the instant a host speaks.
+        window = min(DUCK_MS, len(music.intro), duration - intro_ms)
+        if window > 0:
+            tail = (
+                music.intro[-window:]
+                .apply_gain(DUCK_GAIN_DB)
+                .fade_out(window)
+            )
+            combined = combined.overlay(tail, position=intro_ms)
+
+    if music.outro is not None:
+        # The head of the outro, faded in under the sign-off, so the close
+        # arrives with the voice rather than after it.
+        window = min(DUCK_MS, len(music.outro), duration)
+        if window > 0:
+            head = (
+                music.outro[:window]
+                .apply_gain(DUCK_GAIN_DB)
+                .fade_in(window)
+            )
+            combined = combined.overlay(head, position=duration - window)
+
+    return combined
 
 
 def _export(combined: AudioSegment) -> tuple[bytes, str]:
