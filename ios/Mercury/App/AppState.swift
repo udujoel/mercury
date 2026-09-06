@@ -455,17 +455,36 @@ final class AppState {
         rebuild = nil
     }
 
-    /// The HTTP status of the last failed load, when it had one.
+    /// The last failed load: which briefing it was for, and its status.
     ///
     /// Recorded rather than re-derived. `loadState.failed` carries
     /// `localizedDescription`, and the alternative was the view scraping
     /// "Backend returned 404: " back out of prose that exists to be read by
     /// a person — a parser that breaks the moment anyone rewords the
     /// sentence, and breaks silently, into "no waiting room ever".
-    private(set) var lastFailureStatus: Int?
+    ///
+    /// The BRIEFING ID is half of it. Without that, a 404 from the archive
+    /// — a morning swept by retention between the index being listed and
+    /// the row being tapped — was indistinguishable from today's briefing
+    /// not existing, so Home replaced "that morning is gone" with a waiting
+    /// room promising a briefing that was never coming.
+    struct LoadFailure: Equatable {
+        let briefingId: String?
+        let status: Int
+    }
+
+    private(set) var lastFailure: LoadFailure?
+
+    /// The status of the last failure, but only if it was about TODAY.
+    var todaysFailureStatus: Int? {
+        guard let lastFailure,
+              lastFailure.briefingId == AppDelegate.briefingId(for: .now)
+        else { return nil }
+        return lastFailure.status
+    }
 
     @MainActor
-    private func recordFailure(_ error: Error) {
+    private func recordFailure(_ error: Error, briefingId: String?) {
         // Only when we are left with NO briefing.
         //
         // A 404 from the audio download is a different animal from a 404
@@ -479,9 +498,9 @@ final class AppState {
         // belt-and-braces rather than the only thing standing between the
         // two meanings.
         if manifest == nil, case APIError.badStatus(let code, _) = error {
-            lastFailureStatus = code
+            lastFailure = LoadFailure(briefingId: briefingId, status: code)
         } else {
-            lastFailureStatus = nil
+            lastFailure = nil
         }
         loadState = .failed(error.localizedDescription)
     }
@@ -605,7 +624,7 @@ final class AppState {
             // `localizedDescription`, matching `playBriefing`. The other
             // spelling put "Error Domain=NSURLErrorDomain Code=-1004" on
             // the card where the user reads it.
-            recordFailure(error)
+            recordFailure(error, briefingId: id)
         }
     }
 
@@ -654,7 +673,7 @@ final class AppState {
                 loadState = .ready
                 return
             }
-            recordFailure(error)
+            recordFailure(error, briefingId: AppDelegate.briefingId(for: .now))
         }
     }
 
@@ -788,7 +807,7 @@ final class AppState {
             await startPlayback(of: manifest)
             loadState = .ready
         } catch {
-            recordFailure(error)
+            recordFailure(error, briefingId: id ?? AppDelegate.briefingId(for: .now))
         }
     }
 

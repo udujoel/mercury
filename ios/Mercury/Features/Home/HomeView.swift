@@ -45,7 +45,7 @@ struct HomeView: View {
         guard appState.manifest == nil,
               case .failed = appState.loadState
         else { return false }
-        return WaitingRoom.shouldEnter(status: appState.lastFailureStatus)
+        return WaitingRoom.shouldEnter(status: appState.todaysFailureStatus)
     }
 
     /// The day the briefing on screen was made, which is not always today.

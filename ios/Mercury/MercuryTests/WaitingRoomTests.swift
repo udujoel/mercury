@@ -54,9 +54,9 @@ final class WaitingRoomTests: XCTestCase {
         // made this morning", or a broken object in R2 would be presented
         // to the user as a run that never happened.
         XCTAssertNotNil(state.manifest, "the briefing itself loaded")
-        XCTAssertNil(state.lastFailureStatus,
+        XCTAssertNil(state.todaysFailureStatus,
                      "a briefing that exists is not a missing one")
-        XCTAssertFalse(WaitingRoom.shouldEnter(status: state.lastFailureStatus))
+        XCTAssertFalse(WaitingRoom.shouldEnter(status: state.todaysFailureStatus))
     }
 
     /// The status survives to the view layer as a NUMBER.
@@ -81,8 +81,8 @@ final class WaitingRoomTests: XCTestCase {
         await state.playBriefing()
 
         XCTAssertNil(state.manifest, "there is genuinely no briefing")
-        XCTAssertEqual(state.lastFailureStatus, 404)
-        XCTAssertTrue(WaitingRoom.shouldEnter(status: state.lastFailureStatus))
+        XCTAssertEqual(state.todaysFailureStatus, 404)
+        XCTAssertTrue(WaitingRoom.shouldEnter(status: state.todaysFailureStatus))
     }
 
     /// A 500 must not open it, driven through the same path.
@@ -94,8 +94,8 @@ final class WaitingRoomTests: XCTestCase {
 
         await state.playBriefing()
 
-        XCTAssertEqual(state.lastFailureStatus, 500)
-        XCTAssertFalse(WaitingRoom.shouldEnter(status: state.lastFailureStatus))
+        XCTAssertEqual(state.todaysFailureStatus, 500)
+        XCTAssertFalse(WaitingRoom.shouldEnter(status: state.todaysFailureStatus))
     }
 
     // MARK: - The bed
@@ -115,6 +115,28 @@ final class WaitingRoomTests: XCTestCase {
             "waiting-bed.mp3 is not in the app bundle")
         let size = try Data(contentsOf: url).count
         XCTAssertGreaterThan(size, 10_000, "a real audio file, not a stub")
+    }
+
+    /// An archive morning that is gone must not read as today's.
+    ///
+    /// Retention sweeps briefings, and the index is a list fetched a moment
+    /// earlier — so tapping a row whose object has just been swept is an
+    /// ordinary 404. It used to satisfy every condition the waiting room
+    /// checks, and Home replaced "that morning is gone" with a promise of a
+    /// briefing that was never coming.
+    @MainActor
+    func testAMissingArchiveBriefingIsNotTodaysWaitingRoom() async {
+        let api = RecordingAPI(
+            manifestResult: .failure(APIError.badStatus(404, "swept")))
+        let state = AppState(api: api)
+
+        await state.openBriefing(id: "2019-01-01")
+
+        XCTAssertEqual(state.lastFailure?.status, 404, "it did fail with a 404")
+        XCTAssertEqual(state.lastFailure?.briefingId, "2019-01-01")
+        XCTAssertNil(state.todaysFailureStatus,
+                     "but it says nothing about today")
+        XCTAssertFalse(WaitingRoom.shouldEnter(status: state.todaysFailureStatus))
     }
 
     /// The line says when, and promises no when.
