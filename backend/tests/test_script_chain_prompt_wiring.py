@@ -208,19 +208,19 @@ def _outline_segment_definition(name: str) -> str:
     Reading only the first physical line is what the earlier version of the
     test below did, and the definition is four lines long — so a positive
     instruction re-added on line two would not have been seen.
+
+    Read from `SEGMENT_DEFINITIONS` rather than scraped out of
+    OUTLINE_PROMPT. ROADMAP task 15 moved the definitions there so the block
+    can be assembled from only the segments that are wanted, and the scraper
+    then found nothing — raising `StopIteration` instead of failing an
+    assertion. This is still the exact text the model is sent:
+    `generate_script` joins these into `{segment_definitions}`.
     """
     import re
 
-    from app.pipeline.prompts import OUTLINE_PROMPT
+    from app.pipeline.prompts import SEGMENT_DEFINITIONS
 
-    lines = OUTLINE_PROMPT.splitlines()
-    start = next(i for i, line in enumerate(lines) if line.startswith(f"- {name}"))
-    block = [lines[start]]
-    for line in lines[start + 1:]:
-        if line.startswith("- ") or not line.strip():
-            break
-        block.append(line)
-    return re.sub(r"\s+", " ", " ".join(block)).strip()
+    return re.sub(r"\s+", " ", SEGMENT_DEFINITIONS[name]).strip()
 
 
 def test_the_cold_open_is_not_asked_for_a_time_it_has_not_been_given():

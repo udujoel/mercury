@@ -450,18 +450,74 @@ async def test_muted_senders_are_dropped_before_the_briefing_sees_them():
     assert captured == {}
 
 
-def test_settings_no_longer_carry_a_field_nothing_applies():
-    """`disabled_segments` was in the artifact for one round and is gone.
+def test_disabled_segments_is_carried_and_honoured():
+    """`disabled_segments` is back, and this time the pipeline reads it.
 
-    `_has_valid_segment_coverage_and_order` requires EVERY canonical segment
-    to be present, so making one optional is a change to the script chain and
-    its validator — not a value this artifact can carry. A toggle that stores
-    a preference nothing reads is the exact failure the artifact exists to
-    prevent, so the field is absent rather than ignored.
+    It was in the artifact for one round and was REMOVED, because
+    `_has_valid_segment_coverage_and_order` required every canonical segment
+    to be present — so it stored a preference nothing read, which is the
+    exact failure the artifact exists to prevent. This test is the reason it
+    is allowed back: the field exists AND the chain narrows to it.
+
+    Asserted against the resolver rather than against a hardcoded list, so
+    adding a segment to `Segment` cannot leave this passing while the
+    pipeline ignores it.
     """
-    from app.core.schemas import UserSettings
+    from app.core.schemas import Segment, UserSettings
+    from app.pipeline.script_chain import (
+        STRUCTURAL_SEGMENTS,
+        resolve_segments,
+    )
 
-    assert not hasattr(UserSettings(), "disabled_segments")
+    assert UserSettings().disabled_segments is None, "absent means every segment"
+    assert resolve_segments(None) == list(Segment)
+
+    kept = resolve_segments(["weather", "follow_ups"])
+    assert Segment.WEATHER not in kept
+    assert Segment.FOLLOW_UPS not in kept
+    assert Segment.INBOX in kept
+    # Order is preserved, because the validator checks order against it.
+    assert kept == [s for s in Segment if s in kept]
+
+    # The opening and the close are the FORMAT. A briefing without a
+    # greeting starts mid-sentence and one without a close just stops, so
+    # these are not on offer whatever the artifact says.
+    everything_off = resolve_segments([s.value for s in Segment])
+    assert set(everything_off) == set(STRUCTURAL_SEGMENTS)
+
+    # A name from a phone older or newer than this build. Ignored, not
+    # raised: failing a whole morning over an unrecognised segment name is a
+    # worse outcome than writing the segment.
+    assert resolve_segments(["not_a_segment", "WEATHER "]) == [
+        s for s in Segment if s is not Segment.WEATHER
+    ], "unknown names ignored; known ones matched case- and space-insensitively"
+
+
+def test_a_disabled_segment_is_rejected_if_the_model_writes_it_anyway():
+    """Turning a segment off means it must not appear — either way round.
+
+    The validator used to ask only "is everything present?". With segments
+    optional it also has to ask "is anything here that should not be?",
+    because a model handed a narrowed prompt can still write the weather,
+    and accepting it would be the toggle-that-does-nothing all over again.
+    """
+    from app.core.schemas import Turn
+    from app.pipeline.script_chain import (
+        _has_valid_segment_coverage_and_order,
+        resolve_segments,
+    )
+
+    kept = resolve_segments(["weather"])
+    without = [Turn(speaker="A", segment=s, text="x") for s in kept]
+    assert _has_valid_segment_coverage_and_order(without, kept)
+
+    with_weather = [
+        Turn(speaker="A", segment=s, text="x")
+        for s in resolve_segments(None)
+    ]
+    assert not _has_valid_segment_coverage_and_order(with_weather, kept), (
+        "a segment the listener turned off must fail the script"
+    )
 
 
 def test_the_settings_route_exists_on_fastapi_too(tmp_path, monkeypatch):

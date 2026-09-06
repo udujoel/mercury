@@ -830,6 +830,63 @@ describe("settings", () => {
     }
   });
 
+  test("every field UserSettings carries survives a save", async () => {
+    // The whitelist drops anything it does not name, and a dropped field
+    // looks exactly like a setting that applied and did nothing. `music_set`
+    // was missing from it for a whole release: the picker sent it, the
+    // pipeline read it, and this Worker deleted it in between.
+    //
+    // Listed explicitly rather than derived, so ADDING a field to
+    // `UserSettings` without adding it here fails on the next run of this
+    // test rather than on someone's morning.
+    const env = envFor({});
+    env.BRIEFINGS = writableBucket({});
+
+    const sent = {
+      schema_version: 1,
+      briefing_length: "standard",
+      tts_provider: "elevenlabs",
+      voice_a: "a",
+      voice_b: "b",
+      music_set: "broadsheet",
+      disabled_segments: ["weather", "follow_ups"],
+      feeds: ["https://example.com/feed.xml"],
+      muted_senders: ["noreply@example.com"],
+    };
+
+    const res = await worker.fetch(
+      new Request("https://x/settings", {
+        method: "PUT",
+        headers: { "x-mercury-token": TOKEN },
+        body: JSON.stringify(sent),
+      }),
+      env,
+    );
+
+    assert.equal(res.status, 200);
+    const saved = JSON.parse(env.BRIEFINGS.written["settings.json"]);
+    for (const [key, value] of Object.entries(sent)) {
+      assert.deepEqual(saved[key], value, `${key} was dropped on save`);
+    }
+  });
+
+  test("a segment list of the wrong shape is refused, not dropped", async () => {
+    const env = envFor({});
+    env.BRIEFINGS = writableBucket({});
+
+    const res = await worker.fetch(
+      new Request("https://x/settings", {
+        method: "PUT",
+        headers: { "x-mercury-token": TOKEN },
+        body: JSON.stringify({ disabled_segments: "weather" }),
+      }),
+      env,
+    );
+
+    assert.equal(res.status, 400, "a string is not a list of segments");
+    assert.equal(Object.keys(env.BRIEFINGS.written).length, 0);
+  });
+
   test("PUT to anything else is still refused", async () => {
     const res = await worker.fetch(
       new Request("https://x/briefing/2026-08-30", {

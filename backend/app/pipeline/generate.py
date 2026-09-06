@@ -111,6 +111,12 @@ async def generate_briefing(
     select_for_briefing: Any = _real_select_for_briefing,
     generate_script: Any = _real_generate_script,
     storage: BriefingStorage | None = None,
+    # Segments the listener has turned off (ROADMAP task 15). Threaded
+    # explicitly rather than through `apply_to_environment` like the scalar
+    # settings: this is a list, and flattening one into an environment
+    # variable to parse it back out is a round trip through a format that
+    # cannot hold it.
+    disabled_segments: list[str] | None = None,
     gmail_fixture: Path | None = None,
     calendar_fixture: Path | None = None,
     weather_fixture: Path | None = None,
@@ -243,6 +249,7 @@ async def generate_briefing(
         weather=weather,
         length=length,
         date=briefing_date,
+        disabled_segments=disabled_segments,
     )
 
     # The LAST read of any body in this run, and it happens BEFORE the scrub

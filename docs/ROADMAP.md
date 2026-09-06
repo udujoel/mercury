@@ -340,16 +340,29 @@ Added 2026-09-04, after the ElevenLabs go-ahead:
         once, and nothing currently explains that: a new user reaches Home
         and sees a card that fetches nothing.
 
-- [ ] 15. **Segments the user can turn off.** Removed from the settings
-      artifact rather than shipped as a toggle that does nothing.
-      `_has_valid_segment_coverage_and_order` requires EVERY canonical
-      segment to be present, and `_CANONICAL_SEGMENT_ORDER` is `list(Segment)`
-      — so "skip the weather" is a change to the script chain, its validator
-      and the repair path, not a value the artifact can carry. Doing it
-      properly means threading the enabled set through generation and
-      teaching the validator to expect only those; doing it cheaply means a
-      preference nothing reads, which is the failure the artifact exists to
-      prevent.
+- [x] 15. **Segments the user can turn off.** Done the expensive way, which
+      was the only way: `resolve_segments` computes the list once and every
+      pass is handed it — the prompt's segment definitions, the outline and
+      turn-list response schemas, the draft's repair check and the
+      revision's validator. A segment left on in any one of those is a model
+      told to write something the validator then rejects, which is a repair
+      loop rather than a setting.
+      The validator gained a second question. It asked "is everything
+      present?"; it now also asks "is anything here that should not be?",
+      because a model handed a narrowed prompt can still write the weather
+      and accepting it would be the toggle-that-does-nothing again.
+      `cold_open` and `sign_off` are `STRUCTURAL_SEGMENTS` and cannot be
+      dropped — a briefing with no greeting starts mid-sentence and one with
+      no close just stops — and the iOS screen does not offer them, because
+      a switch the server overrides is the same lie as a switch nothing
+      reads. Unknown names are ignored rather than raised: the phone writing
+      the artifact may be older or newer than the job reading it, and losing
+      a morning to an unrecognised segment name is the worse outcome.
+      **Found while wiring it:** `music_set` was missing from the Worker's
+      `SETTINGS_FIELDS` whitelist, so the picker encoded it, the pipeline
+      read it, and the Worker deleted it on every save. The music setting
+      has never once applied in production. There is now a test that names
+      every field `UserSettings` carries and fails when one is dropped.
 
 **Start 1, 5 and 8 in parallel** — provider, player view, new feature module.
 None blocks the others, and everything else falls out of them in order.

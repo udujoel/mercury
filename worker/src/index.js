@@ -638,6 +638,15 @@ const MAX_SETTINGS_BYTES = 16 * 1024;
 // name filter and was stored, and Pydantic would then reject the whole
 // artifact on the next run — one bad write silently reverting every setting
 // to the environment.
+// EVERY field `UserSettings` carries, and nothing else.
+//
+// This list is a whitelist, and a field missing from it is silently dropped
+// on save — which is indistinguishable, from the phone, from a setting that
+// applied and did nothing. `music_set` was missing: the picker encoded it,
+// `app/pipeline/generate.py` read it, and the Worker in between deleted it
+// on every save. A control that appears to work is the exact failure the
+// settings artifact exists to prevent, so when a field is added to
+// `UserSettings` it belongs here in the same change.
 const SETTINGS_FIELDS = {
   schema_version: "number",
   updated_at: "string",
@@ -645,6 +654,11 @@ const SETTINGS_FIELDS = {
   tts_provider: "string",
   voice_a: "string",
   voice_b: "string",
+  music_set: "string",
+  // ROADMAP task 15. Names of segments to leave out; the job validates them
+  // (`resolve_segments`), which is where the knowledge of what a segment is
+  // belongs — the Worker only checks that this is a list of strings.
+  disabled_segments: "string[]",
   feeds: "string[]",
   muted_senders: "string[]",
 };

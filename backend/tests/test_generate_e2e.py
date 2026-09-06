@@ -104,6 +104,11 @@ async def _fake_generate_script(
     aggregated_email_count: int = 0,
     stories: list | None = None,
     passes: int = 2,
+    # Accepted and unused, deliberately: this fake stands in for the real
+    # chain's SIGNATURE as much as its output, so a new keyword the pipeline
+    # starts passing shows up here as a TypeError rather than silently
+    # taking a different path in tests than in production.
+    disabled_segments: list[str] | None = None,
 ) -> tuple[list[Turn], list[SourceRef]]:
     # Exercise the injected LLM (as the real script chain would) without
     # depending on its exact prompt-dispatch behaviour.

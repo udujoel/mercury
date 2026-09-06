@@ -154,6 +154,50 @@ final class VoiceListTests: XCTestCase {
     }
 }
 
+/// Segments the listener can turn off. ROADMAP task 15.
+final class DisabledSegmentsTests: XCTestCase {
+
+    /// The wire name is what the job reads, so it is the thing to pin.
+    func testItRoundTripsUnderTheNameTheJobReads() throws {
+        var settings = UserSettings()
+        settings.disabledSegments = ["weather", "follow_ups"]
+
+        let data = try JSONEncoder().encode(settings)
+        let json = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(json["disabled_segments"] as? [String],
+                       ["weather", "follow_ups"])
+
+        let back = try JSONDecoder().decode(UserSettings.self, from: data)
+        XCTAssertEqual(back.disabledSegments, ["weather", "follow_ups"])
+    }
+
+    /// Absent means every segment, which is the state every install starts
+    /// in and the one this must never turn into "a briefing of nothing".
+    func testAbsentMeansEverythingIsOn() throws {
+        let settings = try JSONDecoder().decode(
+            UserSettings.self, from: Data(#"{"briefing_length":"standard"}"#.utf8))
+        XCTAssertEqual(settings.disabledSegments, [])
+    }
+
+    /// The screen must not offer a switch the server would override.
+    ///
+    /// `STRUCTURAL_SEGMENTS` on the backend keeps `cold_open` and
+    /// `sign_off` whatever the artifact says — a briefing with no greeting
+    /// starts mid-sentence and one with no close just stops. Offering the
+    /// toggle anyway is the same lie as a toggle nothing reads, which is
+    /// the failure this whole artifact exists to prevent.
+    func testTheStructuralSegmentsAreNotOffered() {
+        let offered = Set(UserSettings.optionalSegments.map(\.id))
+        XCTAssertFalse(offered.contains("cold_open"))
+        XCTAssertFalse(offered.contains("sign_off"))
+        XCTAssertEqual(
+            offered,
+            ["weather", "calendar", "inbox", "world", "follow_ups"],
+            "these are the five `OPTIONAL_SEGMENTS` the backend resolves")
+    }
+}
+
 /// Rebuilding today's briefing on demand.
 final class RegenerationStatusTests: XCTestCase {
 

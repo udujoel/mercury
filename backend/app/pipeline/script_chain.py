@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Iterable
 from datetime import datetime
 from typing import Any
 
@@ -53,6 +54,7 @@ from app.pipeline.prompts import (
     HOST_SYSTEM,
     OUTLINE_PROMPT,
     REVISE_PROMPT,
+    SEGMENT_DEFINITIONS,
 )
 from app.pipeline.quality import run_all_gates
 
@@ -499,17 +501,65 @@ def _parse_draft_turns(raw: Any) -> list[Turn]:
 
 _CANONICAL_SEGMENT_ORDER = list(Segment)
 
+# The two segments a briefing cannot be without.
+#
+# ROADMAP task 15 lets the listener drop segments, and these are not on
+# offer: a briefing with no greeting starts mid-sentence, and one with no
+# close just stops. Everything between them is content the user may not want
+# on a given morning; the opening and the ending are the format itself.
+STRUCTURAL_SEGMENTS: frozenset[Segment] = frozenset(
+    {Segment.COLD_OPEN, Segment.SIGN_OFF}
+)
 
-def _has_valid_segment_coverage_and_order(turns: list[Turn]) -> bool:
-    """Every canonical segment must appear, and segments must not
-    interleave or repeat out of order. Same rule the Phase 0 spike enforces
+OPTIONAL_SEGMENTS: frozenset[Segment] = frozenset(
+    s for s in Segment if s not in STRUCTURAL_SEGMENTS
+)
+
+
+def resolve_segments(disabled: Iterable[str] | None) -> list[Segment]:
+    """The segments to write, in canonical order, given what is turned off.
+
+    Unknown names are IGNORED rather than raising. The artifact is written
+    by a phone that may be older or newer than the job reading it, and a
+    briefing that fails to generate because a settings file mentions a
+    segment this build has never heard of is a worse outcome than one that
+    quietly writes it. Structural segments cannot be dropped whatever the
+    artifact says.
+    """
+    if not disabled:
+        return list(_CANONICAL_SEGMENT_ORDER)
+    off = {str(name).strip().lower() for name in disabled}
+    return [
+        s
+        for s in _CANONICAL_SEGMENT_ORDER
+        if s in STRUCTURAL_SEGMENTS or s.value not in off
+    ]
+
+
+def _has_valid_segment_coverage_and_order(
+    turns: list[Turn], expected: list[Segment] | None = None
+) -> bool:
+    """Every EXPECTED segment must appear, and segments must not interleave
+    or repeat out of order. Same rule the Phase 0 spike enforces
     (`spike_04_llm.validate_segment_coverage`), reimplemented here as a
     boolean check rather than a raise — a revision that drops or reorders a
     segment is a degradation, not a hard failure, and the caller decides
-    what to do with a bad result rather than catching an exception."""
+    what to do with a bad result rather than catching an exception.
+
+    `expected` defaults to every canonical segment, which is what every
+    caller meant before segments could be turned off. When a segment IS
+    turned off, a script containing it is invalid: the user asked for it to
+    be gone, and accepting it anyway is the toggle-that-does-nothing this
+    whole task exists to avoid.
+    """
+    order = expected if expected is not None else _CANONICAL_SEGMENT_ORDER
     present = {turn.segment for turn in turns}
-    missing = [s for s in _CANONICAL_SEGMENT_ORDER if s not in present]
+    missing = [s for s in order if s not in present]
     if missing:
+        return False
+
+    unwanted = present - set(order)
+    if unwanted:
         return False
 
     # Check EVERY turn transition, not just the first appearance of each
@@ -518,7 +568,7 @@ def _has_valid_segment_coverage_and_order(turns: list[Turn]) -> bool:
     # `sign_off`: the repeat was discarded while building the order list, so
     # the sequence looked valid while the actual transcript interleaved
     # segments — the exact thing this validator exists to prevent.
-    expected_index = {s: i for i, s in enumerate(_CANONICAL_SEGMENT_ORDER)}
+    expected_index = {s: i for i, s in enumerate(order)}
     last_idx = -1
     for turn in turns:
         idx = expected_index[turn.segment]
@@ -534,12 +584,16 @@ def _is_within_word_budget(turns: list[Turn], budget: int) -> bool:
     return lo <= words <= hi
 
 
-def _is_valid_script(turns: list[Turn], budget: int) -> bool:
-    """A script is usable when it has turns, covers every segment in
+def _is_valid_script(
+    turns: list[Turn], budget: int, expected: list[Segment] | None = None
+) -> bool:
+    """A script is usable when it has turns, covers every expected segment in
     canonical order, and lands within the word budget. Applied identically
     to the draft and to the revision — the revision gets no special pass."""
-    return bool(turns) and _has_valid_segment_coverage_and_order(turns) and (
-        _is_within_word_budget(turns, budget)
+    return (
+        bool(turns)
+        and _has_valid_segment_coverage_and_order(turns, expected)
+        and _is_within_word_budget(turns, budget)
     )
 
 
@@ -764,6 +818,29 @@ _OUTLINE_SCHEMA = {
     },
     "required": ["segments"],
 }
+
+
+def _turn_list_schema(segments: list[Segment]) -> dict:
+    """`_TURN_LIST_SCHEMA`, narrowed to the segments actually wanted.
+
+    The enum is not decoration: it is what the model is told is a legal
+    answer. Leaving every segment listed while the validator accepted only
+    some would invite the model to write a disabled segment and then reject
+    the script for containing it — a repair loop caused entirely by telling
+    it two different things.
+    """
+    schema = json.loads(json.dumps(_TURN_LIST_SCHEMA))
+    schema["items"]["properties"]["segment"]["enum"] = [s.value for s in segments]
+    return schema
+
+
+def _outline_schema(segments: list[Segment]) -> dict:
+    """`_OUTLINE_SCHEMA`, narrowed the same way."""
+    schema = json.loads(json.dumps(_OUTLINE_SCHEMA))
+    schema["properties"]["segments"]["items"]["properties"]["segment"]["enum"] = [
+        s.value for s in segments
+    ]
+    return schema
 
 # The six categories CRITIQUE_PROMPT asks the editor to identify.
 _CRITIQUE_SCHEMA = {
@@ -1025,6 +1102,7 @@ async def _run_critique_and_revise(
     draft_turns: list[Turn],
     source_data: str,
     budget: int,
+    segments: list[Segment] | None = None,
 ) -> list[Turn]:
     """Passes 3 and 4: critique -> revise. Always returns a usable script —
     the draft itself, if anything along the way goes wrong or makes things
@@ -1064,14 +1142,16 @@ async def _run_critique_and_revise(
         # case before it gets here; this stays as the backstop.
         revised_turns = await _complete_json(
             llm=llm, prompt=revise_prompt, temperature=0.6,
-            response_schema=_TURN_LIST_SCHEMA, what="revise",
+            response_schema=(
+            _turn_list_schema(segments) if segments else _TURN_LIST_SCHEMA
+        ), what="revise",
             validate=_parse_draft_turns,
         )
     except Exception as exc:
         logger.warning("revise pass failed, keeping draft: %r", exc)
         return draft_turns
 
-    if not _is_valid_script(revised_turns, budget):
+    if not _is_valid_script(revised_turns, budget, segments):
         logger.warning(
             "revision invalid (empty, missing/out-of-order segments, or "
             "outside word budget) — keeping draft. revised turn count: %d",
@@ -1113,6 +1193,7 @@ async def generate_script(
     aggregated_email_count: int = 0,
     stories: list[Story] | None = None,
     passes: int = 2,
+    disabled_segments: Iterable[str] | None = None,
 ) -> tuple[list[Turn], list[SourceRef]]:
     """Script chain: outline -> draft (2 passes, the default), or
     outline -> draft -> critique -> revise (4 passes) when `passes=4`.
@@ -1134,6 +1215,12 @@ async def generate_script(
         raise ValueError(f"passes must be 2 or 4, got {passes}")
 
     budget = LENGTH_BUDGETS[length]["words"]
+    # ROADMAP task 15. One list, computed once, and every pass below is
+    # given it: the prompt's definitions, both response schemas, the draft's
+    # repair check and the revision's validator. A segment turned off in one
+    # of those and left on in another is worse than not offering the setting
+    # — it is a model told to write something the validator then rejects.
+    segments = resolve_segments(disabled_segments)
     stories = stories or []
     source_data = _flatten_source_text(
         emails, events, weather, aggregated_email_count, stories
@@ -1192,10 +1279,13 @@ async def generate_script(
         stories=_fence_untrusted(_format_stories(stories)),
         follow_ups="(none)",
         total_words=budget,
+        segment_definitions="\n".join(
+            SEGMENT_DEFINITIONS[s.value] for s in segments
+        ),
     )
     outline = await _complete_json(
         llm=llm, prompt=outline_prompt, temperature=0.7,
-        response_schema=_OUTLINE_SCHEMA, what="outline",
+        response_schema=_outline_schema(segments), what="outline",
         validate=_validate_outline,
     )
 
@@ -1204,9 +1294,11 @@ async def generate_script(
     )
     draft_turns = await _complete_json(
         llm=llm, prompt=draft_prompt, temperature=_DRAFT_TEMPERATURE,
-        response_schema=_TURN_LIST_SCHEMA, what="draft",
+        response_schema=_turn_list_schema(segments), what="draft",
         validate=_parse_draft_turns,
-        repair_check=_has_valid_segment_coverage_and_order,
+        repair_check=lambda turns: _has_valid_segment_coverage_and_order(
+            turns, segments
+        ),
     )
 
     if passes == 4 and draft_turns:
@@ -1215,6 +1307,7 @@ async def generate_script(
             draft_turns=draft_turns,
             source_data=source_data,
             budget=budget,
+            segments=segments,
         )
     else:
         final_turns = draft_turns
