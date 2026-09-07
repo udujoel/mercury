@@ -757,12 +757,23 @@ final class AppState {
                 .filter { $0.hasPrefix(today) }
                 .max()
         } catch {
-            // The index is a convenience, not the briefing. If it cannot be
-            // read, fall back to asking for the day id directly — which is
-            // what every briefing generated before this change is called,
-            // and is still a valid id.
-            print("[Mercury] Briefing index unavailable (\(error)); trying \(today).")
-            newest = today
+            // The id ON SCREEN, if it is today's — not the bare day.
+            //
+            // Falling back to `today` looked harmless and was not: no run
+            // is named that any more, so `fetchManifest` 404s and the code
+            // below asks the server to GENERATE — spending a briefing while
+            // a perfectly good one sits in R2, because the index happened
+            // to be unreachable for a moment.
+            //
+            // A restored manifest is the one thing the phone knows about
+            // today without asking, so it is what the fallback uses. With
+            // nothing restored there is genuinely no id to try, and the
+            // not-generated path is then the honest answer rather than a
+            // guess that costs money.
+            let known = manifest?.briefingId
+            newest = known.flatMap { $0.hasPrefix(today) ? $0 : nil }
+            print("[Mercury] Briefing index unavailable (\(error)); "
+                  + "falling back to \(newest ?? "nothing known for today").")
         }
 
         if let id = newest {

@@ -45,10 +45,23 @@ on:
     #
     # Off the hour for the reason above: the top of the hour is the single
     # worst minute to ask GitHub's scheduler for anything.
-    - cron: "12 4 * * *"
-    - cron: "12 10 * * *"
-    - cron: "12 16 * * *"
-    - cron: "12 22 * * *"
+    #
+    # The morning slot is 06:12, NOT 04:12, and that is to stay out of the
+    # Worker's way. ADR-010 moved the punctual morning trigger to Cloudflare
+    # precisely because GitHub's scheduler runs late, and its checkpoints
+    # cover 03:40 to 05:40 UTC. A GitHub run at 04:12 would land in the
+    # middle of that and generate a SECOND briefing — distinct now that ids
+    # carry a time, where before it would have been a no-op. Five runs a day
+    # and five briefings, when the ask was four.
+    #
+    # At 06:12 the Cloudflare window has closed, so this is the first of the
+    # four six-hourly runs rather than a duplicate of a morning that already
+    # happened. The Worker still backstops the morning; these keep the rest
+    # of the day fresh.
+    - cron: "12 6 * * *"
+    - cron: "12 12 * * *"
+    - cron: "12 18 * * *"
+    - cron: "12 0 * * *"
   workflow_dispatch:
     inputs:
       length:

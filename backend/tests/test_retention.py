@@ -418,3 +418,70 @@ def test_retention_keeps_or_drops_a_whole_day(tmp_path):
     kept = set(storage.list_briefing_ids())
     assert "2026-09-07-0412" in kept, "an earlier run of TODAY is not old"
     assert "2026-09-06-2212" in kept
+
+
+def test_a_new_id_never_sorts_before_one_that_exists(tmp_path, monkeypatch):
+    """Two ways to produce an id that is newer and looks older.
+
+    **Same minute.** Two runs starting inside one minute produced the same
+    id, so the second was skipped by generation's idempotency check — or
+    overwrote the first with `--force`. The extra briefing did not exist.
+
+    **Crossing local midnight.** `--briefing-day` pins the DAY, so a
+    checkpoint deciding at 23:58 with a job starting at 00:01 produces
+    `<yesterday>-0001` — which sorts BEFORE every other run of that day.
+    Newest-first is lexicographic everywhere here, so the freshest briefing
+    would be filed as the oldest and the phone would show a stale one.
+    """
+    from app import cli
+    from app.synthesis.storage import LocalFilesystemStorage
+
+    storage = LocalFilesystemStorage(base_dir=tmp_path)
+    monkeypatch.setattr(cli, "build_storage", lambda: storage, raising=False)
+    monkeypatch.setattr(
+        "app.synthesis.storage.build_storage", lambda: storage
+    )
+
+    # An empty day takes the clock, unchanged.
+    assert cli._free_briefing_id("2026-09-07", "0412") == "2026-09-07-0412"
+
+    for existing in ["2026-09-07-0412", "2026-09-07-2212"]:
+        (tmp_path / f"{existing}.manifest.json").write_text("{}")
+
+    # Same minute as the newest: must not collide with it.
+    assert cli._free_briefing_id("2026-09-07", "2212") == "2026-09-07-2213"
+
+    # A run that crossed midnight: the clock says 00:01, and that would sort
+    # first. It goes after the newest instead.
+    late = cli._free_briefing_id("2026-09-07", "0001")
+    assert late == "2026-09-07-2213"
+    assert late > "2026-09-07-2212", "the newest run must sort newest"
+
+
+def test_the_clock_wins_when_it_is_genuinely_later(tmp_path, monkeypatch):
+    """The bump is a floor, not a replacement — otherwise every run of a day
+    would be one minute after the last rather than when it happened."""
+    from app import cli
+    from app.synthesis.storage import LocalFilesystemStorage
+
+    storage = LocalFilesystemStorage(base_dir=tmp_path)
+    monkeypatch.setattr("app.synthesis.storage.build_storage", lambda: storage)
+    (tmp_path / "2026-09-07-0412.manifest.json").write_text("{}")
+
+    assert cli._free_briefing_id("2026-09-07", "1012") == "2026-09-07-1012"
+
+
+def test_an_id_that_would_not_survive_its_own_key_is_refused():
+    """`<id>.<artifact>` is the storage key, so a dot in an id truncates it.
+
+    `is_briefing_id` asked a key-shaped regex about `f"{value}."` and `match`
+    only anchors the start — so `2026-09-07-0412.5` matched and the trailing
+    `.5` was ignored. It was a valid id that could be written and never read
+    back, which is the worst kind of valid.
+    """
+    from app.synthesis.storage import is_briefing_id
+
+    assert not is_briefing_id("2026-09-07-0412.5")
+    assert not is_briefing_id("2026-09-07.manifest")
+    assert not is_briefing_id("2026-09-07-0412 ")
+    assert is_briefing_id("2026-09-07-0412")

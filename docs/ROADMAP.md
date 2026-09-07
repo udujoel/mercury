@@ -451,7 +451,9 @@ something in this project:
 - **Rule 7.** Research is the most failure-prone thing here: it is network,
   third-party and slow. A newsletter section that cannot be researched
   degrades to the summary it has, and the briefing still ships.
-- **Cost and time.** Generation already takes ~7 minutes. Research is N more
+- **Cost and time.** Generation takes 2-4 minutes by design (CLAUDE.md);
+  the run measured on 2026-09-05 took 423 seconds with ElevenLabs and the
+  full four-pass chain, which is the number to budget against. Research is N more
   LLM calls on a budget that is currently free, so the task list has to say
   how many and be able to cap them.
 

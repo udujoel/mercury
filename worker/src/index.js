@@ -242,9 +242,12 @@ export default {
     // can a human wondering "did it actually run?" — an answer that does not
     // depend on GitHub having noticed anything.
     if (url.pathname === "/status") {
-      const id = briefingIdFor(new Date(), resolvedTimeZone(env));
-      const state = await briefingState(env, id);
-      return json({ briefing_id: id, state, ok: state === "ok" });
+      // The DAY, because that is the question: has today got something to
+      // listen to? Reading `<day>.manifest.json` directly reported every
+      // healthy morning as `missing` the moment ids gained a time.
+      const day = briefingIdFor(new Date(), resolvedTimeZone(env));
+      const { state, id } = await dayState(env, day);
+      return json({ briefing_id: id, day, state, ok: state === "ok" });
     }
 
     if (url.pathname === "/settings") {
@@ -315,8 +318,13 @@ export default {
    */
   async scheduled(controller, env) {
     const scheduledAt = new Date(controller.scheduledTime);
-    const id = briefingIdFor(scheduledAt, resolvedTimeZone(env));
-    const state = await briefingState(env, id);
+    const day = briefingIdFor(scheduledAt, resolvedTimeZone(env));
+    // Any playable briefing for the day answers this. The bare
+    // `<day>.manifest.json` read that used to answer it stopped existing
+    // when runs started naming themselves `<day>-HHMM`, so every checkpoint
+    // saw `missing`, dispatched again, and the alarm fired about a morning
+    // that was already in the bucket.
+    const { state, id } = await dayState(env, day);
 
     if (state === "ok") {
       console.log(`briefing ${id}: already in R2, nothing to do`);
@@ -442,6 +450,57 @@ function resolvedTimeZone(env) {
  * to be FORCED past the idempotency check that would otherwise preserve it
  * forever.
  */
+/**
+ * The ids stored for one DAY, newest first.
+ *
+ * A day used to hold exactly one briefing, so every check could read
+ * `<day>.manifest.json` directly. It now holds up to four, named
+ * `<day>-HHMM`, and probing the bare day key finds nothing — which made the
+ * scheduler report a perfectly healthy morning as `missing`, dispatch
+ * another generation on every checkpoint, and let the watchdog raise an
+ * alarm about a briefing sitting in the bucket.
+ *
+ * Legacy day-only ids are included, because fourteen of them are live.
+ */
+async function briefingIdsForDay(env, day) {
+  const ids = new Set();
+  let cursor;
+  do {
+    const page = await env.BRIEFINGS.list({ prefix: day, cursor, limit: 1000 });
+    for (const object of page.objects) {
+      if (!object.key.endsWith(SUFFIX)) continue;
+      const id = object.key.slice(0, -SUFFIX.length);
+      if (validBriefingId(id) && id.startsWith(day)) ids.add(id);
+    }
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+  return [...ids].sort().reverse();
+}
+
+/**
+ * The state of a DAY: `ok` if any briefing stored for it is playable.
+ *
+ * Any, not the newest. A morning is covered the moment one playable
+ * briefing exists for it — that is the question every checkpoint and the
+ * watchdog are actually asking, and answering it with "is the newest one
+ * playable" would raise an alarm about a day that already has something to
+ * listen to because its most recent run failed.
+ */
+async function dayState(env, day) {
+  const ids = await briefingIdsForDay(env, day);
+  if (ids.length === 0) return { state: "missing", id: day };
+
+  let worst = null;
+  for (const id of ids) {
+    const state = await briefingState(env, id);
+    if (state === "ok") return { state: "ok", id };
+    // Prefer reporting an EMPTY one, since that is the repairable case and
+    // names the id to repair.
+    if (state === "empty" || worst === null) worst = { state, id };
+  }
+  return worst;
+}
+
 async function briefingState(env, id) {
   const object = await env.BRIEFINGS.get(`${id}.manifest.json`);
   if (!object) return "missing";

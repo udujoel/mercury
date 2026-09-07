@@ -66,6 +66,16 @@ MIN_PLAYABLE_AUDIO_BYTES = 1024
 # format change and an outage.
 _BRIEFING_KEY = re.compile(r"^(\d{4}-\d{2}-\d{2}(?:-\d{4})?)\.")
 
+# The same shape, anchored at BOTH ends, for validating an id on its own.
+#
+# `is_briefing_id` used to ask `_BRIEFING_KEY` about `f"{value}."`, and
+# `match` only anchors the start — so `2026-09-07-0412.5` matched the group
+# and the trailing `.5` was simply ignored. It was accepted as an id, and
+# storage keys are `<id>.<artifact>`, so it would have been written and then
+# read back truncated at the first dot. An id that does not survive its own
+# storage key is the worst kind of valid.
+_BRIEFING_ID = re.compile(r"^\d{4}-\d{2}-\d{2}(?:-\d{4})?$")
+
 #: How long a `YYYY-MM-DD` day prefix is, wherever an id is grouped by day.
 DAY_PREFIX_LENGTH = 10
 
@@ -89,7 +99,7 @@ def is_briefing_id(value: str) -> bool:
     regex and is not a time, so the hour and minute are range-checked here
     rather than trusted.
     """
-    if not _BRIEFING_KEY.match(f"{value}."):
+    if not _BRIEFING_ID.match(value):
         return False
     try:
         date.fromisoformat(briefing_day(value))

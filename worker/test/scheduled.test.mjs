@@ -1038,6 +1038,54 @@ describe("settings", () => {
     assert.equal(Object.keys(env.BRIEFINGS.written).length, 0);
   });
 
+  test("a healthy TIMED briefing keeps the checkpoints quiet", async () => {
+    // The bug two reviewers found independently. Checkpoints read
+    // `<day>.manifest.json`, which stopped existing when runs started
+    // naming themselves `<day>-HHMM` — so every checkpoint saw `missing`,
+    // dispatched another paid generation, and the alarm raised about a
+    // morning already sitting in the bucket.
+    const calls = recordFetch();
+    await worker.scheduled(
+      { scheduledTime: GENERATE_CHECKPOINT },
+      envFor({
+        "2026-08-30-0340.manifest.json": PLAYABLE,
+        "2026-08-30-0340.m4a": REAL_AUDIO,
+      }),
+    );
+
+    assert.deepEqual(calls, [], "the day is covered; nothing to dispatch");
+  });
+
+  test("the alarm does not fire for a day that has a timed briefing", async () => {
+    const calls = recordFetch();
+    await worker.scheduled(
+      { scheduledTime: ALARM_CHECKPOINT },
+      envFor({
+        "2026-08-30-0340.manifest.json": PLAYABLE,
+        "2026-08-30-0340.m4a": REAL_AUDIO,
+      }),
+    );
+
+    assert.deepEqual(calls, [], "there is a briefing; there is no alarm");
+  });
+
+  test("one failed run does not hide a good one from the same day", async () => {
+    // A day is covered when ANY briefing for it is playable. Asking whether
+    // the NEWEST one is playable would raise an alarm about a morning you
+    // can already listen to, because a later run happened to fail.
+    const calls = recordFetch();
+    await worker.scheduled(
+      { scheduledTime: ALARM_CHECKPOINT },
+      envFor({
+        "2026-08-30-0340.manifest.json": PLAYABLE,
+        "2026-08-30-0340.m4a": REAL_AUDIO,
+        "2026-08-30-1012.manifest.json": { json: { turns: [], duration_ms: 0 } },
+      }),
+    );
+
+    assert.deepEqual(calls, []);
+  });
+
   test("a day with several briefings lists and serves all of them", async () => {
     // The whole six-hourly change lives or dies here. The backend writes
     // `YYYY-MM-DD-HHMM`, and `validBriefingId` accepted only the day form —

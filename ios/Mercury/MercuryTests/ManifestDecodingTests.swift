@@ -305,8 +305,14 @@ final class RecordingAPI: APIClientProtocol {
         return digestResult
     }
 
+    /// The index refusing to answer, which is not the same as it being
+    /// empty — empty means "nothing today", and this means "I could not
+    /// ask". The client must not spend a generation on the difference.
+    var archiveError: Error?
+
     func fetchBriefingIndex() async throws -> [String] {
         calls.append("fetchBriefingIndex")
+        if let archiveError { throw archiveError }
         return archiveResult
     }
 
@@ -391,6 +397,45 @@ final class PlayBriefingRoutingTests: XCTestCase {
                        "learn the zone, ask what exists, then fetch it")
         XCTAssertFalse(api.calls.contains("generateBriefing"),
                        "it must not POST when a briefing already exists")
+    }
+
+    /// An unreachable index must not cost a briefing.
+    ///
+    /// The fallback used to be the bare day id. No run is named that any
+    /// more, so `fetchManifest` 404s and the code asks the server to
+    /// GENERATE — spending a briefing while a perfectly good one sits in R2,
+    /// because the index blipped.
+    @MainActor
+    func testAnUnreachableIndexDoesNotTriggerGeneration() async {
+        let today = ManifestFixtures.todayId
+        let restored = ManifestFixtures.made(at: "2026-08-23T05:00:00Z",
+                                             id: "\(today)-0412")
+        let api = RecordingAPI(manifestResult: .success(restored))
+        api.archiveError = APIError.badStatus(500, "index unavailable")
+        let state = AppState(api: api)
+        // What `restoreLastBriefing` leaves on screen: today's briefing, by
+        // the id it actually has.
+        state.manifest = restored
+
+        await state.playBriefing()
+
+        XCTAssertFalse(api.calls.contains("generateBriefing"),
+                       "a briefing exists; the index being down is not a "
+                       + "reason to buy another one")
+    }
+
+    /// With nothing known about today, there is no id to guess — and the
+    /// not-generated path is the honest answer rather than a paid guess.
+    @MainActor
+    func testAnUnreachableIndexWithNothingOnScreenDoesNotGuess() async {
+        let api = RecordingAPI(manifestResult: .success(ManifestFixtures.minimal))
+        api.archiveError = APIError.badStatus(500, "index unavailable")
+        let state = AppState(api: api)
+
+        await state.playBriefing()
+
+        XCTAssertFalse(api.calls.contains("fetchManifest"),
+                       "there is no id to ask for")
     }
 
     /// A non-404 must propagate WITHOUT generating.

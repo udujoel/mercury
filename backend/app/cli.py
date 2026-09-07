@@ -78,21 +78,50 @@ def _today_briefing_id(tz_name: str) -> str:
     return _user_now(tz_name).strftime("%Y-%m-%d")
 
 
-def _new_briefing_id(tz_name: str) -> str:
-    """A fresh id for a run that is happening now: `YYYY-MM-DD-HHMM`.
+def _free_briefing_id(day: str, preferred_hhmm: str) -> str:
+    """An id for `day` that is unique AND sorts after everything already there.
 
-    Runs used to be named by the day alone, so the second run of a morning
-    overwrote the first — fine when there was one run a night, and the whole
-    problem once there are four. The time is in the USER's timezone like the
-    date, so a briefing generated at 06:00 local is named `-0600` whatever
-    the server thinks the hour is.
+    Two problems, one answer.
 
-    Minute resolution rather than seconds: two runs cannot start in the same
-    minute (the workflow's `concurrency` group serialises them), and a
-    shorter id is a shorter key, a shorter URL and something a person can
-    read in a log.
+    **Same minute.** Two runs starting inside one minute produced the same
+    id, so the second was skipped by generation's idempotency check — or,
+    with `--force`, overwrote the first. The extra briefing simply did not
+    exist.
+
+    **A run that crosses local midnight.** `--briefing-day` pins the DAY, so
+    a checkpoint deciding at 23:58 and a job starting at 00:01 produce
+    `<yesterday>-0001` — which sorts BEFORE `<yesterday>-2212` and every
+    other run of that day. Newest-first selection is lexicographic
+    everywhere in this project, so the freshest briefing would have been
+    filed as the oldest and the phone would have shown a stale one.
+
+    Both are fixed by refusing to go backwards: the later of the clock and
+    one minute past the newest id already stored for that day.
     """
-    return _user_now(tz_name).strftime("%Y-%m-%d-%H%M")
+    from app.synthesis.storage import briefing_day, build_storage
+
+    candidate = f"{day}-{preferred_hhmm}"
+    try:
+        existing = [
+            i
+            for i in build_storage().list_briefing_ids()
+            if briefing_day(i) == day
+        ]
+    except Exception:
+        # Cannot list, so cannot know. The clock is the honest guess, and a
+        # listing failure must not decide whether a briefing happens.
+        log.debug("could not list briefings to pick a free id", exc_info=True)
+        return candidate
+
+    newest = max(existing, default=None)
+    if newest is None or candidate > newest:
+        return candidate
+
+    # One minute past the newest, rolling into the hour, clamped at 23:59 —
+    # a day cannot hold more runs than that, and is not close.
+    hhmm = newest[-4:] if len(newest) > 10 else "0000"
+    minutes = min(int(hhmm[:2]) * 60 + int(hhmm[2:]) + 1, 23 * 60 + 59)
+    return f"{day}-{minutes // 60:02d}{minutes % 60:02d}"
 
 
 def _newest_briefing_id(today_id: str) -> str | None:
@@ -102,17 +131,18 @@ def _newest_briefing_id(today_id: str) -> str | None:
     largest string for that day — the same property the archive and R2's
     own listing rely on.
 
-    Returns None rather than raising when storage cannot be reached: this
-    only picks a default, and a default that cannot be computed should fall
-    back rather than end the command.
+    RAISES when storage cannot be reached, and that is the whole point of
+    the distinction. `check` uses this to find today's briefing, and a
+    swallowed listing error made "I could not ask" indistinguishable from
+    "there is nothing" — so a storage outage or a rotated R2 key reported a
+    perfectly good briefing as MISSING, exited 1 instead of 4, and told the
+    watchdog to spend a generation replacing something that was already
+    there. `_check` has always separated those two answers; this is the one
+    place that had quietly merged them again.
     """
     from app.synthesis.storage import briefing_day, build_storage
 
-    try:
-        ids = build_storage().list_briefing_ids()
-    except Exception:
-        log.debug("could not list briefings to pick a default id", exc_info=True)
-        return None
+    ids = build_storage().list_briefing_ids()
     today = [i for i in ids if briefing_day(i) == briefing_day(today_id)]
     return max(today) if today else None
 
@@ -660,14 +690,28 @@ def main(argv: list[str] | None = None) -> int:
         # `--briefing-day` names the day and lets this run name the minute.
         # The scheduler decided which day is missing; the runner must not
         # re-derive it hours later, on the other side of local midnight.
-        day = getattr(args, "briefing_day", None)
-        fallback = (
-            f"{day}-{_user_now(settings.user_timezone):%H%M}"
-            if day
-            else _new_briefing_id(settings.user_timezone)
-        )
+        now = _user_now(settings.user_timezone)
+        day = getattr(args, "briefing_day", None) or now.strftime("%Y-%m-%d")
+        fallback = _free_briefing_id(day, now.strftime("%H%M"))
+    elif args.briefing_id:
+        # Named explicitly, so there is nothing to look up — and looking
+        # anyway would turn a storage outage into a failure of a command
+        # that did not need storage to choose its subject.
+        fallback = args.briefing_id
     else:
-        fallback = _newest_briefing_id(today_id) or today_id
+        # A listing failure is NOT "no briefing". Reporting it as one exits 1
+        # and sends the watchdog off regenerating something that exists;
+        # exit 4 is the code that already means "storage would not answer".
+        try:
+            fallback = _newest_briefing_id(today_id) or today_id
+        except Exception:
+            log.exception("could not list briefings for %s", today_id)
+            print(
+                "::error::Could not list briefings from storage. This says "
+                "nothing about whether today's briefing exists — check the R2 "
+                "credentials before regenerating anything."
+            )
+            return 4
 
     briefing_id = _resolve_briefing_id(args.briefing_id, fallback)
     if briefing_id is None:
