@@ -1038,6 +1038,66 @@ describe("settings", () => {
     assert.equal(Object.keys(env.BRIEFINGS.written).length, 0);
   });
 
+  test("a day with several briefings lists and serves all of them", async () => {
+    // The whole six-hourly change lives or dies here. The backend writes
+    // `YYYY-MM-DD-HHMM`, and `validBriefingId` accepted only the day form —
+    // so briefings were generated, stored, then filtered out of this list
+    // and refused by the manifest route. Everything would have looked
+    // healthy from the server side and empty from the phone.
+    const env = envFor({
+      "2026-08-30-0412.manifest.json": PLAYABLE,
+      "2026-08-30-0412.m4a": REAL_AUDIO,
+      "2026-08-30-1012.manifest.json": PLAYABLE,
+      "2026-08-30-1012.m4a": REAL_AUDIO,
+      // A briefing from before ids carried a time. Fourteen of these are
+      // live in R2 and must keep working.
+      "2026-08-29.manifest.json": PLAYABLE,
+      "2026-08-29.m4a": REAL_AUDIO,
+    });
+
+    const list = await worker.fetch(
+      new Request("https://x/briefings", {
+        headers: { "X-Mercury-Token": TOKEN },
+      }),
+      env,
+    );
+    assert.equal(list.status, 200);
+    const { briefings } = await list.json();
+
+    assert.deepEqual(
+      briefings,
+      ["2026-08-30-1012", "2026-08-30-0412", "2026-08-29"],
+      "newest first, and both of the day's runs survive",
+    );
+
+    // And each is actually fetchable, which the listing alone does not say.
+    for (const id of briefings) {
+      const res = await worker.fetch(
+        new Request(`https://x/briefing/${id}`, {
+          headers: { "X-Mercury-Token": TOKEN },
+        }),
+        env,
+      );
+      assert.equal(res.status, 200, `${id} listed but could not be fetched`);
+    }
+  });
+
+  test("a time-shaped id that is not a time is still refused", async () => {
+    // `-2599` has the right digits and is not an hour or a minute. An id
+    // nothing can parse is a key retention can never age out, which is the
+    // same trap the date half of this validator was written for.
+    const env = envFor({});
+    for (const id of ["2026-08-30-2599", "2026-08-30-2400", "2026-02-30-0412"]) {
+      const res = await worker.fetch(
+        new Request(`https://x/briefing/${id}`, {
+          headers: { "X-Mercury-Token": TOKEN },
+        }),
+        env,
+      );
+      assert.notEqual(res.status, 200, `${id} should not be a briefing id`);
+    }
+  });
+
   test("PUT to anything else is still refused", async () => {
     const res = await worker.fetch(
       new Request("https://x/briefing/2026-08-30", {

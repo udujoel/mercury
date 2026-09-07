@@ -129,13 +129,34 @@ function safeDecode(value) {
  * retention path and got deleted.
  */
 function validBriefingId(id) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(id)) return false;
+  // `YYYY-MM-DD`, or `YYYY-MM-DD-HHMM` since a day can hold several runs.
+  //
+  // This accepted the day form ONLY, and that is not a cosmetic gap: the
+  // backend writes timed ids, `serveBriefingList` drops anything this
+  // rejects, and every id-taking route validates through here. Left as it
+  // was, the six-hourly change would have shipped completely dead —
+  // briefings generated, stored, and then filtered out of the list and
+  // refused by the manifest route, with the phone showing an empty morning
+  // and nothing anywhere saying why.
+  //
+  // Mirrors `is_briefing_id` in `app/synthesis/storage.py`. Two languages
+  // answering one question is exactly the shape that drifts, which is why
+  // both carry the same range checks rather than one trusting the other.
+  const match = /^(\d{4}-\d{2}-\d{2})(?:-(\d{2})(\d{2}))?$/.exec(id);
+  if (!match) return false;
+
+  const [, day, hour, minute] = match;
   // Date rolls impossible components over silently (Feb 30 becomes Mar 2), so
   // round-trip it and insist the answer is the string we started with.
-  const parsed = new Date(`${id}T00:00:00Z`);
-  return (
-    !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === id
-  );
+  const parsed = new Date(`${day}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return false;
+  if (parsed.toISOString().slice(0, 10) !== day) return false;
+
+  // A time-SHAPED suffix is not a time: `-2599` matches the digits and is
+  // not an hour or a minute, and an id nothing can parse is a key retention
+  // can never age out.
+  if (hour === undefined) return true;
+  return Number(hour) <= 23 && Number(minute) <= 59;
 }
 
 export default {
