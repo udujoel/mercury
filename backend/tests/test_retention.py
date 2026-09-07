@@ -352,3 +352,69 @@ def test_dry_run_refuses_a_window_the_real_command_would_refuse(
     monkeypatch.setattr("app.cli._today_briefing_id", lambda _tz: TODAY)
 
     assert main(["prune", "--dry-run", "--retention-days", window]) == 2
+
+
+# ── several briefings a day ────────────────────────────────────
+
+
+def test_an_id_may_carry_a_time_of_day():
+    """`YYYY-MM-DD-HHMM`, so four runs a day stop overwriting each other.
+
+    The suffix is range-checked rather than trusted, for the same reason the
+    date is: `2026-01-02-2599` matches the shape and is not a time, and an id
+    nothing can parse is a key retention can never age out.
+    """
+    from app.synthesis.storage import briefing_day, is_briefing_id
+
+    assert is_briefing_id("2026-09-07-0412")
+    assert is_briefing_id("2026-09-07-2359")
+    assert not is_briefing_id("2026-09-07-2400"), "24:00 is not an hour"
+    assert not is_briefing_id("2026-09-07-0360"), "60 is not a minute"
+    assert not is_briefing_id("2026-09-07-041"), "not four digits"
+
+    # Every briefing generated before this change is day-only, and there are
+    # fourteen of them live in R2. They stay valid ids — the alternative to
+    # backwards compatibility here is an outage, not a migration.
+    assert is_briefing_id("2026-09-07")
+    assert briefing_day("2026-09-07-0412") == "2026-09-07"
+    assert briefing_day("2026-09-07") == "2026-09-07"
+
+
+def test_a_timed_id_is_recovered_from_its_storage_key():
+    from app.synthesis.storage import briefing_id_from_key
+
+    assert briefing_id_from_key("2026-09-07-0412.manifest.json") == "2026-09-07-0412"
+    assert briefing_id_from_key("2026-09-07.manifest.json") == "2026-09-07"
+    assert briefing_id_from_key("settings.json") is None
+
+
+def test_retention_keeps_or_drops_a_whole_day(tmp_path):
+    """The window is a number of DAYS, so a morning goes as a unit.
+
+    Two things would have broken here. `date.fromisoformat(today_id)` raises
+    on a timed id, which would have made housekeeping the step that failed
+    the run; and comparing whole ids rather than day prefixes would let four
+    briefings from one day straddle a cutoff on the strength of their minute.
+    """
+    from app.synthesis.storage import LocalFilesystemStorage, prune_briefings
+
+    storage = LocalFilesystemStorage(base_dir=tmp_path)
+    ids = [
+        "2026-09-07-0412", "2026-09-07-1012",   # today, two runs
+        "2026-09-06-0412", "2026-09-06-2212",   # yesterday, two runs
+        "2026-09-01",                            # old, and day-only
+        "2026-09-01-1612",                       # old, and timed
+    ]
+    for briefing_id in ids:
+        (tmp_path / f"{briefing_id}.manifest.json").write_text("{}")
+
+    deleted = prune_briefings(
+        storage, retention_days=3, today_id="2026-09-07-1012"
+    )
+
+    assert sorted(deleted) == ["2026-09-01", "2026-09-01-1612"], (
+        "the old day goes whole, in both id shapes"
+    )
+    kept = set(storage.list_briefing_ids())
+    assert "2026-09-07-0412" in kept, "an earlier run of TODAY is not old"
+    assert "2026-09-06-2212" in kept

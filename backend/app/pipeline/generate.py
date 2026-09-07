@@ -656,7 +656,20 @@ def _parse_briefing_date(briefing_id: str) -> datetime:
         tz = ZoneInfo(get_settings().user_timezone)
     except Exception:
         tz = UTC
+    # The DAY, whether or not the id carries a time of day.
+    #
+    # Ids gained a `-HHMM` suffix so several briefings can share a date
+    # instead of overwriting one another, and this parser is the reason the
+    # suffix is sliced off rather than parsed: what the script chain wants is
+    # the day to greet the listener with. It is told the day and never the
+    # clock time on purpose — see the note in `generate_script`, where a host
+    # announcing a time hours before the listener hears it is confidently
+    # wrong in a way they can check instantly.
+    from app.synthesis.storage import briefing_day
+
     try:
-        return datetime.strptime(briefing_id, "%Y-%m-%d").replace(tzinfo=tz)
+        return datetime.strptime(
+            briefing_day(briefing_id), "%Y-%m-%d"
+        ).replace(tzinfo=tz)
     except ValueError:
         return datetime.now(tz)

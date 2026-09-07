@@ -50,11 +50,33 @@ MIN_PLAYABLE_AUDIO_BYTES = 1024
 # the id back out of the key rather than trusting a listing to be only
 # manifests, so an audio file orphaned by a half-failed run is still found and
 # still cleaned up.
-_BRIEFING_KEY = re.compile(r"^(\d{4}-\d{2}-\d{2})\.")
+# `YYYY-MM-DD`, or `YYYY-MM-DD-HHMM` once a day can hold more than one.
+#
+# The time suffix is what lets several briefings share a day instead of
+# overwriting each other, and its shape is chosen so nothing downstream has
+# to be told about it: dashes rather than dots, because the storage key is
+# `<id>.<artifact>` and a dot in an id would make the two unparseable; fixed
+# width, because ids are compared as strings in the archive and in R2's
+# listing, and lexicographic order is then chronological order for free.
+#
+# The DATE prefix is load-bearing and stays exactly where it was. Retention
+# ages briefings by parsing it, the archive groups by it, and every id
+# already in R2 is one — so old ids remain valid ids rather than needing a
+# migration, which for fourteen live briefings is the difference between a
+# format change and an outage.
+_BRIEFING_KEY = re.compile(r"^(\d{4}-\d{2}-\d{2}(?:-\d{4})?)\.")
+
+#: How long a `YYYY-MM-DD` day prefix is, wherever an id is grouped by day.
+DAY_PREFIX_LENGTH = 10
+
+
+def briefing_day(value: str) -> str:
+    """The day an id belongs to, whether or not it carries a time."""
+    return value[:DAY_PREFIX_LENGTH]
 
 
 def is_briefing_id(value: str) -> bool:
-    r"""Is this a real YYYY-MM-DD day?
+    r"""Is this a real day, optionally at a real time of day?
 
     The single place this question is answered. It used to be answered by a
     bare `\d{4}-\d{2}-\d{2}` regex in three places — here, `app.cli` and the
@@ -62,14 +84,23 @@ def is_briefing_id(value: str) -> bool:
     parses ids as dates to decide what is old, so a date-SHAPED id sorted
     before every cutoff and got deleted; `app.cli generate` would have stored
     a briefing under a key retention could then never age out.
+
+    The same trap applies to the new suffix: `2026-01-02-2599` matches the
+    regex and is not a time, so the hour and minute are range-checked here
+    rather than trusted.
     """
     if not _BRIEFING_KEY.match(f"{value}."):
         return False
     try:
-        date.fromisoformat(value)
+        date.fromisoformat(briefing_day(value))
     except ValueError:
         return False
-    return True
+
+    suffix = value[DAY_PREFIX_LENGTH:]
+    if not suffix:
+        return True
+    hour, minute = int(suffix[1:3]), int(suffix[3:5])
+    return 0 <= hour <= 23 and 0 <= minute <= 59
 
 
 def briefing_id_from_key(key: str) -> str | None:
@@ -510,25 +541,35 @@ def prune_briefings(
     in production and the second guard costs one comparison. Ids are
     zero-padded YYYY-MM-DD, so lexicographic ordering is date ordering.
 
+    Compared by DAY, not by id. An id may now carry a `-HHMM` suffix so
+    several briefings can share a date, and `date.fromisoformat` raises on
+    one — which would have turned the housekeeping step into the thing that
+    failed the run. Comparing the day prefix also states the intent
+    directly: the window is a number of DAYS, so a morning is kept or
+    dropped as a whole rather than four briefings from one day straddling a
+    cutoff on the strength of their minute.
+
     Anything that is not a well-formed briefing id is left alone rather than
     guessed at. This function deletes things; it should be the least clever
     code in the module.
     """
     validate_retention_days(retention_days)
 
+    today_day = briefing_day(today_id)
     try:
-        cutoff = date.fromisoformat(today_id) - timedelta(days=retention_days)
+        cutoff = date.fromisoformat(today_day) - timedelta(days=retention_days)
     except ValueError as exc:
         raise ValueError(
-            f"today_id must be YYYY-MM-DD, got {today_id!r}"
+            f"today_id must start with YYYY-MM-DD, got {today_id!r}"
         ) from exc
     cutoff_id = cutoff.isoformat()
 
     deleted: list[str] = []
     for briefing_id in storage.list_briefing_ids():
-        if briefing_id >= today_id:
+        day = briefing_day(briefing_id)
+        if day >= today_day:
             continue
-        if briefing_id >= cutoff_id:
+        if day >= cutoff_id:
             continue
         try:
             storage.delete_briefing(briefing_id)

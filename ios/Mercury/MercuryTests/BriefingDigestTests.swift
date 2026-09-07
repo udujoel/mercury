@@ -359,6 +359,37 @@ final class BriefingDigestTests: XCTestCase {
 /// server." UserInfo={_kCFStreamErrorCodeKey=61, …}` verbatim, in red, at
 /// caption size, on the screen a person opens at 7am. Seen on the simulator,
 /// not imagined.
+/// Labelling ids now that a day can hold several briefings.
+final class TimedBriefingIdTests: XCTestCase {
+
+    func testATimeIsReadStraightFromTheDigits() {
+        XCTAssertEqual(ArchiveView.timeOfDay(in: "2026-09-07-1612"), "16:12")
+        XCTAssertEqual(ArchiveView.timeOfDay(in: "2026-09-07-0000"), "00:00")
+    }
+
+    /// Every briefing generated before ids carried a time is day-only, and
+    /// there are fourteen of them live in R2. They must label as they always
+    /// did rather than growing a spurious ", 00:00".
+    func testADayOnlyIdHasNoTime() {
+        XCTAssertNil(ArchiveView.timeOfDay(in: "2026-09-07"))
+    }
+
+    /// Not a time, and must not be rendered as one.
+    func testMalformedSuffixesAreNotTimes() {
+        for id in ["2026-09-07-16", "2026-09-07-161234", "2026-09-07-16aa",
+                   "2026-09-07x1612"] {
+            XCTAssertNil(ArchiveView.timeOfDay(in: id), id)
+        }
+    }
+
+    /// An id it cannot read at all is shown RAW rather than blank — a label
+    /// that does not parse is a bug worth seeing, and an empty row is one
+    /// you cannot.
+    func testAnUnreadableIdFallsBackToItself() {
+        XCTAssertEqual(ArchiveView.display("not-an-id"), "not-an-id")
+    }
+}
+
 final class HomeErrorPresentationTests: XCTestCase {
 
     func testANetworkFailureReadsAsASentence() {

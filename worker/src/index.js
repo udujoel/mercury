@@ -323,14 +323,36 @@ export default {
     // runner derives its own "today", so a run that starts after the user's
     // local midnight generates the RUNNER's day rather than the day found
     // missing here — the sixth date bug in a project that has had five.
-    const inputs = { briefing_id: id };
-
-    // An EMPTY briefing must be forced. Generation is idempotent, so a stored
-    // manifest — even one with zero turns and zero milliseconds of audio —
-    // makes every later run decline to replace it. That is how a single
-    // total TTS failure turned into a briefing that was broken permanently
-    // rather than for one morning.
-    if (state === "empty") inputs.force = "true";
+    // An EMPTY briefing is REPLACED, and only that case still names an id.
+    //
+    // Generation is idempotent, so a stored manifest — even one with zero
+    // turns and zero milliseconds of audio — makes a run for the same id
+    // decline to replace it. That is how a single total TTS failure turned
+    // into a briefing broken permanently rather than for one morning, and
+    // overwriting the broken one in place is still the right repair: it is
+    // the object the phone already has cached under that id.
+    //
+    // Every other run names nothing and lets the job pick a fresh
+    // `YYYY-MM-DD-HHMM`, so a day accumulates briefings instead of the
+    // second run of a morning erasing the first.
+    // Names the DAY it checked, and lets the job append the time.
+    //
+    // Passing nothing would have reintroduced the bug the assertion below
+    // guards: the Actions runner derives its own "today", so a checkpoint
+    // that fires at 23:58 local and dispatches would have the runner
+    // generate TOMORROW at 00:01 — leaving the day this tick found missing
+    // still missing. The day has to come from here, where the decision was
+    // made; only the time is the job's to choose.
+    //
+    // An EMPTY briefing is the exception and still names a full id, because
+    // that case is a REPAIR: generation is idempotent, so a stored manifest
+    // with zero turns makes later runs decline to replace it, and
+    // overwriting that exact object in place is the fix — it is the one the
+    // phone already has cached under that id.
+    const inputs =
+      state === "empty"
+        ? { briefing_id: id, force: "true" }
+        : { briefing_day: id };
 
     await dispatchWorkflow(env, GENERATE_WORKFLOW, inputs);
   },
@@ -740,9 +762,17 @@ async function handleRegenerate(request, env) {
     );
   }
 
+  // The DAY, not the id — and no `force`.
+  //
+  // This passed today's full id with `force: "true"`, which is what a
+  // rebuild meant when a day held one briefing: overwrite it. The whole
+  // point now is to sit BESIDE what you already have, so you can still play
+  // the one from this morning. The job appends the time.
+  //
+  // `force` goes with it. It exists to override "this id already exists",
+  // and a fresh id never does.
   const dispatch = await dispatchWorkflow(env, GENERATE_WORKFLOW, {
-    briefing_id: id,
-    force: "true",
+    briefing_day: id,
   });
 
   if (!dispatch.ok) {

@@ -288,7 +288,17 @@ final class RecordingAPI: APIClientProtocol {
     /// Nil, which is the ORDINARY answer for a briefing generated before
     /// ADR-013 — the caller shows an empty desk rather than an error.
     var digestResult: Digest?
-    var archiveResult: [String] = []
+    /// Today's briefing, by default, because that is the ordinary morning.
+    ///
+    /// `fetchTodayOrGenerate` asks the INDEX which briefings exist before
+    /// asking for one — it can no longer derive the id, since ids carry a
+    /// `-HHMM` time so four runs a day can accumulate. An empty index here
+    /// would mean "nothing generated today" for every test that never
+    /// mentions the archive, quietly rerouting them all down the
+    /// not-generated path they were not written to exercise.
+    ///
+    /// A test that wants that path sets `archiveResult = []` and says so.
+    var archiveResult: [String] = [AppDelegate.briefingId(for: .now)]
 
     func fetchDigest(briefingId: String) async throws -> Digest? {
         calls.append("fetchDigest")
@@ -372,9 +382,13 @@ final class PlayBriefingRoutingTests: XCTestCase {
 
         await state.playBriefing()
 
-        XCTAssertEqual(api.calls.prefix(2).map { $0 },
-                       ["syncServerClock", "fetchManifest"],
-                       "learn the server zone, then ask for today's briefing")
+        // Three steps now, and the middle one is the point: the id cannot
+        // be derived any more, because ids carry a `-HHMM` time so four
+        // runs a day can accumulate. So it learns the zone, ASKS which
+        // briefings exist, then fetches the newest of today's.
+        XCTAssertEqual(api.calls.prefix(3).map { $0 },
+                       ["syncServerClock", "fetchBriefingIndex", "fetchManifest"],
+                       "learn the zone, ask what exists, then fetch it")
         XCTAssertFalse(api.calls.contains("generateBriefing"),
                        "it must not POST when a briefing already exists")
     }
@@ -394,8 +408,10 @@ final class PlayBriefingRoutingTests: XCTestCase {
 
         await state.playBriefing()
 
-        XCTAssertEqual(api.calls, ["syncServerClock", "fetchManifest"],
-                       "a 500 must not be treated as 'not generated yet'")
+        XCTAssertEqual(
+            api.calls,
+            ["syncServerClock", "fetchBriefingIndex", "fetchManifest"],
+            "a 500 must not be treated as 'not generated yet'")
         if case .failed(let message) = state.loadState {
             XCTAssertTrue(message.contains("500"), "the real error must surface")
         } else {

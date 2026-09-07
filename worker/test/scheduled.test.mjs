@@ -493,9 +493,14 @@ describe("settings", () => {
       assert.equal(res.status, 200);
       assert.equal(calls.length, 1);
       assert.match(calls[0].url, /\/actions\/workflows\/.+\/dispatches$/);
-      // force, or the run is a no-op: today's briefing already exists,
-      // which is the entire reason someone is pressing this.
-      assert.equal(calls[0].body.inputs.force, "true");
+      // The DAY, and NOT `force`. A rebuild used to overwrite today's
+      // briefing, which is what "regenerate" meant when a day held one; it
+      // now lands beside it, so the one from this morning is still there to
+      // play. `force` only overrides "this id exists", and a fresh id never
+      // does.
+      assert.match(calls[0].body.inputs.briefing_day, /^\d{4}-\d{2}-\d{2}$/);
+      assert.equal(calls[0].body.inputs.force, undefined);
+      assert.equal(calls[0].body.inputs.briefing_id, undefined);
     } finally {
       globalThis.fetch = original;
     }
@@ -1142,7 +1147,7 @@ describe("scheduled()", () => {
     assert.ok(logs.error.some((line) => line.includes("briefing-watchdog.yml")));
   });
 
-  test("every generation dispatch names the briefing it checked", async () => {
+  test("every generation dispatch names the DAY it checked", async () => {
     const calls = recordFetch();
     await worker.scheduled(
       { scheduledTime: GENERATE_CHECKPOINT },
@@ -1153,12 +1158,26 @@ describe("scheduled()", () => {
     // starts after the user's local midnight then generates the runner's day
     // rather than the day this checkpoint found missing — the sixth date bug
     // in a project that has already had five.
+    //
+    // The DAY rather than the full id, since ids gained a `-HHMM` time and
+    // the run picks its own minute. The property this protects is unchanged:
+    // whoever decided a day was missing is the one who names it.
     assert.equal(calls.length, 1);
     assert.equal(workflowOf(calls[0]), "briefing.yml");
-    assert.equal(calls[0].body.inputs.briefing_id, "2026-08-30");
+    assert.equal(calls[0].body.inputs.briefing_day, "2026-08-30");
+    assert.equal(
+      calls[0].body.inputs.briefing_id,
+      undefined,
+      "naming a full id would overwrite whichever run is already called that",
+    );
   });
 
-  test("a forced regeneration also names the briefing", async () => {
+  test("repairing an EMPTY briefing overwrites that exact id", async () => {
+    // The one case that still names a full id and forces. An empty manifest
+    // makes later runs for the same id decline to replace it, and the fix is
+    // to overwrite that object in place — it is the one the phone has cached
+    // under that id. Generating a fresh id beside it would leave the broken
+    // briefing exactly where the client keeps looking.
     const calls = recordFetch();
     await worker.scheduled(
       { scheduledTime: GENERATE_CHECKPOINT },
@@ -1166,6 +1185,7 @@ describe("scheduled()", () => {
     );
     assert.equal(calls[0].body.inputs.force, "true");
     assert.equal(calls[0].body.inputs.briefing_id, "2026-08-30");
+    assert.equal(calls[0].body.inputs.briefing_day, undefined);
   });
 
   test("the alarm is never dispatched in the same tick as generation", async () => {
@@ -1481,8 +1501,8 @@ describe("a broken USER_TIMEZONE", () => {
 
     assert.equal(calls.length, 1);
     assert.equal(workflowOf(calls[0]), "briefing.yml");
-    // 03:40 UTC is still 2026-08-30 in UTC, so the id is usable.
-    assert.equal(calls[0].body.inputs.briefing_id, "2026-08-30");
+    // 03:40 UTC is still 2026-08-30 in UTC, so the day is usable.
+    assert.equal(calls[0].body.inputs.briefing_day, "2026-08-30");
     assert.ok(logs.error.some((line) => line.includes("USER_TIMEZONE")));
   });
 

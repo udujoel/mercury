@@ -736,11 +736,45 @@ final class AppState {
         // fetches once per launch.
         await api.syncServerClock()
         let today = AppDelegate.briefingId(for: .now)
+
+        // ASK which briefings exist, rather than deriving the id.
+        //
+        // The id used to be derivable from the clock alone — `YYYY-MM-DD`,
+        // one per day — and that was worth a comment because the background
+        // task has no channel to be told an id any other way. It stopped
+        // being true when ids gained a `-HHMM` time so that four runs a day
+        // could accumulate instead of overwriting each other: the phone
+        // cannot know which minutes the server generated at.
+        //
+        // Filtered to TODAY rather than simply taking the newest. Yesterday's
+        // briefing existing is not today's briefing existing, and playing it
+        // under a card that says "Today's" is the confident wrongness the
+        // card's own comment warns about — the 404 below is what puts the
+        // waiting room on screen, and it has to still happen.
+        let newest: String?
         do {
-            return try await api.fetchManifest(briefingId: today)
-        } catch let error as APIError {
-            guard case .badStatus(let code, _) = error, code == 404 else { throw error }
-            print("[Mercury] No briefing for \(today) yet; requesting generation.")
+            newest = try await api.fetchBriefingIndex()
+                .filter { $0.hasPrefix(today) }
+                .max()
+        } catch {
+            // The index is a convenience, not the briefing. If it cannot be
+            // read, fall back to asking for the day id directly — which is
+            // what every briefing generated before this change is called,
+            // and is still a valid id.
+            print("[Mercury] Briefing index unavailable (\(error)); trying \(today).")
+            newest = today
+        }
+
+        if let id = newest {
+            do {
+                return try await api.fetchManifest(briefingId: id)
+            } catch let error as APIError {
+                guard case .badStatus(let code, _) = error, code == 404
+                else { throw error }
+                print("[Mercury] No briefing for \(id) yet; requesting generation.")
+            }
+        } else {
+            print("[Mercury] Nothing generated for \(today) yet.")
         }
 
         do {
