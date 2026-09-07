@@ -60,7 +60,10 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     value="${value:1:${#value}-2}"
   fi
 
-  if [[ -z "$value" || "$value" == \<*\> ]]; then
+  # Whitespace-only counts as unset, quoted or not. The trim above catches
+  # `KEY=   `; this catches `KEY="   "`, where the quotes survive the trim and
+  # leave the spaces behind to be uploaded as a credential made of nothing.
+  if [[ -z "${value//[[:space:]]/}" || "$value" == \<*\> ]]; then
     skipped="$skipped $key"
     continue
   fi

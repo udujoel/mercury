@@ -200,9 +200,20 @@ refuses a `MERCURY_API_TOKEN` under 32 characters and a `USER_TIMEZONE` that
 is not an IANA zone, because both of those fail *quietly* in production — a
 short token 503s every route, and an unparseable zone falls back to UTC and
 makes the phone prefetch the wrong day. It uploads nothing that is still at
-its `<placeholder>`: the Worker answers a missing secret with a 503 naming it,
-which is a far better morning than a present-but-wrong credential returning
-401 from GitHub inside a 03:40 cron tick.
+its `<placeholder>`, which is safe for the two secrets that fail loudly and is
+the reason the two guards above exist for the one that does not:
+
+| Left as a placeholder | What the Worker does |
+|---|---|
+| `MERCURY_API_TOKEN` | 503 on every route, naming it |
+| `GITHUB_DISPATCH_TOKEN` | 503 from `/regenerate`, naming it |
+| `USER_TIMEZONE` | **nothing** — falls back to UTC, logs one line, and the phone derives the wrong day's ids |
+| `ELEVENLABS_API_KEY` | `/voices` returns an empty list with 200; the picker falls back to text fields |
+
+Skipping still beats uploading a wrong value in every row: a 503 naming the
+variable is a far better morning than a credential that returns 401 from
+GitHub inside a 03:40 cron tick. But `USER_TIMEZONE` is the row to actually
+fill in, because its failure is the silent one.
 
 `USER_TIMEZONE` is **not optional**, and this guide used to omit it. `/health`
 reports it and the iOS client caches that value (`BriefingClock`) to derive

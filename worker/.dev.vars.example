@@ -8,9 +8,13 @@
 # so one filled-in copy serves local development and production both.
 #
 # Lines left at their <placeholder> are SKIPPED by the push script, on
-# purpose. A missing secret makes the Worker answer 503 naming the variable;
-# a present-but-wrong one makes it answer 401 from GitHub at 03:40 with
-# nobody awake to read it. Absent beats plausible-and-wrong.
+# purpose: a present-but-wrong credential answers 401 from GitHub at 03:40
+# with nobody awake to read it. Absent beats plausible-and-wrong.
+#
+# But "absent" is not equally loud for all four. MERCURY_API_TOKEN and
+# GITHUB_DISPATCH_TOKEN each get a 503 naming the variable; ELEVENLABS_API_KEY
+# is a supported absence; USER_TIMEZONE fails SILENTLY, falling back to UTC so
+# the phone asks for the wrong day. Fill that one in.
 
 # The shared bearer token. Same value as backend/.env and as
 # ios/Mercury/Secrets.xcconfig. At least 32 characters — the Worker refuses
