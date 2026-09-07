@@ -187,13 +187,22 @@ routes, and checks the same `X-Mercury-Token` header the FastAPI backend uses
 The bucket stays private; only the Worker holds the binding.
 
 ```bash
-npx wrangler login          # interactive, once
-cd worker
-npx wrangler secret put MERCURY_API_TOKEN       # same value as backend/.env
-npx wrangler secret put USER_TIMEZONE           # same value as backend/.env
-npx wrangler secret put GITHUB_DISPATCH_TOKEN   # see "The schedule" below
-npx wrangler deploy
+npx wrangler login                        # interactive, once
+cp worker/.dev.vars.example worker/.dev.vars
+$EDITOR worker/.dev.vars                  # replace each <...> with a real value
+scripts/push_worker_secrets.sh            # uploads them; skips untouched ones
+cd worker && npx wrangler deploy
 ```
+
+`worker/.dev.vars` is gitignored and is also the file `wrangler dev` reads, so
+one filled-in copy serves local development and production. The push script
+refuses a `MERCURY_API_TOKEN` under 32 characters and a `USER_TIMEZONE` that
+is not an IANA zone, because both of those fail *quietly* in production — a
+short token 503s every route, and an unparseable zone falls back to UTC and
+makes the phone prefetch the wrong day. It uploads nothing that is still at
+its `<placeholder>`: the Worker answers a missing secret with a 503 naming it,
+which is a far better morning than a present-but-wrong credential returning
+401 from GitHub inside a 03:40 cron tick.
 
 `USER_TIMEZONE` is **not optional**, and this guide used to omit it. `/health`
 reports it and the iOS client caches that value (`BriefingClock`) to derive
@@ -261,7 +270,12 @@ the one new credential this design costs, and it is worth scoping tightly:
 4. Set an expiry you will actually notice, and put the date somewhere. This is
    the second credential in this project that expires silently; the first one
    is the Google OAuth token below.
-5. `cd worker && npx wrangler secret put GITHUB_DISPATCH_TOKEN`
+5. Paste it into `worker/.dev.vars` as `GITHUB_DISPATCH_TOKEN` and run
+   `scripts/push_worker_secrets.sh`. (Or, by hand:
+   `cd worker && npx wrangler secret put GITHUB_DISPATCH_TOKEN`.)
+6. Confirm it landed: `cd worker && npx wrangler secret list` should now show
+   `GITHUB_DISPATCH_TOKEN` alongside `MERCURY_API_TOKEN` and `USER_TIMEZONE`.
+   Secrets take effect immediately; no redeploy is needed for a secret alone.
 
 `GITHUB_REPO` and `GITHUB_REF` are plain `[vars]` in `worker/wrangler.toml` —
 a repo slug and a branch name are not secrets.

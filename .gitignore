@@ -58,3 +58,7 @@ worker/.wrangler/
 
 # Wrangler local state (site Worker)
 site/.wrangler/
+
+# Wrangler secrets, filled in from .dev.vars.example
+worker/.dev.vars
+site/.dev.vars

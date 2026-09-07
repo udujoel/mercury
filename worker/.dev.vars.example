@@ -1,0 +1,36 @@
+# Mercury Worker — every value the Worker needs that is not in wrangler.toml.
+#
+#   cp worker/.dev.vars.example worker/.dev.vars
+#   $EDITOR worker/.dev.vars          # replace each <...> with the real value
+#   scripts/push_worker_secrets.sh    # uploads them to Cloudflare
+#
+# `.dev.vars` is gitignored, and it is also the file `wrangler dev` reads,
+# so one filled-in copy serves local development and production both.
+#
+# Lines left at their <placeholder> are SKIPPED by the push script, on
+# purpose. A missing secret makes the Worker answer 503 naming the variable;
+# a present-but-wrong one makes it answer 401 from GitHub at 03:40 with
+# nobody awake to read it. Absent beats plausible-and-wrong.
+
+# The shared bearer token. Same value as backend/.env and as
+# ios/Mercury/Secrets.xcconfig. At least 32 characters — the Worker refuses
+# to serve with a shorter one rather than pretending to be protected.
+# Generate: python -c "import secrets; print(secrets.token_urlsafe(32))"
+MERCURY_API_TOKEN=<same token the backend and the phone use>
+
+# IANA zone, e.g. Europe/Lisbon. NOT optional. /health reports it and the
+# iOS client caches it to derive briefing ids for its background prefetch,
+# so leaving it unset makes the phone ask for the wrong day all winter.
+USER_TIMEZONE=<IANA zone, e.g. Europe/Lisbon>
+
+# Fine-grained GitHub PAT for udujoel/mercury with Actions: Read and write.
+# This is what lets the Worker say "run the workflow now" — without it the
+# rebuild button 503s AND the 03:40 cron cannot generate anything.
+# Minting it: docs/DEPLOYMENT.md, "The dispatch token". It expires; write
+# the date down, because nothing here will remind you.
+GITHUB_DISPATCH_TOKEN=<fine-grained PAT, starts with github_pat_>
+
+# Optional. Only /voices uses it, to list the voices the picker offers.
+# Absent is a supported state: /voices returns an empty list with 200 and
+# the picker falls back to plain text fields.
+ELEVENLABS_API_KEY=<ElevenLabs API key, or leave as-is to skip the picker>
