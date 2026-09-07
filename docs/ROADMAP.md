@@ -7,15 +7,26 @@ Full detail lives in the PRD. This is the working checklist.
 Prove every risky dependency in isolation. Each spike is throwaway. The goal is
 knowledge, not code.
 
-- [ ] Google Cloud project: enable Gmail API, Calendar API, Cloud TTS
-- [ ] OAuth consent screen in testing mode, your account as sole test user
+- [x] Google Cloud project: enable Gmail API, Calendar API, Cloud TTS —
+      `app/ingestion/gmail.py` and `calendar.py` read a real inbox nightly,
+      and Google TTS is the working fallback provider
+- [x] OAuth consent screen in testing mode, your account as sole test user —
+      published; Google read the live policy at joeludu.com/mercury/privacy
 - [x] Spike 1 — iOS OAuth via ASWebAuthenticationSession, token to Keychain
 - [x] Spike 2 — Gmail fetch, yesterday's messages, plain text extraction
 - [x] Spike 3 — Calendar fetch, today plus 72 hours, all calendars
 - [x] Spike 4 — Gemini 2.5 Flash, fake data in, two-host JSON script out
-- [ ] Spike 5 — TTS synthesis and stitching, `scripts/spike_05_tts.py`
-- [ ] Spike 6 — AVAudioEngine playback with millisecond position at 20 Hz
-- [ ] Spike 7 — BGProcessingTask on a physical device, triggered via LLDB
+- [x] Spike 5 — TTS synthesis and stitching. Never written as a spike; the
+      knowledge went straight into `app/synthesis/stitch.py`, which has
+      shipped every briefing in R2
+- [x] Spike 6 — AVAudioEngine playback with millisecond position at 20 Hz —
+      `Core/Audio/PlaybackCoordinator.swift`, `CADisplayLink`-driven
+- [ ] Spike 7 — BGProcessingTask on a physical device, triggered via LLDB.
+      `Core/Background/BackgroundScheduler.swift` exists and is unit-tested
+      against a seam with no `BGTaskScheduler` involved — which is exactly
+      what this spike was for and exactly what it does not prove. Left
+      unticked deliberately: nobody has watched the task fire on a device,
+      and the whole point of a spike is the thing tests cannot tell you
 
 **Gate: Spike 5 must produce audio you would actually choose to listen to.**
 If it sounds robotic, change the TTS provider before writing product code.
@@ -82,6 +93,15 @@ unticked rather than deleted, because "we changed our minds" is a more useful
 record than a clean list; do not treat them as work outstanding.
 
 Observed while testing the MVP on the simulator, none of it blocking:
+
+Verified 2026-09-07 by grep, not by memory: no `WeatherCard`, `CalendarCard`
+or `CardDeck` remains in `ios/Mercury` — the only mentions left are
+historical notes in `DesignSystem/Colors.swift` and a fixture's script text.
+The loading item is superseded by ADR-001 rather than ADR-012:
+`TodaysBriefingCard` absorbs the state and says "Getting today's briefing…",
+and there is no ~70-second on-device generation to narrate any more, because
+generation happens on the cron. Task 4's waiting room covers the case where
+there is nothing to fetch.
 
 - [ ] Cards are semi-transparent, so the card behind bleeds through the
       greeting text. PRD 3.3 specifies opaque over true black

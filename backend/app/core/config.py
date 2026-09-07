@@ -86,6 +86,13 @@ def apply_to_environment(user_settings) -> None:
 # on `GET /v1/voices` ("premade" is free-tier usable, "professional" and
 # library voices are not). Check it before changing either of these.
 
+# Google's en-US Neural2 set: A, D, I and J are male; C, E, F, G and H are
+# female. Matched to the host NAMES, exactly like the ElevenLabs pair — these
+# were the other half of the same bug, and stayed invisible for months
+# because they are only reached when ElevenLabs fails.
+DEFAULT_GOOGLE_VOICE_A = "en-US-Neural2-F"
+DEFAULT_GOOGLE_VOICE_B = "en-US-Neural2-D"
+
 # Alice: British, female, clear — and premade, so the free tier can speak
 # her. Host A — Mara.
 DEFAULT_ELEVENLABS_VOICE_A = "Xb7hH8MSUJpSbSDYk0k2"
@@ -100,6 +107,19 @@ _BLANK_DEFAULTS = {
     "tts_provider": "elevenlabs",
     "elevenlabs_voice_a": DEFAULT_ELEVENLABS_VOICE_A,
     "elevenlabs_voice_b": DEFAULT_ELEVENLABS_VOICE_B,
+    # The GOOGLE pair too, and they were missing.
+    #
+    # `briefing.yml` does not pass these today, so pydantic's defaults apply
+    # and production is correct — but that is luck, not design. The exact
+    # bug this validator exists for was a secret REFERENCED in the workflow
+    # and never set: `TTS_PROVIDER: ${{ secrets.TTS_PROVIDER }}` interpolates
+    # to "" when unset, and an empty string beats a default. Adding
+    # `TTS_VOICE_HOST_A: ${{ secrets.TTS_VOICE_HOST_A }}` to that env block
+    # is the obvious thing to do when someone wants to override a voice, and
+    # it would hand Google an empty voice name — a briefing read by whatever
+    # voice the API picks, with nothing in the log saying why.
+    "tts_voice_host_a": DEFAULT_GOOGLE_VOICE_A,
+    "tts_voice_host_b": DEFAULT_GOOGLE_VOICE_B,
 }
 
 
@@ -134,8 +154,8 @@ class Settings(BaseSettings):
     # as ElevenLabs was answering: the Google voices are only reached when
     # ElevenLabs fails, so the fallback for a woman's part was a man's
     # voice and nothing exercised it until the 402 above.
-    tts_voice_host_a: str = "en-US-Neural2-F"
-    tts_voice_host_b: str = "en-US-Neural2-D"
+    tts_voice_host_a: str = DEFAULT_GOOGLE_VOICE_A
+    tts_voice_host_b: str = DEFAULT_GOOGLE_VOICE_B
     elevenlabs_api_key: str = ""
     # Two voices that sound like a pair rather than two strangers: a deep,
     # resonant male and a poised British female. Defaults rather than
@@ -145,7 +165,11 @@ class Settings(BaseSettings):
     elevenlabs_voice_b: str = DEFAULT_ELEVENLABS_VOICE_B
 
     @field_validator(
-        "tts_provider", "elevenlabs_voice_a", "elevenlabs_voice_b",
+        "tts_provider",
+        "elevenlabs_voice_a",
+        "elevenlabs_voice_b",
+        "tts_voice_host_a",
+        "tts_voice_host_b",
         mode="before",
     )
     @classmethod
