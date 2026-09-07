@@ -788,7 +788,20 @@ async function reserveRegeneration(env, key, id) {
     let used = 0;
     if (existing) {
       try {
-        used = JSON.parse(await existing.text()).count || 0;
+        const count = JSON.parse(await existing.text()).count;
+        // TYPE-checked, not just truthy. `count || 0` accepted anything
+        // falsy — a missing field, a null — as a fresh allowance, which
+        // contradicts the rule in the `catch` below; and it accepted a
+        // STRING, where `"2" >= 3` is false so the cap passed and
+        // `"2" + 1` stored the day's count as `"21"`.
+        //
+        // `releaseRegeneration` already guarded this exact shape. The two
+        // halves of one counter disagreeing about what a malformed object
+        // means is how a cap stops being a cap.
+        used =
+          typeof count === "number" && Number.isFinite(count) && count >= 0
+            ? count
+            : MAX_REGENERATIONS_PER_DAY;
       } catch {
         // A corrupt counter must not become an unlimited one, so this is
         // deliberately NOT `used = 0`: an unreadable object is treated as

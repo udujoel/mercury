@@ -653,6 +653,51 @@ final class PendingRebuildTests: XCTestCase {
                        "the 429 body carries no briefing_id, so it is not today's")
     }
 
+    /// Pausing is not a request for a different briefing.
+    ///
+    /// The refetch branch tested `!playback.isPlaying`, which is TRUE of a
+    /// PAUSED briefing — so pausing to take a call and pressing play again
+    /// reloaded from the network instead of resuming, on every press for
+    /// twenty minutes. Offline that is not merely slow: the fetch throws,
+    /// the load goes to `.failed`, and audio already downloaded and sitting
+    /// in the coordinator stops being playable at all.
+    @MainActor
+    func testAPausedBriefingResumesRatherThanRefetching() async throws {
+        let today = ManifestFixtures.todayId
+        let api = RecordingAPI(
+            manifestResult: .success(
+                ManifestFixtures.made(at: "2026-08-23T05:00:00Z", id: today)))
+        let state = AppState(api: api)
+
+        _ = try await state.regenerateToday()
+        XCTAssertTrue(state.isRegenerating, "a rebuild is outstanding")
+
+        // Mid-briefing and paused: not playing, and not at the top. This
+        // is the case that used to refetch.
+        XCTAssertFalse(
+            AppState.shouldRefetchForRebuild(
+                isRegenerating: true, isPlaying: false,
+                positionMs: 180_000, hasFinished: false),
+            "a paused briefing must resume, not go back to the network")
+
+        // The cases that SHOULD refetch, so this is not just "never".
+        XCTAssertTrue(AppState.shouldRefetchForRebuild(
+            isRegenerating: true, isPlaying: false,
+            positionMs: 0, hasFinished: false), "at the top, nothing to resume")
+        XCTAssertTrue(AppState.shouldRefetchForRebuild(
+            isRegenerating: true, isPlaying: false,
+            positionMs: 420_000, hasFinished: true), "finished, so replay it")
+
+        // And never mid-listen, which is `prefetchBriefing`'s rule.
+        XCTAssertFalse(AppState.shouldRefetchForRebuild(
+            isRegenerating: true, isPlaying: true,
+            positionMs: 0, hasFinished: false))
+        // Nor with no rebuild outstanding.
+        XCTAssertFalse(AppState.shouldRefetchForRebuild(
+            isRegenerating: false, isPlaying: false,
+            positionMs: 0, hasFinished: false))
+    }
+
     /// Left open overnight, the app kept yesterday's `remaining == 0` and
     /// disabled a button whose allowance had reset hours before.
     @MainActor

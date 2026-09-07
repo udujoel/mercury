@@ -641,6 +641,43 @@ describe("settings", () => {
     }
   });
 
+  test("a counter with a malformed count is treated as spent", async () => {
+    // Parses as JSON and carries no usable number: a partial write, or a
+    // field renamed by a future version. `reserveRegeneration` read this as
+    // `undefined || 0` and handed out three fresh paid generations, while
+    // `releaseRegeneration` refused to touch the same object — two halves
+    // of one counter disagreeing about what malformed means.
+    for (const body of ['{"briefing_id":"x"}', '{"count":null}', '{"count":"2"}']) {
+      const original = globalThis.fetch;
+      let dispatches = 0;
+      globalThis.fetch = async () => {
+        dispatches += 1;
+        return new Response(null, { status: 204 });
+      };
+      try {
+        const env = { ...envFor({}), GITHUB_DISPATCH_TOKEN: "t", GITHUB_REPO: "o/r" };
+        env.BRIEFINGS = {
+          get: async () => ({ etag: '"c"', text: async () => body }),
+          put: async () => ({ key: "k", etag: '"d"' }),
+          list: async () => ({ objects: [] }),
+        };
+
+        const res = await worker.fetch(
+          new Request("https://x/regenerate", {
+            method: "POST",
+            headers: { "x-mercury-token": TOKEN },
+          }),
+          env,
+        );
+
+        assert.equal(res.status, 429, `${body} was treated as an allowance`);
+        assert.equal(dispatches, 0, `${body} dispatched a paid workflow`);
+      } finally {
+        globalThis.fetch = original;
+      }
+    }
+  });
+
   test("a corrupt counter is treated as spent, not as zero", async () => {
     const original = globalThis.fetch;
     let dispatches = 0;
