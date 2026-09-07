@@ -159,7 +159,16 @@ struct ArchiveView: View {
     /// Falls back to the raw id rather than showing nothing: an id that does
     /// not parse is a bug worth seeing, and a blank row is a bug you cannot.
     static func display(_ id: String) -> String {
-        guard let date = idFormatter().date(from: id) else { return id }
+        // The DAY, then the time of day if the id carries one.
+        //
+        // Ids gained a `-HHMM` suffix so a day can hold several briefings,
+        // and the whole string stopped parsing as a date — which the guard
+        // below turns into a raw id on screen rather than a wrong one, but
+        // "2026-09-07-1612" is not a label anyone wants to read.
+        let day = String(id.prefix(10))
+        guard let date = idFormatter().date(from: day) else { return id }
+
+        let at = timeOfDay(in: id)
 
         // "Today" has to mean today ON THE SERVER, in the zone the id was
         // derived in — the same comparison the id itself was made with.
@@ -167,15 +176,35 @@ struct ArchiveView: View {
         // wrongly by a whole day for anyone not in their configured zone.
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = BriefingClock.serverTimeZone
-        if calendar.isDateInToday(date) { return "Today" }
-        if calendar.isDateInYesterday(date) { return "Yesterday" }
+        // With four briefings a day, "Today" alone stops identifying one —
+        // so the time is what tells them apart, and it is the only thing
+        // that does.
+        if calendar.isDateInToday(date) { return at.map { "Today, \($0)" } ?? "Today" }
+        if calendar.isDateInYesterday(date) {
+            return at.map { "Yesterday, \($0)" } ?? "Yesterday"
+        }
 
         // The style's own `timeZone` symbol formats a zone NAME; setting the
         // zone the date is rendered IN is `.timeZone(_:)` on the style
         // itself, via `FormatStyle`'s environment.
         var style = Date.FormatStyle.dateTime.weekday(.wide).day().month(.wide)
         style.timeZone = BriefingClock.serverTimeZone
-        return date.formatted(style)
+        let label = date.formatted(style)
+        return at.map { "\(label), \($0)" } ?? label
+    }
+
+    /// "16:12" out of `2026-09-07-1612`, or nil for a day-only id.
+    ///
+    /// Formatted from the DIGITS rather than by building a `Date` and
+    /// rendering it: the id's time is already in the server's zone, and
+    /// round-tripping it through a `Date` is an invitation to shift it by
+    /// one on the next timezone bug this project has. It has had five.
+    static func timeOfDay(in id: String) -> String? {
+        let suffix = id.dropFirst(10)
+        guard suffix.count == 5, suffix.hasPrefix("-") else { return nil }
+        let digits = suffix.dropFirst()
+        guard digits.allSatisfy(\.isNumber) else { return nil }
+        return "\(digits.prefix(2)):\(digits.suffix(2))"
     }
 
     /// Parsed in the SERVER's zone, which is where these ids come from.

@@ -31,8 +31,37 @@ on:
     # are sized against that, and winter simply gets an extra hour of margin.
     # The briefing is NAMED in the user's timezone by app.cli, which is what
     # actually matters; see the five date bugs this project has already had.
-    - cron: "12 4 * * *"
-    - cron: "41 4 * * *"
+    # EVERY SIX HOURS, not once a night.
+    #
+    # A briefing made at 04:00 describes an inbox that has moved on by
+    # lunchtime, and the news it clustered is half a day old by the evening.
+    # Four runs a day means what you open is never more than six hours
+    # behind — which is the point of the product rather than a nicety.
+    #
+    # This is only affordable because runs no longer OVERWRITE each other:
+    # ids carry a `-HHMM` time, so the day accumulates briefings and you can
+    # still hear the one from this morning. Before that change, four runs a
+    # day would have meant three thrown away.
+    #
+    # Off the hour for the reason above: the top of the hour is the single
+    # worst minute to ask GitHub's scheduler for anything.
+    #
+    # The morning slot is 06:12, NOT 04:12, and that is to stay out of the
+    # Worker's way. ADR-010 moved the punctual morning trigger to Cloudflare
+    # precisely because GitHub's scheduler runs late, and its checkpoints
+    # cover 03:40 to 05:40 UTC. A GitHub run at 04:12 would land in the
+    # middle of that and generate a SECOND briefing — distinct now that ids
+    # carry a time, where before it would have been a no-op. Five runs a day
+    # and five briefings, when the ask was four.
+    #
+    # At 06:12 the Cloudflare window has closed, so this is the first of the
+    # four six-hourly runs rather than a duplicate of a morning that already
+    # happened. The Worker still backstops the morning; these keep the rest
+    # of the day fresh.
+    - cron: "12 6 * * *"
+    - cron: "12 12 * * *"
+    - cron: "12 18 * * *"
+    - cron: "12 0 * * *"
   workflow_dispatch:
     inputs:
       length:
@@ -42,7 +71,10 @@ on:
         type: choice
         options: [express, standard, full]
       briefing_id:
-        description: "Briefing id (YYYY-MM-DD). Blank = today, local."
+        description: "Exact id (YYYY-MM-DD or YYYY-MM-DD-HHMM). Blank = new."
+        required: false
+      briefing_day:
+        description: "Day to generate FOR (YYYY-MM-DD); the time is appended."
         required: false
         type: string
       force:
@@ -187,6 +219,7 @@ jobs:
           # space or a semicolon would be parsed as shell syntax rather than
           # treated as an argument. GitHub's own hardening guidance.
           BRIEFING_ID: ${{ inputs.briefing_id }}
+          BRIEFING_DAY: ${{ inputs.briefing_day }}
           FORCE: ${{ inputs.force }}
           STORAGE_BACKEND: r2
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
@@ -199,8 +232,17 @@ jobs:
           # but it also meant a briefing generated from a BROKEN run could
           # never be replaced — the first deployment shipped one with no
           # inbox and no calendar in it, and re-running simply declined.
+          #
+          # `--briefing-day` is what the SCHEDULER passes, and the difference
+          # from `--briefing-id` matters. The runner derives its own "today",
+          # so a checkpoint firing at 23:58 local whose job starts at 00:01
+          # would generate tomorrow and leave the day it was worried about
+          # empty — the sixth date bug in a project that has had five. The
+          # day comes from whoever made the decision; only the time of the
+          # run is the job's to choose.
           args=()
           if [ -n "$BRIEFING_ID" ]; then args+=(--briefing-id "$BRIEFING_ID"); fi
+          if [ -n "$BRIEFING_DAY" ]; then args+=(--briefing-day "$BRIEFING_DAY"); fi
           if [ "$FORCE" = "true" ]; then args+=(--force); fi
           python -m app.cli generate "${args[@]}"
 

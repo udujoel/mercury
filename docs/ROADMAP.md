@@ -411,6 +411,83 @@ allowed to be. Right now "voice quality" is a legitimate reason to turn it off
 and there is nothing to do about it. After task 1 it stops being an excuse;
 after task 3, so does "it sounds like a read-out rather than a show".
 
+## Next — The digest worth reading (queued)
+
+"The show" made the audio good. This phase is about the half you LOOK at, and
+it starts from a complaint: the desk lists stories, and a list is not a
+picture of your morning. Three goals, in the order they matter.
+
+**Goal 1 — the inbox, triaged rather than listed.** After reading it you
+should know what arrived, what needs you, and what can wait, without opening
+Gmail to check. Today's `inbox` segment reads the top few emails and
+summarises the rest as "plus eleven others", which is a count, not a triage.
+
+**Goal 2 — newsletters as research, not as excerpts.** A newsletter is a
+POINTER to a subject someone thought was worth your time. Mercury currently
+repeats what it said; it should take the topic, look it up elsewhere, and
+come back with what it found. The value is in the second step.
+
+**Goal 3 — a morning you can walk back through.** A one-line calendar at the
+top of Home, and tapping a day takes you to that day's briefing and desk.
+The archive already holds this; it is behind a screen nobody opens.
+
+### The constraints that actually bite
+
+Write these down before the tasks, because each one has already caught
+something in this project:
+
+- **Rule 5 vs. research.** Raw bodies are ephemeral. Newsletter TOPICS must
+  be extracted during the run and the bodies discarded — so the research
+  step works from an extracted topic and its own sources, never from a
+  stored email. Anything that wants a body later is a design error.
+- **Rule 3 vs. "dig into them".** Every claim in a findings block is
+  grounded in a source the user can open. A researched paragraph with no
+  citation is exactly the failure the critique pass exists to catch, and it
+  is worse here than in the audio because it LOOKS authoritative on a page.
+- **Rule 6 vs. Groq.** A research provider goes behind a protocol like every
+  other, in one swappable file. Groq's free tier is a candidate, not an
+  architecture — and a free tier that a CI IP gets blocked from is a lesson
+  this project has already paid for once (see the ElevenLabs 401).
+- **Rule 7.** Research is the most failure-prone thing here: it is network,
+  third-party and slow. A newsletter section that cannot be researched
+  degrades to the summary it has, and the briefing still ships.
+- **Cost and time.** Generation takes 2-4 minutes by design (CLAUDE.md);
+  the run measured on 2026-09-05 took 423 seconds with ElevenLabs and the
+  full four-pass chain, which is the number to budget against. Research is N more
+  LLM calls on a budget that is currently free, so the task list has to say
+  how many and be able to cap them.
+
+### Tasks
+
+- [ ] 16. **Inbox triage that answers a question.** Replace "top emails plus
+      a count" with a structured read: what needs a reply, what is waiting on
+      someone else, what is informational, what is noise. The digest carries
+      the buckets; the audio names the first two and the count of the rest.
+      The bar: after listening you can decide whether to open Gmail before
+      lunch, and be right.
+- [ ] 17. **Newsletter topics, extracted.** A `newsletters` section on the
+      desk that is topic-led rather than sender-led: what subjects arrived
+      this morning, and which senders covered each. Pure extraction, no
+      research yet — this is the step that makes 18 possible and it is worth
+      shipping on its own, because "what did my newsletters talk about" is
+      already a question the current digest cannot answer.
+- [ ] 18. **Research those topics against other sources.** For the top N
+      topics from 17, search beyond the newsletter and return findings with
+      citations. Behind a `ResearchProvider` protocol (rule 6). Capped by N
+      and by a wall-clock budget, degrading to 17's extraction when it fails
+      or runs long (rule 7). Every finding carries the source it came from
+      (rule 3).
+- [ ] 19. **The calendar strip.** One line at the top of Home, a week at a
+      time, today emphasised. Tapping a day loads that day's briefing and
+      desk — the archive's job, moved to where people will actually use it.
+      Days with no briefing are visibly empty rather than tappable-and-dead.
+
+**Gate:** the ten second test has an equivalent here, and it is the same
+shape. Open the desk cold and look at it for ten seconds. If you would still
+open Gmail to find out what actually arrived, write down why in one sentence
+before doing anything else — and categorise it as triage, research, or
+navigation.
+
 ## Phase 4 — Depth (weeks 16 to 19)
 
 - [ ] Week 16 — DeepCast with web-grounded research and chapter navigation

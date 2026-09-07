@@ -61,8 +61,8 @@ MAX_DEGRADED_ATTEMPTS = 3
 log = logging.getLogger("mercury.cli")
 
 
-def _today_briefing_id(tz_name: str) -> str:
-    """Today in the USER's timezone. Never UTC — this project has had five
+def _user_now(tz_name: str) -> datetime:
+    """Now in the USER's timezone. Never UTC — this project has had five
     separate date bugs, and the scheduler, the API and this entrypoint must
     all name the same briefing the same way."""
     try:
@@ -70,10 +70,125 @@ def _today_briefing_id(tz_name: str) -> str:
     except Exception:
         log.error("invalid USER_TIMEZONE %r; falling back to UTC", tz_name)
         tz = ZoneInfo("UTC")
-    return datetime.now(tz).strftime("%Y-%m-%d")
+    return datetime.now(tz)
 
 
-def _resolve_briefing_id(explicit: str | None, today_id: str) -> str | None:
+def _today_briefing_id(tz_name: str) -> str:
+    """Today's DAY, for retention and for naming the day a run belongs to."""
+    return _user_now(tz_name).strftime("%Y-%m-%d")
+
+
+def _free_briefing_id(day: str, preferred_hhmm: str) -> str:
+    """An id for `day` that is unique AND sorts after everything already there.
+
+    Two problems, one answer.
+
+    **Same minute.** Two runs starting inside one minute produced the same
+    id, so the second was skipped by generation's idempotency check — or,
+    with `--force`, overwrote the first. The extra briefing simply did not
+    exist.
+
+    **A run that crosses local midnight.** `--briefing-day` pins the DAY, so
+    a checkpoint deciding at 23:58 and a job starting at 00:01 produce
+    `<yesterday>-0001` — which sorts BEFORE `<yesterday>-2212` and every
+    other run of that day. Newest-first selection is lexicographic
+    everywhere in this project, so the freshest briefing would have been
+    filed as the oldest and the phone would have shown a stale one.
+
+    Both are fixed by refusing to go backwards: the later of the clock and
+    one minute past the newest id already stored for that day.
+    """
+    from app.synthesis.storage import briefing_day, build_storage
+
+    candidate = f"{day}-{preferred_hhmm}"
+    try:
+        existing = [
+            i
+            for i in build_storage().list_briefing_ids()
+            if briefing_day(i) == day
+        ]
+    except Exception:
+        # Cannot list, so cannot know. The clock is the honest guess, and a
+        # listing failure must not decide whether a briefing happens.
+        log.debug("could not list briefings to pick a free id", exc_info=True)
+        return candidate
+
+    newest = max(existing, default=None)
+    if newest is None or candidate > newest:
+        return candidate
+
+    # The first FREE minute at or after one past the newest.
+    #
+    # The first cut clamped at 23:59, which collides at exactly the point
+    # the clamp was meant to protect: with a briefing already at 23:59 and
+    # an earlier clock, the bump returned 23:59 again — the same id, which
+    # is the collision this function exists to prevent, arrived at by the
+    # code preventing it.
+    taken = {i[-4:] for i in existing if len(i) > 10}
+    hhmm = newest[-4:] if len(newest) > 10 else "0000"
+    after_newest = int(hhmm[:2]) * 60 + int(hhmm[2:]) + 1
+
+    def first_free(start: int) -> str | None:
+        for minutes in range(start, 24 * 60):
+            stamp = f"{minutes // 60:02d}{minutes % 60:02d}"
+            if stamp not in taken:
+                return f"{day}-{stamp}"
+        return None
+
+    # Preferred: sorts after everything, which is what keeps newest-first
+    # meaningful.
+    ordered = first_free(after_newest)
+    if ordered is not None:
+        return ordered
+
+    # Nothing left after the newest — a day already holding a briefing at
+    # 23:59. Ordering is now impossible, and the choice is between a
+    # briefing that exists but does not sort last and no briefing at all.
+    #
+    # Rule 7 decides it: a NAMING concern must not cost the morning. The
+    # run gets a free minute wherever one is, so nothing is overwritten and
+    # nothing fails; it simply is not the newest of its day, which is a
+    # cosmetic wrong in a situation that needs 1439 briefings to reach.
+    anywhere = first_free(0)
+    if anywhere is not None:
+        log.warning(
+            "%s already holds a briefing at %s, so this run cannot sort "
+            "last; naming it %s instead", day, max(taken), anywhere,
+        )
+        return anywhere
+
+    # 1440 briefings in one day. There is no name left that does not destroy
+    # one, and silently overwriting is the one option worse than failing.
+    raise ValueError(
+        f"no free minute left on {day}: it already holds {len(existing)} "
+        "briefings, and every remaining name would overwrite one"
+    )
+
+
+def _newest_briefing_id(today_id: str) -> str | None:
+    """The most recent briefing stored for `today_id`'s day, if any.
+
+    Ids are fixed-width and date-prefixed, so the newest is simply the
+    largest string for that day — the same property the archive and R2's
+    own listing rely on.
+
+    RAISES when storage cannot be reached, and that is the whole point of
+    the distinction. `check` uses this to find today's briefing, and a
+    swallowed listing error made "I could not ask" indistinguishable from
+    "there is nothing" — so a storage outage or a rotated R2 key reported a
+    perfectly good briefing as MISSING, exited 1 instead of 4, and told the
+    watchdog to spend a generation replacing something that was already
+    there. `_check` has always separated those two answers; this is the one
+    place that had quietly merged them again.
+    """
+    from app.synthesis.storage import briefing_day, build_storage
+
+    ids = build_storage().list_briefing_ids()
+    today = [i for i in ids if briefing_day(i) == briefing_day(today_id)]
+    return max(today) if today else None
+
+
+def _resolve_briefing_id(explicit: str | None, fallback: str) -> str | None:
     r"""The id both subcommands operate on, or None if it is malformed.
 
     A malformed id silently becomes a storage key nothing ever reads — and
@@ -83,14 +198,20 @@ def _resolve_briefing_id(explicit: str | None, today_id: str) -> str | None:
     `is_briefing_id` rather than a local regex, because this used to be its
     own `\d{4}-\d{2}-\d{2}` copy and accepted `2026-01-99` — a key retention
     cannot parse as a date and could therefore never age out.
+
+    `fallback` is what an absent `--briefing-id` means, and it differs by
+    subcommand now that a day can hold several briefings: `generate` wants a
+    NEW id, and `check` wants the newest EXISTING one. Passing today's day to
+    both — which is what this did — would have made `generate` overwrite the
+    morning's first run and `check` report a healthy day as missing.
     """
     from app.synthesis.storage import is_briefing_id
 
-    briefing_id = explicit or today_id
+    briefing_id = explicit or fallback
     if not is_briefing_id(briefing_id):
         log.error(
-            "briefing id %r is not a real YYYY-MM-DD date; refusing to act on "
-            "an id nothing will look for", briefing_id,
+            "briefing id %r is not a real date, optionally with a -HHMM time; "
+            "refusing to act on an id nothing will look for", briefing_id,
         )
         return None
     return briefing_id
@@ -529,7 +650,20 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     gen = sub.add_parser("generate", help="generate today's briefing")
-    gen.add_argument("--briefing-id", default=None, help="defaults to today, local")
+    gen.add_argument(
+        "--briefing-id",
+        default=None,
+        help="exact id to write; defaults to a new one for today",
+    )
+    gen.add_argument(
+        "--briefing-day",
+        default=None,
+        help=(
+            "day to generate for (YYYY-MM-DD); the run's time is appended. "
+            "What the scheduler passes, so the runner cannot pick a "
+            "different day than the checkpoint that decided to run."
+        ),
+    )
     gen.add_argument(
         "--force",
         action="store_true",
@@ -585,7 +719,42 @@ def main(argv: list[str] | None = None) -> int:
             dry_run=args.dry_run,
         )
 
-    briefing_id = _resolve_briefing_id(args.briefing_id, today_id)
+    # What an absent `--briefing-id` means, and it is not the same question
+    # for both subcommands now that a day can hold several briefings.
+    #
+    # `generate` wants a NEW id: naming a run after the day alone is what
+    # made the second run of a morning overwrite the first, which is the
+    # whole reason ids carry a time. `check` wants the newest one that
+    # EXISTS — checking today's day id would look for a key nothing wrote
+    # and report a perfectly healthy morning as missing.
+    if args.command == "generate":
+        # `--briefing-day` names the day and lets this run name the minute.
+        # The scheduler decided which day is missing; the runner must not
+        # re-derive it hours later, on the other side of local midnight.
+        now = _user_now(settings.user_timezone)
+        day = getattr(args, "briefing_day", None) or now.strftime("%Y-%m-%d")
+        fallback = _free_briefing_id(day, now.strftime("%H%M"))
+    elif args.briefing_id:
+        # Named explicitly, so there is nothing to look up — and looking
+        # anyway would turn a storage outage into a failure of a command
+        # that did not need storage to choose its subject.
+        fallback = args.briefing_id
+    else:
+        # A listing failure is NOT "no briefing". Reporting it as one exits 1
+        # and sends the watchdog off regenerating something that exists;
+        # exit 4 is the code that already means "storage would not answer".
+        try:
+            fallback = _newest_briefing_id(today_id) or today_id
+        except Exception:
+            log.exception("could not list briefings for %s", today_id)
+            print(
+                "::error::Could not list briefings from storage. This says "
+                "nothing about whether today's briefing exists — check the R2 "
+                "credentials before regenerating anything."
+            )
+            return 4
+
+    briefing_id = _resolve_briefing_id(args.briefing_id, fallback)
     if briefing_id is None:
         return 2
 

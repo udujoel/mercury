@@ -129,13 +129,34 @@ function safeDecode(value) {
  * retention path and got deleted.
  */
 function validBriefingId(id) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(id)) return false;
+  // `YYYY-MM-DD`, or `YYYY-MM-DD-HHMM` since a day can hold several runs.
+  //
+  // This accepted the day form ONLY, and that is not a cosmetic gap: the
+  // backend writes timed ids, `serveBriefingList` drops anything this
+  // rejects, and every id-taking route validates through here. Left as it
+  // was, the six-hourly change would have shipped completely dead —
+  // briefings generated, stored, and then filtered out of the list and
+  // refused by the manifest route, with the phone showing an empty morning
+  // and nothing anywhere saying why.
+  //
+  // Mirrors `is_briefing_id` in `app/synthesis/storage.py`. Two languages
+  // answering one question is exactly the shape that drifts, which is why
+  // both carry the same range checks rather than one trusting the other.
+  const match = /^(\d{4}-\d{2}-\d{2})(?:-(\d{2})(\d{2}))?$/.exec(id);
+  if (!match) return false;
+
+  const [, day, hour, minute] = match;
   // Date rolls impossible components over silently (Feb 30 becomes Mar 2), so
   // round-trip it and insist the answer is the string we started with.
-  const parsed = new Date(`${id}T00:00:00Z`);
-  return (
-    !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === id
-  );
+  const parsed = new Date(`${day}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return false;
+  if (parsed.toISOString().slice(0, 10) !== day) return false;
+
+  // A time-SHAPED suffix is not a time: `-2599` matches the digits and is
+  // not an hour or a minute, and an id nothing can parse is a key retention
+  // can never age out.
+  if (hour === undefined) return true;
+  return Number(hour) <= 23 && Number(minute) <= 59;
 }
 
 export default {
@@ -221,9 +242,12 @@ export default {
     // can a human wondering "did it actually run?" — an answer that does not
     // depend on GitHub having noticed anything.
     if (url.pathname === "/status") {
-      const id = briefingIdFor(new Date(), resolvedTimeZone(env));
-      const state = await briefingState(env, id);
-      return json({ briefing_id: id, state, ok: state === "ok" });
+      // The DAY, because that is the question: has today got something to
+      // listen to? Reading `<day>.manifest.json` directly reported every
+      // healthy morning as `missing` the moment ids gained a time.
+      const day = briefingIdFor(new Date(), resolvedTimeZone(env));
+      const { state, id } = await dayState(env, day);
+      return json({ briefing_id: id, day, state, ok: state === "ok" });
     }
 
     if (url.pathname === "/settings") {
@@ -294,8 +318,13 @@ export default {
    */
   async scheduled(controller, env) {
     const scheduledAt = new Date(controller.scheduledTime);
-    const id = briefingIdFor(scheduledAt, resolvedTimeZone(env));
-    const state = await briefingState(env, id);
+    const day = briefingIdFor(scheduledAt, resolvedTimeZone(env));
+    // Any playable briefing for the day answers this. The bare
+    // `<day>.manifest.json` read that used to answer it stopped existing
+    // when runs started naming themselves `<day>-HHMM`, so every checkpoint
+    // saw `missing`, dispatched again, and the alarm fired about a morning
+    // that was already in the bucket.
+    const { state, id } = await dayState(env, day);
 
     if (state === "ok") {
       console.log(`briefing ${id}: already in R2, nothing to do`);
@@ -323,14 +352,36 @@ export default {
     // runner derives its own "today", so a run that starts after the user's
     // local midnight generates the RUNNER's day rather than the day found
     // missing here — the sixth date bug in a project that has had five.
-    const inputs = { briefing_id: id };
-
-    // An EMPTY briefing must be forced. Generation is idempotent, so a stored
-    // manifest — even one with zero turns and zero milliseconds of audio —
-    // makes every later run decline to replace it. That is how a single
-    // total TTS failure turned into a briefing that was broken permanently
-    // rather than for one morning.
-    if (state === "empty") inputs.force = "true";
+    // An EMPTY briefing is REPLACED, and only that case still names an id.
+    //
+    // Generation is idempotent, so a stored manifest — even one with zero
+    // turns and zero milliseconds of audio — makes a run for the same id
+    // decline to replace it. That is how a single total TTS failure turned
+    // into a briefing broken permanently rather than for one morning, and
+    // overwriting the broken one in place is still the right repair: it is
+    // the object the phone already has cached under that id.
+    //
+    // Every other run names nothing and lets the job pick a fresh
+    // `YYYY-MM-DD-HHMM`, so a day accumulates briefings instead of the
+    // second run of a morning erasing the first.
+    // Names the DAY it checked, and lets the job append the time.
+    //
+    // Passing nothing would have reintroduced the bug the assertion below
+    // guards: the Actions runner derives its own "today", so a checkpoint
+    // that fires at 23:58 local and dispatches would have the runner
+    // generate TOMORROW at 00:01 — leaving the day this tick found missing
+    // still missing. The day has to come from here, where the decision was
+    // made; only the time is the job's to choose.
+    //
+    // An EMPTY briefing is the exception and still names a full id, because
+    // that case is a REPAIR: generation is idempotent, so a stored manifest
+    // with zero turns makes later runs decline to replace it, and
+    // overwriting that exact object in place is the fix — it is the one the
+    // phone already has cached under that id.
+    const inputs =
+      state === "empty"
+        ? { briefing_id: id, force: "true" }
+        : { briefing_day: id };
 
     await dispatchWorkflow(env, GENERATE_WORKFLOW, inputs);
   },
@@ -399,6 +450,57 @@ function resolvedTimeZone(env) {
  * to be FORCED past the idempotency check that would otherwise preserve it
  * forever.
  */
+/**
+ * The ids stored for one DAY, newest first.
+ *
+ * A day used to hold exactly one briefing, so every check could read
+ * `<day>.manifest.json` directly. It now holds up to four, named
+ * `<day>-HHMM`, and probing the bare day key finds nothing — which made the
+ * scheduler report a perfectly healthy morning as `missing`, dispatch
+ * another generation on every checkpoint, and let the watchdog raise an
+ * alarm about a briefing sitting in the bucket.
+ *
+ * Legacy day-only ids are included, because fourteen of them are live.
+ */
+async function briefingIdsForDay(env, day) {
+  const ids = new Set();
+  let cursor;
+  do {
+    const page = await env.BRIEFINGS.list({ prefix: day, cursor, limit: 1000 });
+    for (const object of page.objects) {
+      if (!object.key.endsWith(SUFFIX)) continue;
+      const id = object.key.slice(0, -SUFFIX.length);
+      if (validBriefingId(id) && id.startsWith(day)) ids.add(id);
+    }
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+  return [...ids].sort().reverse();
+}
+
+/**
+ * The state of a DAY: `ok` if any briefing stored for it is playable.
+ *
+ * Any, not the newest. A morning is covered the moment one playable
+ * briefing exists for it — that is the question every checkpoint and the
+ * watchdog are actually asking, and answering it with "is the newest one
+ * playable" would raise an alarm about a day that already has something to
+ * listen to because its most recent run failed.
+ */
+async function dayState(env, day) {
+  const ids = await briefingIdsForDay(env, day);
+  if (ids.length === 0) return { state: "missing", id: day };
+
+  let worst = null;
+  for (const id of ids) {
+    const state = await briefingState(env, id);
+    if (state === "ok") return { state: "ok", id };
+    // Prefer reporting an EMPTY one, since that is the repairable case and
+    // names the id to repair.
+    if (state === "empty" || worst === null) worst = { state, id };
+  }
+  return worst;
+}
+
 async function briefingState(env, id) {
   const object = await env.BRIEFINGS.get(`${id}.manifest.json`);
   if (!object) return "missing";
@@ -740,9 +842,17 @@ async function handleRegenerate(request, env) {
     );
   }
 
+  // The DAY, not the id — and no `force`.
+  //
+  // This passed today's full id with `force: "true"`, which is what a
+  // rebuild meant when a day held one briefing: overwrite it. The whole
+  // point now is to sit BESIDE what you already have, so you can still play
+  // the one from this morning. The job appends the time.
+  //
+  // `force` goes with it. It exists to override "this id already exists",
+  // and a fresh id never does.
   const dispatch = await dispatchWorkflow(env, GENERATE_WORKFLOW, {
-    briefing_id: id,
-    force: "true",
+    briefing_day: id,
   });
 
   if (!dispatch.ok) {

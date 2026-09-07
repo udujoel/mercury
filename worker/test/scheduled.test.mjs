@@ -493,9 +493,14 @@ describe("settings", () => {
       assert.equal(res.status, 200);
       assert.equal(calls.length, 1);
       assert.match(calls[0].url, /\/actions\/workflows\/.+\/dispatches$/);
-      // force, or the run is a no-op: today's briefing already exists,
-      // which is the entire reason someone is pressing this.
-      assert.equal(calls[0].body.inputs.force, "true");
+      // The DAY, and NOT `force`. A rebuild used to overwrite today's
+      // briefing, which is what "regenerate" meant when a day held one; it
+      // now lands beside it, so the one from this morning is still there to
+      // play. `force` only overrides "this id exists", and a fresh id never
+      // does.
+      assert.match(calls[0].body.inputs.briefing_day, /^\d{4}-\d{2}-\d{2}$/);
+      assert.equal(calls[0].body.inputs.force, undefined);
+      assert.equal(calls[0].body.inputs.briefing_id, undefined);
     } finally {
       globalThis.fetch = original;
     }
@@ -1033,6 +1038,114 @@ describe("settings", () => {
     assert.equal(Object.keys(env.BRIEFINGS.written).length, 0);
   });
 
+  test("a healthy TIMED briefing keeps the checkpoints quiet", async () => {
+    // The bug two reviewers found independently. Checkpoints read
+    // `<day>.manifest.json`, which stopped existing when runs started
+    // naming themselves `<day>-HHMM` — so every checkpoint saw `missing`,
+    // dispatched another paid generation, and the alarm raised about a
+    // morning already sitting in the bucket.
+    const calls = recordFetch();
+    await worker.scheduled(
+      { scheduledTime: GENERATE_CHECKPOINT },
+      envFor({
+        "2026-08-30-0340.manifest.json": PLAYABLE,
+        "2026-08-30-0340.m4a": REAL_AUDIO,
+      }),
+    );
+
+    assert.deepEqual(calls, [], "the day is covered; nothing to dispatch");
+  });
+
+  test("the alarm does not fire for a day that has a timed briefing", async () => {
+    const calls = recordFetch();
+    await worker.scheduled(
+      { scheduledTime: ALARM_CHECKPOINT },
+      envFor({
+        "2026-08-30-0340.manifest.json": PLAYABLE,
+        "2026-08-30-0340.m4a": REAL_AUDIO,
+      }),
+    );
+
+    assert.deepEqual(calls, [], "there is a briefing; there is no alarm");
+  });
+
+  test("one failed run does not hide a good one from the same day", async () => {
+    // A day is covered when ANY briefing for it is playable. Asking whether
+    // the NEWEST one is playable would raise an alarm about a morning you
+    // can already listen to, because a later run happened to fail.
+    const calls = recordFetch();
+    await worker.scheduled(
+      { scheduledTime: ALARM_CHECKPOINT },
+      envFor({
+        "2026-08-30-0340.manifest.json": PLAYABLE,
+        "2026-08-30-0340.m4a": REAL_AUDIO,
+        "2026-08-30-1012.manifest.json": { json: { turns: [], duration_ms: 0 } },
+      }),
+    );
+
+    assert.deepEqual(calls, []);
+  });
+
+  test("a day with several briefings lists and serves all of them", async () => {
+    // The whole six-hourly change lives or dies here. The backend writes
+    // `YYYY-MM-DD-HHMM`, and `validBriefingId` accepted only the day form —
+    // so briefings were generated, stored, then filtered out of this list
+    // and refused by the manifest route. Everything would have looked
+    // healthy from the server side and empty from the phone.
+    const env = envFor({
+      "2026-08-30-0412.manifest.json": PLAYABLE,
+      "2026-08-30-0412.m4a": REAL_AUDIO,
+      "2026-08-30-1012.manifest.json": PLAYABLE,
+      "2026-08-30-1012.m4a": REAL_AUDIO,
+      // A briefing from before ids carried a time. Fourteen of these are
+      // live in R2 and must keep working.
+      "2026-08-29.manifest.json": PLAYABLE,
+      "2026-08-29.m4a": REAL_AUDIO,
+    });
+
+    const list = await worker.fetch(
+      new Request("https://x/briefings", {
+        headers: { "X-Mercury-Token": TOKEN },
+      }),
+      env,
+    );
+    assert.equal(list.status, 200);
+    const { briefings } = await list.json();
+
+    assert.deepEqual(
+      briefings,
+      ["2026-08-30-1012", "2026-08-30-0412", "2026-08-29"],
+      "newest first, and both of the day's runs survive",
+    );
+
+    // And each is actually fetchable, which the listing alone does not say.
+    for (const id of briefings) {
+      const res = await worker.fetch(
+        new Request(`https://x/briefing/${id}`, {
+          headers: { "X-Mercury-Token": TOKEN },
+        }),
+        env,
+      );
+      assert.equal(res.status, 200, `${id} listed but could not be fetched`);
+    }
+  });
+
+  test("a time-shaped id that is not a time is still refused", async () => {
+    // `-2599` has the right digits and is not an hour or a minute. An id
+    // nothing can parse is a key retention can never age out, which is the
+    // same trap the date half of this validator was written for.
+    const env = envFor({});
+    for (const id of ["2026-08-30-2599", "2026-08-30-2400", "2026-02-30-0412"]) {
+      const res = await worker.fetch(
+        new Request(`https://x/briefing/${id}`, {
+          headers: { "X-Mercury-Token": TOKEN },
+        }),
+        env,
+      );
+      assert.notEqual(res.status, 200, `${id} should not be a briefing id`);
+    }
+  });
+
   test("PUT to anything else is still refused", async () => {
     const res = await worker.fetch(
       new Request("https://x/briefing/2026-08-30", {
@@ -1142,7 +1255,7 @@ describe("scheduled()", () => {
     assert.ok(logs.error.some((line) => line.includes("briefing-watchdog.yml")));
   });
 
-  test("every generation dispatch names the briefing it checked", async () => {
+  test("every generation dispatch names the DAY it checked", async () => {
     const calls = recordFetch();
     await worker.scheduled(
       { scheduledTime: GENERATE_CHECKPOINT },
@@ -1153,12 +1266,26 @@ describe("scheduled()", () => {
     // starts after the user's local midnight then generates the runner's day
     // rather than the day this checkpoint found missing — the sixth date bug
     // in a project that has already had five.
+    //
+    // The DAY rather than the full id, since ids gained a `-HHMM` time and
+    // the run picks its own minute. The property this protects is unchanged:
+    // whoever decided a day was missing is the one who names it.
     assert.equal(calls.length, 1);
     assert.equal(workflowOf(calls[0]), "briefing.yml");
-    assert.equal(calls[0].body.inputs.briefing_id, "2026-08-30");
+    assert.equal(calls[0].body.inputs.briefing_day, "2026-08-30");
+    assert.equal(
+      calls[0].body.inputs.briefing_id,
+      undefined,
+      "naming a full id would overwrite whichever run is already called that",
+    );
   });
 
-  test("a forced regeneration also names the briefing", async () => {
+  test("repairing an EMPTY briefing overwrites that exact id", async () => {
+    // The one case that still names a full id and forces. An empty manifest
+    // makes later runs for the same id decline to replace it, and the fix is
+    // to overwrite that object in place — it is the one the phone has cached
+    // under that id. Generating a fresh id beside it would leave the broken
+    // briefing exactly where the client keeps looking.
     const calls = recordFetch();
     await worker.scheduled(
       { scheduledTime: GENERATE_CHECKPOINT },
@@ -1166,6 +1293,7 @@ describe("scheduled()", () => {
     );
     assert.equal(calls[0].body.inputs.force, "true");
     assert.equal(calls[0].body.inputs.briefing_id, "2026-08-30");
+    assert.equal(calls[0].body.inputs.briefing_day, undefined);
   });
 
   test("the alarm is never dispatched in the same tick as generation", async () => {
@@ -1481,8 +1609,8 @@ describe("a broken USER_TIMEZONE", () => {
 
     assert.equal(calls.length, 1);
     assert.equal(workflowOf(calls[0]), "briefing.yml");
-    // 03:40 UTC is still 2026-08-30 in UTC, so the id is usable.
-    assert.equal(calls[0].body.inputs.briefing_id, "2026-08-30");
+    // 03:40 UTC is still 2026-08-30 in UTC, so the day is usable.
+    assert.equal(calls[0].body.inputs.briefing_day, "2026-08-30");
     assert.ok(logs.error.some((line) => line.includes("USER_TIMEZONE")));
   });
 

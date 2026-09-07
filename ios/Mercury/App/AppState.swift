@@ -736,11 +736,56 @@ final class AppState {
         // fetches once per launch.
         await api.syncServerClock()
         let today = AppDelegate.briefingId(for: .now)
+
+        // ASK which briefings exist, rather than deriving the id.
+        //
+        // The id used to be derivable from the clock alone — `YYYY-MM-DD`,
+        // one per day — and that was worth a comment because the background
+        // task has no channel to be told an id any other way. It stopped
+        // being true when ids gained a `-HHMM` time so that four runs a day
+        // could accumulate instead of overwriting each other: the phone
+        // cannot know which minutes the server generated at.
+        //
+        // Filtered to TODAY rather than simply taking the newest. Yesterday's
+        // briefing existing is not today's briefing existing, and playing it
+        // under a card that says "Today's" is the confident wrongness the
+        // card's own comment warns about — the 404 below is what puts the
+        // waiting room on screen, and it has to still happen.
+        let newest: String?
         do {
-            return try await api.fetchManifest(briefingId: today)
-        } catch let error as APIError {
-            guard case .badStatus(let code, _) = error, code == 404 else { throw error }
-            print("[Mercury] No briefing for \(today) yet; requesting generation.")
+            newest = try await api.fetchBriefingIndex()
+                .filter { $0.hasPrefix(today) }
+                .max()
+        } catch {
+            // The id ON SCREEN, if it is today's — not the bare day.
+            //
+            // Falling back to `today` looked harmless and was not: no run
+            // is named that any more, so `fetchManifest` 404s and the code
+            // below asks the server to GENERATE — spending a briefing while
+            // a perfectly good one sits in R2, because the index happened
+            // to be unreachable for a moment.
+            //
+            // A restored manifest is the one thing the phone knows about
+            // today without asking, so it is what the fallback uses. With
+            // nothing restored there is genuinely no id to try, and the
+            // not-generated path is then the honest answer rather than a
+            // guess that costs money.
+            let known = manifest?.briefingId
+            newest = known.flatMap { $0.hasPrefix(today) ? $0 : nil }
+            print("[Mercury] Briefing index unavailable (\(error)); "
+                  + "falling back to \(newest ?? "nothing known for today").")
+        }
+
+        if let id = newest {
+            do {
+                return try await api.fetchManifest(briefingId: id)
+            } catch let error as APIError {
+                guard case .badStatus(let code, _) = error, code == 404
+                else { throw error }
+                print("[Mercury] No briefing for \(id) yet; requesting generation.")
+            }
+        } else {
+            print("[Mercury] Nothing generated for \(today) yet.")
         }
 
         do {
