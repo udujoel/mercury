@@ -751,9 +751,31 @@ async function handleRegenerate(request, env) {
     // achieves it by writing early and undoing, which is the version that
     // is also safe under concurrency.
     await releaseRegeneration(env, key, id);
-    // The reason is in the Worker log — a missing dispatch token, a repo the
-    // token cannot see, a GitHub outage. None of them are things the phone
-    // can act on, so it gets one honest sentence rather than a guess.
+
+    // NAME the one cause the Worker can be certain of.
+    //
+    // This said "Could not start a regeneration." for every failure and put
+    // the reason in a log the phone cannot read — so the button looked
+    // broken and the actual problem (a secret that was never set) was
+    // invisible from the only place anyone was looking. Whether
+    // GITHUB_DISPATCH_TOKEN exists is configuration, not a secret, and it
+    // is the difference between "try again later" and "this will never work
+    // until someone runs one command".
+    if (!env.GITHUB_DISPATCH_TOKEN || !env.GITHUB_REPO) {
+      return json(
+        {
+          detail:
+            "This server cannot start generations: its GitHub dispatch " +
+            "token is not configured. Rebuilds — and the punctual morning " +
+            "trigger, which uses the same token — will not work until it " +
+            "is set.",
+        },
+        503,
+      );
+    }
+    // Anything else is transient from the phone's point of view: a repo the
+    // token cannot see, a revoked token, a GitHub outage. The Worker log
+    // has the status.
     return json({ detail: "Could not start a regeneration." }, 502);
   }
 

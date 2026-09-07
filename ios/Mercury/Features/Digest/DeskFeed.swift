@@ -48,7 +48,19 @@ struct DeskFeed: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        // LAZY, and this is a real cost rather than a preference.
+        //
+        // A plain `VStack` builds every row immediately, and each row holds
+        // an `AsyncImage` — so opening Home fired thirteen image downloads
+        // at once before a single one was on screen. That went unnoticed
+        // for as long as the deployed Worker had no `/digest` route and the
+        // desk was always empty; the first morning it actually rendered,
+        // Home got visibly slower to open.
+        //
+        // `TranscriptView` deliberately does NOT use this — there a lazy
+        // stack measures rows during an animated `scrollTo` and the text
+        // shakes. Nothing scrolls this programmatically.
+        LazyVStack(alignment: .leading, spacing: 0) {
             // Two rows, then the lead, then the remainder. Putting the lead
             // at the very top would push the play button off the screen,
             // and the play button is still what this app is for.
@@ -206,18 +218,15 @@ struct LeadCard: View {
         }
     }
 
-    /// The day's accent rather than grey. A newsletter-only story HAS no
-    /// picture — rule 5 discards the body its images live in — so on a quiet
-    /// morning this is the ordinary case, and grey would read as an image
-    /// that failed to load.
+    /// Mercury's own mark, not a blank panel.
+    ///
+    /// A newsletter-only story HAS no picture — rule 5 discards the body its
+    /// images live in — so on a quiet morning this is the ORDINARY case, not
+    /// an error. A flat wash read as an image that had failed to load; the
+    /// sunrise says "this story has no photograph" in the app's own voice,
+    /// and it is the same mark as the icon and the lock screen.
     private var accentGround: some View {
-        LinearGradient(
-            colors: [
-                MercuryColor.accent.color.opacity(0.55),
-                MercuryColor.accent.color.opacity(0.85),
-            ],
-            startPoint: .topLeading, endPoint: .bottomTrailing
-        )
+        MercuryMark()
     }
 }
 
@@ -277,11 +286,11 @@ struct Thumbnail: View {
                     case .success(let image):
                         image.resizable().aspectRatio(contentMode: .fill)
                     default:
-                        MercuryColor.accent.color.opacity(0.18)
+                        MercuryMark()
                     }
                 }
             } else {
-                MercuryColor.accent.color.opacity(0.18)
+                MercuryMark()
             }
         }
         .frame(width: side, height: side)
@@ -313,4 +322,58 @@ struct Thumbnail: View {
         .mercuryGutter()
     }
     .background(MercuryColor.surface.color)
+}
+
+
+/// The sunrise, as a view.
+///
+/// Stands in wherever a story has no picture of its own, which is the
+/// ordinary case rather than a failure: rule 5 discards the email bodies
+/// that images live in, so a newsletter-only story has nothing to show. A
+/// tinted rectangle read as a photograph that had failed to load — this
+/// reads as "no photograph", in the same mark as the app icon and the lock
+/// screen card.
+///
+/// Drawn from `MercuryArtwork`'s geometry rather than by loading its bitmap:
+/// a thumbnail is 72pt and a lead card is the full width, and rasterising
+/// the larger one to fill the smaller wastes memory on every row.
+struct MercuryMark: View {
+    var body: some View {
+        GeometryReader { geo in
+            let side = max(geo.size.width, geo.size.height)
+            ZStack {
+                Color(MercuryArtwork.paper)
+
+                // The half-disc, resting on the rule.
+                Circle()
+                    .fill(Color(MercuryArtwork.accent))
+                    .frame(width: side * MercuryArtwork.sunRadius * 2,
+                           height: side * MercuryArtwork.sunRadius * 2)
+                    .offset(y: side * MercuryArtwork.horizonY
+                            - side * MercuryArtwork.sunRadius
+                            - geo.size.height / 2
+                            + side * MercuryArtwork.sunRadius)
+                    .mask(
+                        Rectangle()
+                            .frame(height: side * MercuryArtwork.horizonY)
+                            .frame(maxHeight: .infinity, alignment: .top)
+                    )
+
+                // The masthead device: a heavy rule with a hairline under it.
+                VStack(spacing: side * MercuryArtwork.hairlineGap) {
+                    Rectangle()
+                        .frame(height: side * MercuryArtwork.ruleWeight)
+                    Rectangle()
+                        .frame(height: max(side * MercuryArtwork.hairlineWeight, 0.5))
+                }
+                .foregroundStyle(Color(MercuryArtwork.accent))
+                .padding(.horizontal, side * MercuryArtwork.ruleInset)
+                .frame(maxHeight: .infinity, alignment: .top)
+                .offset(y: side * MercuryArtwork.horizonY)
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+            .clipped()
+        }
+        .accessibilityHidden(true)
+    }
 }

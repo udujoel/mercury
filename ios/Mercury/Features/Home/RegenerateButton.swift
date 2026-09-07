@@ -11,27 +11,47 @@ import SwiftUI
 /// The confirmation names the cost and the remaining allowance rather than
 /// asking "are you sure?", which tells nobody anything.
 struct RegenerateButton: View {
+    /// Where it is being drawn, which changes only its LABEL.
+    ///
+    /// The confirmation, the cost sentence and the disabled rule are
+    /// identical in both — a control that spends money must not become
+    /// quieter about it just because it moved into a toolbar.
+    enum Style {
+        /// A full-width row with words on it, for the body of a page.
+        case row
+        /// A 44pt glyph beside the other toolbar items.
+        case toolbar
+    }
+
     let isRunning: Bool
     /// How many rebuilds are left today, once the server has said. Nil
     /// before the first attempt — the count is not worth a request of its
     /// own, so the button simply does not claim a number it does not have.
     let remaining: Int?
+    var style: Style = .row
     let onConfirm: () -> Void
 
     @State private var asking = false
 
     var body: some View {
         Button { asking = true } label: {
-            HStack(spacing: MercurySpace.snug) {
-                Image(systemName: isRunning
-                      ? "arrow.triangle.2.circlepath" : "arrow.clockwise")
-                Text(isRunning ? "Rebuilding…" : "Rebuild from my latest mail")
-                    .font(MercuryType.cardBody)
-                Spacer(minLength: 0)
+            switch style {
+            case .row:
+                HStack(spacing: MercurySpace.snug) {
+                    glyph
+                    Text(isRunning ? "Rebuilding…" : "Rebuild from my latest mail")
+                        .font(MercuryType.cardBody)
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(MercuryColor.inkMuted.color)
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+            case .toolbar:
+                glyph
+                    .foregroundStyle(MercuryColor.inkMuted.color)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
-            .foregroundStyle(MercuryColor.inkMuted.color)
-            .frame(minHeight: 44)
-            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(isRunning || remaining == 0)
@@ -45,8 +65,22 @@ struct RegenerateButton: View {
         } message: {
             Text(confirmationMessage)
         }
+        .accessibilityLabel("Rebuild from my latest mail")
         .accessibilityHint(
             isRunning ? "A rebuild is already running" : "Asks before starting")
+    }
+
+    /// Spins while a rebuild is outstanding, so the toolbar form still says
+    /// something is happening without room for the word "Rebuilding".
+    @ViewBuilder
+    private var glyph: some View {
+        if isRunning {
+            ProgressView()
+                .controlSize(.small)
+                .tint(MercuryColor.inkMuted.color)
+        } else {
+            Image(systemName: "arrow.clockwise")
+        }
     }
 
     /// Names the cost, the wait and what is left — in that order, because

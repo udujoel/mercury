@@ -160,7 +160,28 @@ final class APIClient: APIClientProtocol {
 
     func fetchDigest(briefingId: String) async throws -> Digest? {
         do {
-            let digest: Digest = try await request(.digest(briefingId: briefingId))
+            // REVALIDATE rather than re-download. The digest is by far the
+            // largest thing this client fetches — 169KB for a real morning,
+            // against tens of kilobytes for a manifest — and it was being
+            // pulled in full on every launch.
+            //
+            // Safe in a way an unconditional reload is not needed for: the
+            // Worker sends `cache-control: private, no-cache` and an ETag,
+            // and honours `If-None-Match`, so the server is still asked
+            // every time and a changed digest still arrives as a 200 with
+            // new bytes. What changes is that an UNCHANGED one comes back
+            // as a 304 with no body.
+            //
+            // The manifest keeps the unconditional policy above, and the
+            // comment there says why: a `--force` regeneration reuses the
+            // briefing id, so a stale manifest describes different audio and
+            // every timing lands wrong. A stale digest costs browse cards,
+            // not playback correctness — and revalidation means it cannot
+            // go stale anyway.
+            let digest: Digest = try await request(
+                .digest(briefingId: briefingId),
+                cachePolicy: .reloadRevalidatingCacheData
+            )
             return digest
         } catch APIError.badStatus(404, _) {
             // Not an error. Every briefing from before ADR-013 has no digest
@@ -573,7 +594,10 @@ final class APIClient: APIClientProtocol {
     /// share the manifest's cache posture and error handling rather than
     /// getting their own copies of it — three copies is how the embedding
     /// provider bug happened.
-    private func request<T: Decodable>(_ endpoint: Endpoint) async throws -> T {
+    private func request<T: Decodable>(
+        _ endpoint: Endpoint,
+        cachePolicy: URLRequest.CachePolicy = .reloadIgnoringLocalCacheData
+    ) async throws -> T {
         var urlRequest = URLRequest(url: endpoint.url())
         urlRequest.httpMethod = endpoint.method
         urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -587,7 +611,7 @@ final class APIClient: APIClientProtocol {
         // the file that actually plays, and the transcript drifts further
         // the longer you listen. A manifest is tens of kilobytes; the round
         // trip is cheap and the alternative is silently broken.
-        urlRequest.cachePolicy = .reloadIgnoringLocalCacheData
+        urlRequest.cachePolicy = cachePolicy
         Self.authorize(&urlRequest)
 
         let data: Data

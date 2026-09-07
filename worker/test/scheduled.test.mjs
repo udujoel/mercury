@@ -554,6 +554,31 @@ describe("settings", () => {
     }
   });
 
+  test("an unconfigured dispatch token says so, rather than 'try again'", async () => {
+    // The button returned a bare 502 for months while the cause was a
+    // secret nobody had set — and the reason sat in a Worker log the phone
+    // cannot read. "Could not start" reads as bad luck; this reads as a
+    // thing to go and fix.
+    const env = { ...envFor({}), GITHUB_REPO: "o/r" };
+    delete env.GITHUB_DISPATCH_TOKEN;
+    env.BRIEFINGS = writableBucket({});
+
+    const res = await worker.fetch(
+      new Request("https://x/regenerate", {
+        method: "POST",
+        headers: { "x-mercury-token": TOKEN },
+      }),
+      env,
+    );
+
+    assert.equal(res.status, 503, "not transient, so not a 502");
+    const body = await res.json();
+    assert.match(body.detail, /dispatch token is not configured/);
+    // And the same token drives the morning trigger, which is the half
+    // nobody would connect on their own.
+    assert.match(body.detail, /punctual morning trigger/);
+  });
+
   test("a failed dispatch does not burn the day's allowance", async () => {
     const original = globalThis.fetch;
     globalThis.fetch = async () => new Response("nope", { status: 500 });

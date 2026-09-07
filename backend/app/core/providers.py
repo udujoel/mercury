@@ -116,10 +116,23 @@ class FallbackTTSProvider:
     a run that is against the clock, and a briefing alternating between two
     voices turn by turn would be worse than one that changes voice once.
 
-    It does change voice once, mid-briefing, and that is deliberately not
-    hidden: an ERROR log names it. A briefing that is half one voice and half
-    another is unpleasant and obviously wrong, which is the correct way for
-    this to fail — silently shipping is the thing to avoid.
+    **`probe()` exists so that switch does not usually happen mid-briefing.**
+    The original reasoning here was that a briefing changing voice partway is
+    "unpleasant and obviously wrong, which is the correct way for this to
+    fail" — sound when the failure is a rare outage, and wrong once it became
+    the normal case. ElevenLabs answers `402 paid_plan_required` for library
+    voices and `401 detected_unusual_activity` from CI's datacenter IPs, so
+    every morning shipped a briefing in THREE voices: two ElevenLabs hosts
+    for the first turns, then a Google one for the rest. The listener heard a
+    stranger take over, and the transcript stopped tracking the words because
+    only the ElevenLabs turns carry timings.
+
+    A loud failure that fires daily is not a signal, it is the product. One
+    short call before the run decides the provider once, so a briefing has
+    exactly two voices and either all of its word timings or none.
+
+    A genuine mid-run outage still switches, still logs at ERROR, and still
+    ships — which is what rule 7 asks for and what the probe cannot cover.
     """
 
     def __init__(self, primary: TTSProvider, build_fallback) -> None:
@@ -184,6 +197,25 @@ class FallbackTTSProvider:
                 type(self._primary).__name__, exc,
                 type(self._fallback).__name__,
             )
+
+    async def probe(self) -> None:
+        """Decide the provider ONCE, before any turn is synthesised.
+
+        Two words through the primary. If they fail, the fallback is built
+        now and the whole briefing is spoken by it — consistently, in two
+        voices, rather than changing narrator partway through.
+
+        Deliberately cheap and deliberately not fatal: a probe that fails
+        for its own reasons must not cost the briefing, so anything other
+        than success simply means "use the fallback", which is where an
+        unusable primary was heading anyway.
+        """
+        if self._failed_over:
+            return
+        try:
+            await self._primary.synthesize("Good morning.", self._primary.voice_a)
+        except Exception as exc:  # noqa: BLE001 - any failure is a failover
+            await self._fail_over(exc)
 
     async def synthesize(self, text: str, voice_id: str) -> Speech:
         if not self._failed_over:

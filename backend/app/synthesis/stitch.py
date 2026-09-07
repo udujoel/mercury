@@ -101,6 +101,20 @@ async def synthesize_briefing(
     Returns (audio_bytes, manifest, audio_format).
     """
 
+    # Decide the provider BEFORE the first turn, when it can be decided.
+    #
+    # `FallbackTTSProvider` used to discover an unusable primary on turn one
+    # and switch mid-run, so the briefing changed narrator partway and only
+    # its first turns carried word timings. Two words up front settle it, and
+    # the listener gets two voices instead of three.
+    #
+    # `getattr` rather than an isinstance check or a protocol method: the
+    # plain providers have nothing to probe, and requiring every TTSProvider
+    # to grow a no-op would be the protocol serving one caller.
+    probe = getattr(tts, "probe", None)
+    if probe is not None:
+        await probe()
+
     clips = await _synthesize_all(turns, tts)
 
     # None means NO music here, not "the default set".
