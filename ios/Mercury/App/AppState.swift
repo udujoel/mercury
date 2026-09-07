@@ -234,7 +234,8 @@ final class AppState {
             isRegenerating: isRegenerating,
             isPlaying: playback.isPlaying,
             positionMs: playback.positionMs,
-            hasFinished: playback.hasFinished
+            hasFinished: playback.hasFinished,
+            hasQueuedAudio: playback.hasQueuedAudio
         ) {
             await playBriefing()
             return
@@ -535,13 +536,24 @@ final class AppState {
     /// real audio file, an engine and hardware. The decision is the part
     /// that was wrong, so the decision is the part that is testable.
     static func shouldRefetchForRebuild(
-        isRegenerating: Bool, isPlaying: Bool, positionMs: Int, hasFinished: Bool
+        isRegenerating: Bool,
+        isPlaying: Bool,
+        positionMs: Int,
+        hasFinished: Bool,
+        hasQueuedAudio: Bool
     ) -> Bool {
         guard isRegenerating, !isPlaying else { return false }
-        // At the top or finished. NOT merely "not playing" — that is true of
-        // a PAUSED briefing, and pausing is not a request for a different
-        // one.
-        return hasFinished || positionMs == 0
+        // Finished, or never started. NOT merely "not playing", which is
+        // true of a paused briefing — and not `positionMs == 0` either,
+        // which is true of one paused inside its first second.
+        //
+        // Two signals, because neither answers "has this been started" on
+        // its own. `hasQueuedAudio` is false for a fresh load AND for a
+        // briefing an interruption flushed, so a phone call mid-listen
+        // would look untouched; `positionMs` is zero for a fresh load AND
+        // for the first second of a real one. Together: nothing queued and
+        // nowhere to resume to.
+        return hasFinished || (positionMs == 0 && !hasQueuedAudio)
     }
 
     @MainActor
