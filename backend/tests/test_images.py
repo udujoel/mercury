@@ -1154,6 +1154,8 @@ def test_a_blank_env_var_falls_back_to_the_default(monkeypatch):
     from app.core.config import (
         DEFAULT_ELEVENLABS_VOICE_A,
         DEFAULT_ELEVENLABS_VOICE_B,
+        DEFAULT_GOOGLE_VOICE_A,
+        DEFAULT_GOOGLE_VOICE_B,
         get_settings,
     )
 
@@ -1161,12 +1163,30 @@ def test_a_blank_env_var_falls_back_to_the_default(monkeypatch):
         monkeypatch.setenv("TTS_PROVIDER", blank)
         monkeypatch.setenv("ELEVENLABS_VOICE_A", blank)
         monkeypatch.setenv("ELEVENLABS_VOICE_B", blank)
+        # The GOOGLE pair too. `briefing.yml` does not pass these today, so
+        # this is not a live failure — it is the same trap one edit away.
+        # Adding `TTS_VOICE_HOST_A: ${{ secrets.TTS_VOICE_HOST_A }}` to that
+        # env block is the obvious move when someone wants to override a
+        # voice, and without this it would hand Google an empty voice name:
+        # a briefing read by whatever the API picks, with nothing in the log
+        # saying why. Covering the field before the workflow references it
+        # is the cheap half of this bug.
+        monkeypatch.setenv("TTS_VOICE_HOST_A", blank)
+        monkeypatch.setenv("TTS_VOICE_HOST_B", blank)
         get_settings.cache_clear()
 
         s = get_settings()
         assert s.tts_provider == "elevenlabs", f"blank {blank!r} won"
         assert s.elevenlabs_voice_a == DEFAULT_ELEVENLABS_VOICE_A
         assert s.elevenlabs_voice_b == DEFAULT_ELEVENLABS_VOICE_B
+        assert s.tts_voice_host_a == DEFAULT_GOOGLE_VOICE_A, f"blank {blank!r} won"
+        assert s.tts_voice_host_b == DEFAULT_GOOGLE_VOICE_B
+
+    # Still settable, for the Google pair as well — the fix must not make
+    # the setting unsettable, which would be the opposite bug.
+    monkeypatch.setenv("TTS_VOICE_HOST_A", "en-GB-Neural2-C")
+    get_settings.cache_clear()
+    assert get_settings().tts_voice_host_a == "en-GB-Neural2-C"
 
     # An explicit value still wins — the fix must not make the setting
     # unsettable, which would be the opposite bug.
