@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A1B2C3D40005444455556666 /* waiting-bed.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40006444455556666 /* waiting-bed.mp3 */; };
+		A1B2C3D40007444455556666 /* WaitingRoom.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40008444455556666 /* WaitingRoom.swift */; };
 		4EFB053B2C9C4ACB9AFAB020 /* ScrubBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2096912312AB40E88333D8D7 /* ScrubBar.swift */; };
 		4AC5207F819D4CFEB3162B8F /* PlayerTransportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DC33513BB114842845E52B2 /* PlayerTransportTests.swift */; };
 		288558DB08DB434CB10982EA /* TranscriptScriptTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32D47A7A70BD4EFDBEFC0B1D /* TranscriptScriptTests.swift */; };
@@ -27,16 +29,19 @@
 		22916A6ECFD94EB7AB7083BC /* BackgroundScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C4F6EA543A44481A7E23776 /* BackgroundScheduler.swift */; };
 		22CEDAA5EB884951B095B909 /* ChapterTabs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45B90DC8396D4B9BB7B54CB9 /* ChapterTabs.swift */; };
 		2ECD2ABB914248E2AA7C2CFF /* NowPlayingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B33F2A2C9B5A4A1EACD41181 /* NowPlayingService.swift */; };
+		A1B2C3D40001444455556666 /* MercuryArtwork.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40002444455556666 /* MercuryArtwork.swift */; };
 		30A383EE10954F759510B5F1 /* Typography.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06EFBD27CD7347D39362659B /* Typography.swift */; };
 		35553941EBBA4F60AD83C8DC /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46DDA802958348BBB0577AEA /* APIClient.swift */; };
 		40FD874573A449B99F662635 /* BriefingManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = B623CA6338D94EA6B94CB4A7 /* BriefingManifest.swift */; };
 		347119E401C4437F91B047E4 /* UserSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97DF083F0FEC41C68B3D632A /* UserSettings.swift */; };
+		F3FF1CAB19F24CAB93BBB038 /* RegenerationStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64CA9555107046F5A0B76CA7 /* RegenerationStatus.swift */; };
 		2DF8017D72B74863AF95C909 /* Digest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 311E37B13C9641598CB3F111 /* Digest.swift */; };
 		49465A9383654545888B46CD /* PlaybackCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 712134809B384AE3B7BD5717 /* PlaybackCoordinator.swift */; };
 		5F48502EFA694F9A8A8E5BCD /* TransportControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = E59B6FEDE9734F718EC4C8F9 /* TransportControls.swift */; };
 		5FB93F5928594335A28EBB5F /* PushService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16C20DEB1A984F4682C4B440 /* PushService.swift */; };
 		6E38AE5587434B588E7B8A0D /* PersistenceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = E01D07D57B1949F79CBF64F5 /* PersistenceModels.swift */; };
 		73F0CF0CBC4D411A8D0441EF /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A75D66FD46884F8C8C9FF9E2 /* HomeView.swift */; };
+		9B07A7C2667C4177AA451788 /* RegenerateButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D8689ACDA9A48AB9414D238 /* RegenerateButton.swift */; };
 		F3C7574A474743039C3FAF0D /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9364DCB20F734BD9A714829B /* SettingsView.swift */; };
 		85B50362008444919C203549 /* VoicePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4558860A034463B95C6E585 /* VoicePicker.swift */; };
 		9695A139C8F440429BBB599D /* ArchiveView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71543CF72C0A4219A8DCDE3F /* ArchiveView.swift */; };
@@ -47,6 +52,8 @@
 		7A6EB2262FAE4FE4BBEFC626 /* Endpoints.swift in Sources */ = {isa = PBXBuildFile; fileRef = C07D32533485477A94ED0028 /* Endpoints.swift */; };
 		7CCEBA62BD6243E6A7B925D5 /* ManifestDecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21B43020023E45A79EFA6674 /* ManifestDecodingTests.swift */; };
 		5F963A6E751A4BF384EC7379 /* UserSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDAC8C36903D4A44ABA2B0CE /* UserSettingsTests.swift */; };
+		A1B2C3D40009444455556666 /* WaitingRoomTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4000A444455556666 /* WaitingRoomTests.swift */; };
+		A1B2C3D40003444455556666 /* NowPlayingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40004444455556666 /* NowPlayingTests.swift */; };
 		E75405F450744A038B656053 /* DigestDecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8FFEB83D34D47D28DDE42CD /* DigestDecodingTests.swift */; };
 		7E97FD97918C4F1E9E94F233 /* BackgroundSchedulerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F32E4E9056748DB84F2950A /* BackgroundSchedulerTests.swift */; };
 		8758BB33641D46BA992C2CE2 /* PlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85AAAB702EB84B9F8B029A2B /* PlayerView.swift */; };
@@ -57,6 +64,7 @@
 		BC47CFCD7E914CCFAFB432E0 /* MercuryApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14E68D94060547A199EDF858 /* MercuryApp.swift */; };
 		C1EFE552AA2D469F857840EA /* AmbientBackground.swift in Sources */ = {isa = PBXBuildFile; fileRef = 780D907237CC400484ACD3C3 /* AmbientBackground.swift */; };
 		CCB2E45FFD124E4499A47833 /* sample_manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = B295B9B6265A41DAB22E89B9 /* sample_manifest.json */; };
+		C16B000246F54454BAA0F87C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6D7890DC734345CAB69E483B /* Assets.xcassets */; };
 		CD5973B47FD2450B91548FEC /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B46E2499CB54C99986BB1B5 /* AppState.swift */; };
 		E930C7F24BFF4005ACBA87FE /* ShowNotesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FF8AEA3C6FC42ED9C4263AD /* ShowNotesTests.swift */; };
 		BB01DE519B00000000000000 /* ColorMath.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01DE519F00000000000000 /* ColorMath.swift */; };
@@ -80,6 +88,8 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		A1B2C3D40006444455556666 /* waiting-bed.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; name = "waiting-bed.mp3"; path = "Resources/waiting-bed.mp3"; sourceTree = "<group>"; };
+		A1B2C3D40008444455556666 /* WaitingRoom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaitingRoom.swift; sourceTree = "<group>"; };
 		1A8B6C748468445682D56984 /* APIClientCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClientCacheTests.swift; sourceTree = "<group>"; };
 		06EA8B5CE80A4C93901A531A /* PlaybackCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackCoordinatorTests.swift; sourceTree = "<group>"; };
 		06EFBD27CD7347D39362659B /* Typography.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Typography.swift; sourceTree = "<group>"; };
@@ -92,6 +102,8 @@
 		16C20DEB1A984F4682C4B440 /* PushService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushService.swift; sourceTree = "<group>"; };
 		21B43020023E45A79EFA6674 /* ManifestDecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManifestDecodingTests.swift; sourceTree = "<group>"; };
 		DDAC8C36903D4A44ABA2B0CE /* UserSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserSettingsTests.swift; sourceTree = "<group>"; };
+		A1B2C3D4000A444455556666 /* WaitingRoomTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaitingRoomTests.swift; sourceTree = "<group>"; };
+		A1B2C3D40004444455556666 /* NowPlayingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingTests.swift; sourceTree = "<group>"; };
 		D8FFEB83D34D47D28DDE42CD /* DigestDecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DigestDecodingTests.swift; sourceTree = "<group>"; };
 		310D73BEA60748D8B4DAA3FA /* ShowNotesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShowNotesView.swift; sourceTree = "<group>"; };
 		33EF3CEBEB6E4794B3536318 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -113,6 +125,7 @@
 		A069221208CA44B1888D4792 /* ResumePositionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResumePositionTests.swift; sourceTree = "<group>"; };
 		A500086096BB4F5DACCE0474 /* BriefingStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BriefingStore.swift; sourceTree = "<group>"; };
 		A75D66FD46884F8C8C9FF9E2 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
+		6D8689ACDA9A48AB9414D238 /* RegenerateButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RegenerateButton.swift; sourceTree = "<group>"; };
 		9364DCB20F734BD9A714829B /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		E4558860A034463B95C6E585 /* VoicePicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoicePicker.swift; sourceTree = "<group>"; };
 		71543CF72C0A4219A8DCDE3F /* ArchiveView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArchiveView.swift; sourceTree = "<group>"; };
@@ -124,9 +137,12 @@
 		DDC079C69CB342979682EDCA /* BriefingDigest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BriefingDigest.swift; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE55F002 /* BriefingClock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BriefingClock.swift; sourceTree = "<group>"; };
 		B295B9B6265A41DAB22E89B9 /* sample_manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = sample_manifest.json; sourceTree = "<group>"; };
+		6D7890DC734345CAB69E483B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B33F2A2C9B5A4A1EACD41181 /* NowPlayingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingService.swift; sourceTree = "<group>"; };
+		A1B2C3D40002444455556666 /* MercuryArtwork.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MercuryArtwork.swift; sourceTree = "<group>"; };
 		B623CA6338D94EA6B94CB4A7 /* BriefingManifest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BriefingManifest.swift; sourceTree = "<group>"; };
 		97DF083F0FEC41C68B3D632A /* UserSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserSettings.swift; sourceTree = "<group>"; };
+		64CA9555107046F5A0B76CA7 /* RegenerationStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RegenerationStatus.swift; sourceTree = "<group>"; };
 		311E37B13C9641598CB3F111 /* Digest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Digest.swift; sourceTree = "<group>"; };
 		C07D32533485477A94ED0028 /* Endpoints.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Endpoints.swift; sourceTree = "<group>"; };
 		CBD7D2CD769D46C6A0A5EDA8 /* ScheduleSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleSetupView.swift; sourceTree = "<group>"; };
@@ -170,6 +186,7 @@
 			children = (
 				B623CA6338D94EA6B94CB4A7 /* BriefingManifest.swift */,
 				97DF083F0FEC41C68B3D632A /* UserSettings.swift */,
+				64CA9555107046F5A0B76CA7 /* RegenerationStatus.swift */,
 				311E37B13C9641598CB3F111 /* Digest.swift */,
 				AA11BB22CC33DD44EE55F002 /* BriefingClock.swift */,
 			);
@@ -231,6 +248,8 @@
 			isa = PBXGroup;
 			children = (
 				A75D66FD46884F8C8C9FF9E2 /* HomeView.swift */,
+				6D8689ACDA9A48AB9414D238 /* RegenerateButton.swift */,
+				A1B2C3D40008444455556666 /* WaitingRoom.swift */,
 				6734BCFCE5C04CDA9EB44FF1 /* MiniPlayerBar.swift */,
 				2E6D208506BB47919431D65F /* TodaysBriefingCard.swift */,
 				DDC079C69CB342979682EDCA /* BriefingDigest.swift */,
@@ -251,6 +270,8 @@
 			isa = PBXGroup;
 			children = (
 				B956E7F4DB914008B249D1FB /* App */,
+				6D7890DC734345CAB69E483B /* Assets.xcassets */,
+				A1B2C3D40006444455556666 /* waiting-bed.mp3 */,
 				7D49A3254F0D49A2A78964DA /* Core */,
 				7A8E01B658804A95967F9AB6 /* DesignSystem */,
 				0F1F83873CA548AE9B5DA619 /* Features */,
@@ -277,6 +298,7 @@
 			isa = PBXGroup;
 			children = (
 				B33F2A2C9B5A4A1EACD41181 /* NowPlayingService.swift */,
+				A1B2C3D40002444455556666 /* MercuryArtwork.swift */,
 				712134809B384AE3B7BD5717 /* PlaybackCoordinator.swift */,
 			);
 			path = Audio;
@@ -373,6 +395,8 @@
 				06EA8B5CE80A4C93901A531A /* PlaybackCoordinatorTests.swift */,
 				21B43020023E45A79EFA6674 /* ManifestDecodingTests.swift */,
 				DDAC8C36903D4A44ABA2B0CE /* UserSettingsTests.swift */,
+				A1B2C3D4000A444455556666 /* WaitingRoomTests.swift */,
+				A1B2C3D40004444455556666 /* NowPlayingTests.swift */,
 				D8FFEB83D34D47D28DDE42CD /* DigestDecodingTests.swift */,
 				E4F896E2D9B44EC9B3C48E6A /* BinarySearchTests.swift */,
 				0EB1C794E32B4C8B8E941A75 /* SegmentSeekTests.swift */,
@@ -485,6 +509,8 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C16B000246F54454BAA0F87C /* Assets.xcassets in Resources */,
+				A1B2C3D40005444455556666 /* waiting-bed.mp3 in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -503,9 +529,11 @@
 				CD5973B47FD2450B91548FEC /* AppState.swift in Sources */,
 				BC47CFCD7E914CCFAFB432E0 /* MercuryApp.swift in Sources */,
 				2ECD2ABB914248E2AA7C2CFF /* NowPlayingService.swift in Sources */,
+				A1B2C3D40001444455556666 /* MercuryArtwork.swift in Sources */,
 				49465A9383654545888B46CD /* PlaybackCoordinator.swift in Sources */,
 				40FD874573A449B99F662635 /* BriefingManifest.swift in Sources */,
 				347119E401C4437F91B047E4 /* UserSettings.swift in Sources */,
+				F3FF1CAB19F24CAB93BBB038 /* RegenerationStatus.swift in Sources */,
 				2DF8017D72B74863AF95C909 /* Digest.swift in Sources */,
 				AA11BB22CC33DD44EE55F001 /* BriefingClock.swift in Sources */,
 				35553941EBBA4F60AD83C8DC /* APIClient.swift in Sources */,
@@ -516,6 +544,8 @@
 				8EC27C0EB2744E109748AE41 /* Colors.swift in Sources */,
 				30A383EE10954F759510B5F1 /* Typography.swift in Sources */,
 				73F0CF0CBC4D411A8D0441EF /* HomeView.swift in Sources */,
+				9B07A7C2667C4177AA451788 /* RegenerateButton.swift in Sources */,
+				A1B2C3D40007444455556666 /* WaitingRoom.swift in Sources */,
 				F3C7574A474743039C3FAF0D /* SettingsView.swift in Sources */,
 				85B50362008444919C203549 /* VoicePicker.swift in Sources */,
 				9695A139C8F440429BBB599D /* ArchiveView.swift in Sources */,
@@ -552,6 +582,8 @@
 				E5DF1051C55F4D9F881C9AB4 /* PlaybackCoordinatorTests.swift in Sources */,
 				7CCEBA62BD6243E6A7B925D5 /* ManifestDecodingTests.swift in Sources */,
 				5F963A6E751A4BF384EC7379 /* UserSettingsTests.swift in Sources */,
+				A1B2C3D40009444455556666 /* WaitingRoomTests.swift in Sources */,
+				A1B2C3D40003444455556666 /* NowPlayingTests.swift in Sources */,
 				E75405F450744A038B656053 /* DigestDecodingTests.swift in Sources */,
 				15513F96A27C48A09DCBEC91 /* BinarySearchTests.swift in Sources */,
 				1FB8AA9FF52643A4B4C069B4 /* SegmentSeekTests.swift in Sources */,
@@ -599,6 +631,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				PRODUCT_BUNDLE_IDENTIFIER = com.joeludu.mercury;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -682,6 +715,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				PRODUCT_BUNDLE_IDENTIFIER = com.joeludu.mercury;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;

@@ -385,13 +385,23 @@ class UserSettings(BaseModel):
     # The briefing
     briefing_length: str | None = None
 
-    # NO `disabled_segments`. It was here for one round and is deliberately
-    # gone: `_has_valid_segment_coverage_and_order` requires EVERY canonical
-    # segment to be present, so making one optional is a change to the script
-    # chain and its validator, not a value this artifact can carry. Shipping
-    # the field before the pipeline honoured it would have been a toggle that
-    # did nothing — the exact failure this artifact exists to prevent.
-    # ROADMAP task 15.
+    # Segments to leave out. ROADMAP task 15.
+    #
+    # This field was here once before and was REMOVED, because
+    # `_has_valid_segment_coverage_and_order` required every canonical
+    # segment to be present — so it was a toggle that did nothing, the exact
+    # failure this artifact exists to prevent. It is back only now that the
+    # pipeline honours it: `resolve_segments` narrows the prompt's segment
+    # definitions, both response schemas, the draft's repair check and the
+    # revision's validator, all from this one list.
+    #
+    # `cold_open` and `sign_off` cannot be dropped whatever is written here
+    # (`STRUCTURAL_SEGMENTS`): a briefing with no greeting starts
+    # mid-sentence and one with no close just stops. Unknown names are
+    # ignored rather than rejected — the phone writing this artifact may be
+    # older or newer than the job reading it, and failing a whole morning
+    # over an unrecognised segment name is a worse outcome than ignoring it.
+    disabled_segments: list[str] | None = None
 
     # Voice
     tts_provider: str | None = None

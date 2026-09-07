@@ -43,6 +43,7 @@ from app.pipeline.prompts import (  # noqa: E402
     HOST_SYSTEM,
     OUTLINE_PROMPT,
     REVISE_PROMPT,
+    SEGMENT_DEFINITIONS,
 )
 from app.providers.fake import FakeLLMProvider  # noqa: E402
 
@@ -398,6 +399,10 @@ async def run_chain(provider, fixture: dict) -> dict:
         stories="(none in this fixture)",
         follow_ups="(none)",
         total_words=budget,
+        # Every segment: the spike is the baseline the pipeline's own
+        # validator was derived from, so it deliberately does not exercise
+        # ROADMAP task 15's narrowing.
+        segment_definitions="\n".join(SEGMENT_DEFINITIONS.values()),
     )
     print("--- PASS 1: outline ---")
     outline_raw = await provider.complete(

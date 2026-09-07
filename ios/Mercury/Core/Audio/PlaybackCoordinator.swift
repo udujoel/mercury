@@ -10,6 +10,22 @@ import SwiftUI
 @Observable
 final class PlaybackCoordinator {
 
+    /// What the lock screen says when a briefing has no chapters at all —
+    /// an older manifest, or one whose segments all failed to synthesise.
+    static let fallbackTitle = "Your briefing"
+
+    /// "Saturday's briefing", the same name Home gives it.
+    ///
+    /// From the manifest's OWN date rather than from the clock: the
+    /// briefing on screen is not always today's — a restored one is
+    /// yesterday's — and a lock screen that calls it today's is wrong in
+    /// the one place the user cannot correct it.
+    static func briefingName(for manifest: BriefingManifest) -> String {
+        let day = manifest.generatedAt.formatted(
+            .dateTime.weekday(.wide).locale(.autoupdatingCurrent))
+        return "\(day)'s briefing"
+    }
+
     private(set) var currentTurn: Turn?
     private(set) var currentSegment: BriefingSegment?
     private(set) var isPlaying = false
@@ -247,8 +263,13 @@ final class PlaybackCoordinator {
             onPause: { [weak self] in self?.pause() },
             onSeek: { [weak self] ms in self?.seek(toMs: ms) }
         )
-        nowPlaying.update(title: "Your briefing", durationMs: manifest.durationMs,
-                          positionMs: 0, rate: rate, isPlaying: false)
+        // The first segment, so the card is right before a word is spoken
+        // rather than only after the first boundary is crossed.
+        nowPlaying.update(
+            title: manifest.segments.first?.label ?? Self.fallbackTitle,
+            briefing: Self.briefingName(for: manifest),
+            durationMs: manifest.durationMs,
+            positionMs: 0, rate: rate, isPlaying: false)
     }
 
     // MARK: - Transport
@@ -801,6 +822,11 @@ final class PlaybackCoordinator {
         let apply = {
             self.currentTurn = turn
             self.currentSegment = manifest.segment(for: turn)
+            // The lock screen follows the chapter, the way a podcast app
+            // follows the episode. This used to read "Your briefing" for
+            // the whole eight minutes.
+            self.nowPlaying.setTitle(
+                self.currentSegment?.label ?? Self.fallbackTitle)
         }
         if animated {
             withAnimation(.easeInOut(duration: 0.22), apply)

@@ -30,11 +30,31 @@ struct UserSettings: Codable, Equatable {
 
     var briefingLength: String?
 
-    // NO `disabledSegments`. It was here for one round and is deliberately
-    // gone: the script chain requires every canonical segment to be present
-    // (`_has_valid_segment_coverage_and_order`), so a toggle would have
-    // stored a preference nothing reads — the exact failure this artifact
-    // exists to prevent. ROADMAP task 15.
+    /// Segments the listener has turned off. ROADMAP task 15.
+    ///
+    /// This was here once and was REMOVED, because the script chain
+    /// required every canonical segment to be present — so it stored a
+    /// preference nothing read, the exact failure this artifact exists to
+    /// prevent. It is back only now that `resolve_segments` narrows the
+    /// prompt, both response schemas, the draft's repair check and the
+    /// revision's validator from this one list.
+    var disabledSegments: [String]
+
+    /// The segments that can be turned off, in the order the briefing runs.
+    ///
+    /// `cold_open` and `sign_off` are absent on purpose and match
+    /// `STRUCTURAL_SEGMENTS` on the server: a briefing with no greeting
+    /// starts mid-sentence and one with no close just stops. Offering a
+    /// toggle the job would override is the same lie as a toggle nothing
+    /// reads.
+    static let optionalSegments: [(id: String, label: String, note: String)] = [
+        ("weather", "Weather", "Conditions and the day's forecast."),
+        ("calendar", "Your day", "The day walked through, with prep flagged."),
+        ("inbox", "Your inbox", "Top emails, and newsletters as a group."),
+        ("world", "Your world", "Clustered news from your feeds."),
+        ("follow_ups", "Follow-ups", "Where you owe someone a reply."),
+    ]
+
     var ttsProvider: String?
     /// Which music set tops and tails the briefing. One of `musicSets`, or
     /// nil for the server's default.
@@ -50,7 +70,9 @@ struct UserSettings: Codable, Equatable {
     init(briefingLength: String? = nil,
          ttsProvider: String? = nil, musicSet: String? = nil,
          voiceA: String? = nil, voiceB: String? = nil,
-         feeds: [String] = [], mutedSenders: [String] = []) {
+         feeds: [String] = [], mutedSenders: [String] = [],
+         disabledSegments: [String] = []) {
+        self.disabledSegments = disabledSegments
         self.briefingLength = briefingLength
         self.musicSet = musicSet
         self.ttsProvider = ttsProvider
@@ -70,6 +92,7 @@ struct UserSettings: Codable, Equatable {
         case voiceB = "voice_b"
         case feeds
         case mutedSenders = "muted_senders"
+        case disabledSegments = "disabled_segments"
     }
 
     init(from decoder: Decoder) throws {
@@ -81,6 +104,8 @@ struct UserSettings: Codable, Equatable {
         voiceB = try c.decodeIfPresent(String.self, forKey: .voiceB)
         feeds = try c.decodeIfPresent([String].self, forKey: .feeds) ?? []
         mutedSenders = try c.decodeIfPresent([String].self, forKey: .mutedSenders) ?? []
+        disabledSegments =
+            try c.decodeIfPresent([String].self, forKey: .disabledSegments) ?? []
     }
 
     /// Writes the version and a timestamp the client never reads back.
@@ -99,6 +124,7 @@ struct UserSettings: Codable, Equatable {
         try c.encodeIfPresent(voiceB, forKey: .voiceB)
         try c.encode(feeds, forKey: .feeds)
         try c.encode(mutedSenders, forKey: .mutedSenders)
+        try c.encode(disabledSegments, forKey: .disabledSegments)
     }
 
 }

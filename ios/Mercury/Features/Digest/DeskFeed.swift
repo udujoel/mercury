@@ -123,43 +123,58 @@ struct LeadCard: View {
 
     var body: some View {
         Button(action: onTap) {
-            ZStack(alignment: .bottomLeading) {
-                artwork
+            // The picture is a BACKGROUND, not a sibling in the stack.
+            //
+            // As a ZStack sibling it decided the card's size: `AsyncImage`
+            // with `.aspectRatio(contentMode: .fill)` deliberately overflows
+            // the size it is offered, and a ZStack takes the union of its
+            // children — so the stack grew to the image's width, roughly
+            // half again the screen. The headline was then laid out at THAT
+            // width, and `.clipShape` cut the overflow off both ends. On
+            // screen it read as two bugs: a headline sliced open at both
+            // edges, and an eyebrow reading "· 2 hours ago" because
+            // "2 articles" had been pushed off the left of the card.
+            //
+            // A background is measured AFTER its content and never
+            // contributes to layout, which is exactly the relationship a
+            // photograph behind text should have.
+            VStack(alignment: .leading, spacing: MercurySpace.tight) {
+                DeskEyebrow(story: story, onDarkGround: true)
 
-                // A scrim, not a flat tint. Text over a photograph needs the
-                // contrast to be guaranteed rather than hoped for, and a
-                // gradient keeps the top of the image readable as an image.
-                LinearGradient(
-                    colors: [.black.opacity(0.0), .black.opacity(0.75)],
-                    startPoint: .center, endPoint: .bottom
-                )
+                Text(story.headline)
+                    .font(MercuryType.greeting)
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
 
-                VStack(alignment: .leading, spacing: MercurySpace.tight) {
-                    DeskEyebrow(story: story, onDarkGround: true)
-
-                    Text(story.headline)
-                        .font(MercuryType.greeting)
-                        .foregroundStyle(.white)
-                        .multilineTextAlignment(.leading)
-                        .lineLimit(3)
+                if let standfirst {
+                    Text(standfirst)
+                        .font(MercuryType.cardBody)
+                        .foregroundStyle(.white.opacity(0.85))
+                        .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
-
-                    if let standfirst {
-                        Text(standfirst)
-                            .font(MercuryType.cardBody)
-                            .foregroundStyle(.white.opacity(0.85))
-                            .lineLimit(2)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
                 }
-                .padding(MercurySpace.comfortable)
             }
-            // MINIMUM, not fixed. At accessibility type sizes a three-line
-            // headline plus a two-line standfirst plus 32pt of padding does
-            // not fit in 320pt, and a fixed height clips the text rather
-            // than the card growing to hold it.
-            .frame(minHeight: 320)
-            .frame(maxWidth: .infinity)
+            .padding(MercurySpace.comfortable)
+            // MINIMUM height, not fixed. At accessibility type sizes a
+            // three-line headline plus a two-line standfirst plus 32pt of
+            // padding does not fit in 320pt, and a fixed height clips the
+            // text rather than the card growing to hold it.
+            .frame(maxWidth: .infinity, minHeight: 320, alignment: .bottomLeading)
+            .background {
+                ZStack {
+                    artwork
+                    // A scrim, not a flat tint. Text over a photograph needs
+                    // the contrast guaranteed rather than hoped for, and a
+                    // gradient keeps the top of the image readable as an
+                    // image.
+                    LinearGradient(
+                        colors: [.black.opacity(0.0), .black.opacity(0.75)],
+                        startPoint: .center, endPoint: .bottom
+                    )
+                }
+            }
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .contentShape(Rectangle())
         }

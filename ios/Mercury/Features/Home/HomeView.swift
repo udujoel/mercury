@@ -20,8 +20,33 @@ struct HomeView: View {
     @State private var selectedStory: DigestStory?
     @State private var showArchive = false
     @State private var showSettings = false
+    @State private var regenerateNote: String?
+
+    /// Says what actually happens next, which is nothing visible for some
+    /// minutes. A spinner that finishes while the briefing is still being
+    /// made would read as "done" and send the user to a player holding the
+    /// old audio.
+    private static let startedNote =
+        "Rebuilding from your latest mail. It takes a few minutes; the new "
+        + "briefing appears the next time you press play."
 
     private var rows: [BriefingDigest.Row] { BriefingDigest.rows(for: appState.manifest) }
+
+    /// The exception path, and ONLY it.
+    ///
+    /// Two conditions, both required. The load must have failed with the
+    /// backend's "not generated yet" 404 — not a timeout, not a decode
+    /// failure, not a 500, all of which are ordinary errors with ordinary
+    /// error text. And there must be no manifest on screen: a restored
+    /// briefing from an earlier morning is something to play, so telling
+    /// someone there is nothing while a briefing sits under their thumb
+    /// would be both wrong and rude.
+    private var isWaiting: Bool {
+        guard appState.manifest == nil,
+              case .failed = appState.loadState
+        else { return false }
+        return WaitingRoom.shouldEnter(status: appState.todaysFailureStatus)
+    }
 
     /// The day the briefing on screen was made, which is not always today.
     ///
@@ -55,6 +80,15 @@ struct HomeView: View {
                         // VoiceOver reading it twice in a row is noise.
                         .accessibilityAddTraits(.isHeader)
 
+                    // The waiting room REPLACES the card, rather than
+                    // sitting under it. Two boxes both explaining that
+                    // nothing is ready is one box too many, and the card's
+                    // play button on that state is a button that cannot
+                    // work.
+                    if isWaiting {
+                        WaitingRoomCard(
+                            onRetry: { Task { await appState.playBriefing() } })
+                    } else {
                     TodaysBriefingCard(
                         title: briefingTitle,
                         state: appState.loadState,
@@ -68,6 +102,7 @@ struct HomeView: View {
                         // says it does.
                         onRetry: { Task { await appState.playBriefing() } }
                     )
+                    }
 
                     // The desk: the stories themselves. Above the rows
                     // below, which summarise the same morning by segment.
@@ -94,6 +129,37 @@ struct HomeView: View {
                         // for.
                         BriefingRows(rows: rows, onSelect: open(at:))
                             .disabled(appState.loadState == .loading)
+                    }
+
+                    RegenerateButton(
+                        isRunning: appState.isRegenerating,
+                        remaining: appState.regeneration?.remaining,
+                        onConfirm: {
+                            Task {
+                                do {
+                                    _ = try await appState.regenerateToday()
+                                    regenerateNote = Self.startedNote
+                                } catch {
+                                    // Through the same presenter the load
+                                    // errors use. Without it a transport
+                                    // failure printed "Network error:
+                                    // Error Domain=NSURLErrorDomain…" onto
+                                    // the page, under a masthead.
+                                    regenerateNote = HomeErrorPresentation
+                                        .present(error.localizedDescription)
+                                        .sentence
+                                }
+                            }
+                        }
+                    )
+                    .padding(.top, MercurySpace.section)
+
+                    if let regenerateNote {
+                        Text(regenerateNote)
+                            .font(MercuryType.figureCaption)
+                            .foregroundStyle(MercuryColor.inkFaint.color)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, MercurySpace.tight)
                     }
 
                     Button { showArchive = true } label: {
@@ -479,6 +545,14 @@ enum HomeErrorPresentation: Equatable {
     var detail: String? {
         if case .readable(_, let detail) = self { return detail }
         return nil
+    }
+
+    /// Both halves, for the places that have one line rather than a card.
+    /// `TodaysBriefingCard` sets them as separate views; the rebuild note
+    /// under the button is a single `Text`.
+    var sentence: String {
+        guard let detail else { return headline }
+        return "\(headline)\n\(detail)"
     }
 }
 

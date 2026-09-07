@@ -204,6 +204,22 @@ final class AppState {
             await playBriefing()
             return
         }
+        // A rebuild we asked for may have landed since this audio loaded.
+        //
+        // Home tells the user the new briefing "appears the next time you
+        // press play", and for anyone who had already pressed play that was
+        // simply false: the loaded file was resumed forever and the rebuilt
+        // audio was never fetched. `playBriefing` revalidates by ETag, so
+        // this costs a conditional request and resumes from the saved
+        // position when the rebuild has not landed yet.
+        //
+        // Only while STOPPED. Interrupting playback to swap the file under
+        // a listener is the thing `prefetchBriefing` refuses to do, and
+        // pressing pause is not a request for a different briefing.
+        if isRegenerating, !playback.isPlaying {
+            await playBriefing()
+            return
+        }
         playback.isPlaying ? playback.pause() : playback.play()
     }
 
@@ -292,6 +308,222 @@ final class AppState {
     @MainActor
     func saveSettings(_ settings: UserSettings) async throws {
         try await api.saveSettings(settings)
+    }
+
+    /// A rebuild this app asked for, from dispatch until it is seen to land.
+    ///
+    /// The Worker answers as soon as GitHub accepts the dispatch, which is
+    /// seconds; the generation behind it takes minutes. So "did the request
+    /// succeed" and "is a rebuild running" are different questions, and an
+    /// earlier cut answered the second with the first — `defer` cleared the
+    /// flag the moment the POST returned, re-enabling a button that spends
+    /// real money while the previous run was still going.
+    struct PendingRebuild: Equatable {
+        let requestedAt: Date
+        /// The briefing this rebuild is FOR. A manifest for any other
+        /// briefing cannot end it, however new it is.
+        let briefingId: String
+        /// The `generatedAt` of that briefing when this was asked for, when
+        /// it was the one on screen. Anything newer IS the rebuild — the id
+        /// cannot say so, because a forced run deliberately reuses it.
+        ///
+        /// Nil when the briefing on screen was some OTHER morning's. That
+        /// case is not hypothetical: open a briefing from the archive, press
+        /// rebuild, and an archive `generatedAt` from days ago would be
+        /// "superseded" by today's existing, un-rebuilt manifest the moment
+        /// anything fetched it.
+        let supersedes: Date?
+    }
+
+    private(set) var rebuild: PendingRebuild?
+    /// Clears `rebuild` when the window runs out.
+    ///
+    /// Not a comparison against the clock alone. `isRegenerating` reads
+    /// `Date()`, and `@Observable` cannot see time pass — so once the window
+    /// expired, nothing invalidated the view and the button stayed disabled
+    /// until some unrelated state happened to change. A timer that mutates
+    /// `rebuild` is a change SwiftUI can actually observe.
+    private var rebuildExpiry: Task<Void, Never>?
+
+    /// How long to believe in a rebuild nobody has confirmed.
+    ///
+    /// A real run took 423 seconds, and a job can fail on the server without
+    /// any way to tell the phone. Without a ceiling, one failed generation
+    /// would disable the button until the app was killed.
+    static let rebuildWindow: TimeInterval = 20 * 60
+
+    /// Whether a regeneration this app asked for is still plausibly running.
+    var isRegenerating: Bool {
+        guard let rebuild else { return false }
+        return Date().timeIntervalSince(rebuild.requestedAt) < Self.rebuildWindow
+    }
+
+    /// The last thing the server said about the day's allowance, so the
+    /// screen can say "two left" rather than letting someone find the limit
+    /// by hitting it.
+    private var lastRegeneration: RegenerationStatus?
+
+    /// That status, but only while it is still about TODAY.
+    ///
+    /// An app left open overnight kept yesterday's `remaining == 0` and
+    /// disabled a button whose allowance had reset hours earlier. The id is
+    /// the day, so comparing it is the whole check.
+    var regeneration: RegenerationStatus? {
+        guard let status = lastRegeneration else { return nil }
+        let today = AppDelegate.briefingId(for: .now)
+        return status.briefingId == today ? status : nil
+    }
+
+    /// Ask the server to rebuild today's briefing from mail that has
+    /// arrived since.
+    ///
+    /// Deliberately does NOT touch what is PLAYING. The new briefing takes
+    /// several minutes and reuses today's id, so swapping it in mid-listen
+    /// would replace the audio under the user — the same rule
+    /// `prefetchBriefing` follows. It is picked up on the next play, which
+    /// `togglePlayback` now makes true rather than merely promising.
+    @MainActor
+    func regenerateToday() async throws -> RegenerationStatus {
+        // The server's day, before anything is compared against it. The
+        // Worker keys the allowance by ITS date, and a device an hour the
+        // other side of midnight would otherwise file a perfectly good
+        // status under the wrong day and discard it.
+        await api.syncServerClock()
+        let today = AppDelegate.briefingId(for: .now)
+        // Only when the briefing on screen IS today's. See `supersedes`.
+        let previous = manifest?.briefingId == today ? manifest?.generatedAt : nil
+
+        do {
+            let status = try await api.requestRegeneration()
+            lastRegeneration = status
+            beginRebuild(of: today, supersedes: previous)
+            return status
+        } catch {
+            // A refusal still carries the counts, and losing them is not
+            // harmless: the button stayed enabled at the cap, so every
+            // press sent another request the server had already refused.
+            if let refused = Self.statusFromRefusal(error) {
+                lastRegeneration = refused
+            }
+            // This request dispatched nothing, so it leaves nothing
+            // pending — but it must not cancel a rebuild ALREADY running.
+            //
+            // `endRebuild()` unconditionally was wrong in a way the UI
+            // currently hides: the button is disabled while a rebuild is
+            // pending, so a second press cannot happen through it today.
+            // Any other caller — a deep link, a shortcut, a future control —
+            // would have had its 429 wipe the earlier rebuild's state,
+            // re-enabling the button and stopping the next play refetching
+            // while that job was still running. Clearing state you did not
+            // create is the kind of thing that is only ever unreachable
+            // until it is not.
+            if rebuild == nil { endRebuild() }
+            throw error
+        }
+    }
+
+    /// The allowance out of a 429 or 409 body.
+    ///
+    /// `APIError.badStatus` carries the body as text because that is what
+    /// every other screen wants to show; this is the one caller that wants
+    /// the numbers back out of it.
+    static func statusFromRefusal(_ error: Error) -> RegenerationStatus? {
+        guard case APIError.badStatus(let code, let body) = error,
+              code == 429 || code == 409,
+              let json = body.range(of: "{").map({ String(body[$0.lowerBound...]) })
+        else { return nil }
+        return try? JSONDecoder().decode(
+            RegenerationStatus.self, from: Data(json.utf8))
+    }
+
+    @MainActor
+    private func beginRebuild(of briefingId: String, supersedes: Date?) {
+        rebuildExpiry?.cancel()
+        rebuild = PendingRebuild(
+            requestedAt: Date(), briefingId: briefingId, supersedes: supersedes)
+        rebuildExpiry = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.rebuildWindow))
+            guard !Task.isCancelled else { return }
+            await MainActor.run { self?.rebuild = nil }
+        }
+    }
+
+    @MainActor
+    private func endRebuild() {
+        rebuildExpiry?.cancel()
+        rebuildExpiry = nil
+        rebuild = nil
+    }
+
+    /// The last failed load: which briefing it was for, and its status.
+    ///
+    /// Recorded rather than re-derived. `loadState.failed` carries
+    /// `localizedDescription`, and the alternative was the view scraping
+    /// "Backend returned 404: " back out of prose that exists to be read by
+    /// a person — a parser that breaks the moment anyone rewords the
+    /// sentence, and breaks silently, into "no waiting room ever".
+    ///
+    /// The BRIEFING ID is half of it. Without that, a 404 from the archive
+    /// — a morning swept by retention between the index being listed and
+    /// the row being tapped — was indistinguishable from today's briefing
+    /// not existing, so Home replaced "that morning is gone" with a waiting
+    /// room promising a briefing that was never coming.
+    struct LoadFailure: Equatable {
+        let briefingId: String?
+        let status: Int
+    }
+
+    private(set) var lastFailure: LoadFailure?
+
+    /// The status of the last failure, but only if it was about TODAY.
+    var todaysFailureStatus: Int? {
+        guard let lastFailure,
+              lastFailure.briefingId == AppDelegate.briefingId(for: .now)
+        else { return nil }
+        return lastFailure.status
+    }
+
+    @MainActor
+    private func recordFailure(_ error: Error, briefingId: String?) {
+        // Only when we are left with NO briefing.
+        //
+        // A 404 from the audio download is a different animal from a 404
+        // saying today's briefing was never made: the first means the
+        // manifest arrived and its audio did not, which is a broken object
+        // in R2 and an ordinary error. Recording both as "nothing yet"
+        // would offer the waiting room to someone whose briefing exists,
+        // and quietly hide the real fault.
+        //
+        // The view also checks `manifest == nil`, and this makes that
+        // belt-and-braces rather than the only thing standing between the
+        // two meanings.
+        if manifest == nil, case APIError.badStatus(let code, _) = error {
+            lastFailure = LoadFailure(briefingId: briefingId, status: code)
+        } else {
+            lastFailure = nil
+        }
+        loadState = .failed(error.localizedDescription)
+    }
+
+    /// Called wherever a freshly fetched manifest is adopted.
+    ///
+    /// A manifest generated after the rebuild was requested IS the rebuild,
+    /// so the button comes back and the next play stops refetching.
+    @MainActor
+    private func noteRebuildLanded(_ manifest: BriefingManifest) {
+        guard let rebuild else { return }
+        // The rebuild was for ONE briefing. Adopting a different one — an
+        // archive morning, say — says nothing about whether it finished.
+        guard manifest.briefingId == rebuild.briefingId else { return }
+        // With no baseline there is no server timestamp to beat, so the
+        // request time stands in. That compares a server clock to a device
+        // one, and it is the only comparison here that crosses clocks — but
+        // it is reached only when today's briefing was not on screen, where
+        // the alternative was treating the FIRST manifest to arrive as the
+        // rebuild regardless of when it was made.
+        let floor = rebuild.supersedes ?? rebuild.requestedAt
+        if manifest.generatedAt <= floor { return }
+        endRebuild()
     }
 
     /// The voice library, for the picker.
@@ -392,7 +624,7 @@ final class AppState {
             // `localizedDescription`, matching `playBriefing`. The other
             // spelling put "Error Domain=NSURLErrorDomain Code=-1004" on
             // the card where the user reads it.
-            loadState = .failed(error.localizedDescription)
+            recordFailure(error, briefingId: id)
         }
     }
 
@@ -423,6 +655,7 @@ final class AppState {
         do {
             let manifest = try await fetchTodayOrGenerate()
             self.manifest = manifest
+            noteRebuildLanded(manifest)
             // Persist the transcript before touching the audio: it is worth
             // keeping even if the download fails.
             await persist(manifest, audioPath: nil)
@@ -440,7 +673,7 @@ final class AppState {
                 loadState = .ready
                 return
             }
-            loadState = .failed(error.localizedDescription)
+            recordFailure(error, briefingId: AppDelegate.briefingId(for: .now))
         }
     }
 
@@ -512,9 +745,18 @@ final class AppState {
             // onto: `finish()` keeps the file so it can be replayed, so
             // without unloading it the new briefing could never be
             // published and the next tap replayed yesterday's.
+            // AFTER the swap, not before it.
+            //
+            // The early return below is the mid-listen case: the manifest is
+            // persisted but the coordinator keeps the old file, deliberately.
+            // Marking the rebuild landed there said "the new briefing is
+            // loaded" when it was not — so pausing and pressing play again
+            // resumed the stale audio instead of fetching, which is the
+            // exact bug the pending state exists to prevent.
             if playback.isLoaded && !playback.hasFinished { return true }
             playback.unload()
             self.manifest = manifest
+            noteRebuildLanded(manifest)
             return true
         } catch {
             print("[Mercury] Background prefetch for briefing \(id) failed: \(error)")
@@ -557,6 +799,7 @@ final class AppState {
                 return
             }
             self.manifest = manifest
+            noteRebuildLanded(manifest)
             await persist(manifest, audioPath: nil)
             let audioURL = try await api.downloadAudio(briefingId: manifest.briefingId)
             await persist(manifest, audioPath: audioURL.path)
@@ -564,7 +807,7 @@ final class AppState {
             await startPlayback(of: manifest)
             loadState = .ready
         } catch {
-            loadState = .failed(error.localizedDescription)
+            recordFailure(error, briefingId: id ?? AppDelegate.briefingId(for: .now))
         }
     }
 

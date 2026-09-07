@@ -153,3 +153,111 @@ final class VoiceListTests: XCTestCase {
                        ["broadsheet", "first-light", "paper"])
     }
 }
+
+/// Segments the listener can turn off. ROADMAP task 15.
+final class DisabledSegmentsTests: XCTestCase {
+
+    /// The wire name is what the job reads, so it is the thing to pin.
+    func testItRoundTripsUnderTheNameTheJobReads() throws {
+        var settings = UserSettings()
+        settings.disabledSegments = ["weather", "follow_ups"]
+
+        let data = try JSONEncoder().encode(settings)
+        let json = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(json["disabled_segments"] as? [String],
+                       ["weather", "follow_ups"])
+
+        let back = try JSONDecoder().decode(UserSettings.self, from: data)
+        XCTAssertEqual(back.disabledSegments, ["weather", "follow_ups"])
+    }
+
+    /// Absent means every segment, which is the state every install starts
+    /// in and the one this must never turn into "a briefing of nothing".
+    func testAbsentMeansEverythingIsOn() throws {
+        let settings = try JSONDecoder().decode(
+            UserSettings.self, from: Data(#"{"briefing_length":"standard"}"#.utf8))
+        XCTAssertEqual(settings.disabledSegments, [])
+    }
+
+    /// The screen must not offer a switch the server would override.
+    ///
+    /// `STRUCTURAL_SEGMENTS` on the backend keeps `cold_open` and
+    /// `sign_off` whatever the artifact says — a briefing with no greeting
+    /// starts mid-sentence and one with no close just stops. Offering the
+    /// toggle anyway is the same lie as a toggle nothing reads, which is
+    /// the failure this whole artifact exists to prevent.
+    func testTheStructuralSegmentsAreNotOffered() {
+        let offered = Set(UserSettings.optionalSegments.map(\.id))
+        XCTAssertFalse(offered.contains("cold_open"))
+        XCTAssertFalse(offered.contains("sign_off"))
+        XCTAssertEqual(
+            offered,
+            ["weather", "calendar", "inbox", "world", "follow_ups"],
+            "these are the five `OPTIONAL_SEGMENTS` the backend resolves")
+    }
+}
+
+/// Rebuilding today's briefing on demand.
+final class RegenerationStatusTests: XCTestCase {
+
+    func testItDecodesWhatTheWorkerReturns() throws {
+        let status = try JSONDecoder().decode(
+            RegenerationStatus.self,
+            from: Data(#"{"status":"started","briefing_id":"2026-09-05","used":1,"limit":3}"#.utf8))
+
+        XCTAssertEqual(status.briefingId, "2026-09-05")
+        XCTAssertEqual(status.used, 1)
+        XCTAssertEqual(status.remaining, 2)
+    }
+
+    /// The 429 body carries the same counts, so the screen can say how many
+    /// are left using one shape rather than two.
+    func testAtTheCapNothingIsRemaining() throws {
+        let status = try JSONDecoder().decode(
+            RegenerationStatus.self, from: Data(#"{"used":3,"limit":3}"#.utf8))
+
+        XCTAssertEqual(status.remaining, 0)
+    }
+
+    /// A server that reports more used than the limit — a cap lowered
+    /// between presses, say. Clamped, because "-1 rebuilds left" is not a
+    /// sentence anyone should read.
+    func testRemainingNeverGoesNegative() {
+        XCTAssertEqual(
+            RegenerationStatus(briefingId: "x", used: 9, limit: 3).remaining, 0)
+    }
+
+    /// A response with no counts is a broken response.
+    ///
+    /// These used to default to zero, so `{}` — or an error page, or a
+    /// truncated body — decoded into a perfectly valid-looking status
+    /// reading "no rebuilds left today". The button then disabled itself
+    /// for the rest of the day and nothing anywhere said why.
+    func testAMissingCountIsARejection() {
+        for body in [#"{}"#, #"{"used":1}"#, #"{"limit":3}"#] {
+            XCTAssertThrowsError(
+                try JSONDecoder().decode(
+                    RegenerationStatus.self, from: Data(body.utf8)),
+                "decoded \(body) instead of rejecting it")
+        }
+    }
+
+    /// The confirmation must not go quiet about the limit just because the
+    /// server has not named a number yet — the first press of the day is
+    /// the one where it matters most.
+    @MainActor
+    func testTheDialogAlwaysSaysTheLimitIsBounded() {
+        let unknown = RegenerateButton(
+            isRunning: false, remaining: nil, onConfirm: {})
+        XCTAssertTrue(
+            unknown.confirmationMessage.contains("few are allowed each day"),
+            unknown.confirmationMessage)
+
+        let known = RegenerateButton(
+            isRunning: false, remaining: 2, onConfirm: {})
+        XCTAssertTrue(
+            known.confirmationMessage.contains("2 rebuilds left today"),
+            known.confirmationMessage)
+    }
+}

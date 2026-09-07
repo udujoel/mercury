@@ -46,21 +46,40 @@ iOS
 **Gate: you tap the greeting card and within ninety seconds two hosts are
 discussing your actual meetings and your actual inbox.**
 
-## Audio identity backlog (do before Phase 3)
+## Audio identity backlog — CLOSED, absorbed into "The show"
 
 Phase 0's gate passed on Google Neural2 — good, not great. See ADR-006.
 
-- [ ] ElevenLabs Flash v2.5 behind the existing `TTSProvider` protocol,
-      one new file in `app/providers/`, no pipeline change
-- [ ] A/B the same script through Neural2 and ElevenLabs, listen to both
-      cold opens, keep the winner
-- [ ] Short intro stinger before the cold open, short outro under the sign-off
-- [ ] Offset every manifest timing by the intro duration — `synthesize_briefing`
-      currently assumes turn zero starts at 0ms, so transcript sync silently
-      drifts by the length of the intro if this is missed
-- [ ] Duck the music under the first and last turns rather than hard-cutting
+This list was staged "do before Phase 3", and Phase 3 was dropped (ADR-009).
+Everything on it was done under tasks 1-3 below rather than here; it is kept
+so the trail from ADR-006 to the work is readable.
 
-## UI refinement backlog
+- [x] ElevenLabs Flash v2.5 behind the existing `TTSProvider` protocol,
+      one new file in `app/providers/`, no pipeline change — task 1
+- [x] A/B the same script through Neural2 and ElevenLabs, listen to both
+      cold opens, keep the winner — task 1, and settled again on 2026-09-05
+      by measuring the shipped audio when both hosts came out male: the
+      briefing's speakers sat at 132Hz and 94Hz against 219Hz for the same
+      voice's own preview, which is how the 402 on a library voice was found
+- [x] Short intro stinger before the cold open, short outro under the
+      sign-off — task 3
+- [x] Offset every manifest timing by the intro duration — task 3. Done by
+      moving `cursor_ms` before the turn loop rather than correcting numbers
+      afterwards, so there is one place that computes offsets
+- [x] Duck the music under the first and last turns rather than hard-cutting.
+      `stitch._duck` OVERLAYS the tail rather than crossfading or appending:
+      both of those move every timing in the manifest, which is ADR-006's
+      failure wearing a nicer coat. Overlay leaves `len(combined)` untouched.
+      Tested on both halves, because either alone passes for the wrong
+      reason — the length must not move AND the audio must actually change
+
+## UI refinement backlog — SUPERSEDED by ADR-012
+
+Every item below describes the dark ambient card deck. ADR-012 replaced that
+register with Particle's light editorial one, and the views these refer to —
+the translucent deck, the placeholder weather card — no longer exist. Left
+unticked rather than deleted, because "we changed our minds" is a more useful
+record than a clean list; do not treat them as work outstanding.
 
 Observed while testing the MVP on the simulator, none of it blocking:
 
@@ -218,9 +237,25 @@ Audio and voice — a chain, each step needs the last:
       stings, royalty-free and committed as assets. Acceptance: a manifest
       generated with music and one without differ *only* by the offset, and
       every deep-link still lands on the right sentence.
-- [ ] 4. The waiting room. Bed plus a short spoken holding line when today's
+- [x] 4. The waiting room. Bed plus a short spoken holding line when today's
       briefing is not there yet. Exception path only — a test should assert it
       never appears on a normal morning.
+      **Done.** Entirely on-device, which is forced rather than chosen: it
+      exists for the case where the server has nothing to give, so it cannot
+      depend on the server giving it something. A bundled bed under
+      `AVSpeechSynthesizer` — no network, no ElevenLabs spend, works on a
+      plane. The system voice is not Mara; on an exception path a real voice
+      saying a true thing beats silence.
+      Gated on the STATUS, not the prose: `AppState.lastFailureStatus`
+      records the code, and only when the failure left no briefing at all —
+      a 404 on the AUDIO of a briefing that exists is a broken object in R2,
+      not a morning that never happened, and offering the waiting room for
+      it would hide the real fault. `WaitingRoomTests` covers both, plus the
+      roadmap's own ask (`testANormalMorningRecordsNoFailure`) and the bed
+      actually being in the built bundle — the app-icon lesson as an
+      assertion.
+      The session uses `.ambient`, so it obeys the Ring/Silent switch. It is
+      the one sound in Mercury nobody asked to hear.
 
 The listening surface:
 
@@ -281,7 +316,7 @@ Added 2026-09-04, after the ElevenLabs go-ahead:
       library from `GET /v1/voices`, which needs the API key — and the key
       stays on the server, so this is a Worker route that proxies the list,
       not a client-side call.
-- [ ] 13. **Regenerate against what has arrived since.** Today's briefing is
+- [x] 13. **Regenerate against what has arrived since.** Today's briefing is
       made overnight, so by 9am it is describing an inbox that has moved on.
       A "regenerate" action re-runs ingestion NOW and rebuilds the briefing
       from current mail and calendar, rather than replaying the one built at
@@ -302,7 +337,7 @@ Added 2026-09-04, after the ElevenLabs go-ahead:
         you. The same rule the prefetch now follows: publish when the
         current one has finished, not while it is playing.
 
-- [ ] 14. **An app icon, and an onboarding worth the first launch.** Mercury
+- [x] 14. **An app icon, and an onboarding worth the first launch.** Mercury
       ships with the default template icon, which is the first thing anyone
       sees and currently says nothing.
 
@@ -324,16 +359,29 @@ Added 2026-09-04, after the ElevenLabs go-ahead:
         once, and nothing currently explains that: a new user reaches Home
         and sees a card that fetches nothing.
 
-- [ ] 15. **Segments the user can turn off.** Removed from the settings
-      artifact rather than shipped as a toggle that does nothing.
-      `_has_valid_segment_coverage_and_order` requires EVERY canonical
-      segment to be present, and `_CANONICAL_SEGMENT_ORDER` is `list(Segment)`
-      — so "skip the weather" is a change to the script chain, its validator
-      and the repair path, not a value the artifact can carry. Doing it
-      properly means threading the enabled set through generation and
-      teaching the validator to expect only those; doing it cheaply means a
-      preference nothing reads, which is the failure the artifact exists to
-      prevent.
+- [x] 15. **Segments the user can turn off.** Done the expensive way, which
+      was the only way: `resolve_segments` computes the list once and every
+      pass is handed it — the prompt's segment definitions, the outline and
+      turn-list response schemas, the draft's repair check and the
+      revision's validator. A segment left on in any one of those is a model
+      told to write something the validator then rejects, which is a repair
+      loop rather than a setting.
+      The validator gained a second question. It asked "is everything
+      present?"; it now also asks "is anything here that should not be?",
+      because a model handed a narrowed prompt can still write the weather
+      and accepting it would be the toggle-that-does-nothing again.
+      `cold_open` and `sign_off` are `STRUCTURAL_SEGMENTS` and cannot be
+      dropped — a briefing with no greeting starts mid-sentence and one with
+      no close just stops — and the iOS screen does not offer them, because
+      a switch the server overrides is the same lie as a switch nothing
+      reads. Unknown names are ignored rather than raised: the phone writing
+      the artifact may be older or newer than the job reading it, and losing
+      a morning to an unrecognised segment name is the worse outcome.
+      **Found while wiring it:** `music_set` was missing from the Worker's
+      `SETTINGS_FIELDS` whitelist, so the picker encoded it, the pipeline
+      read it, and the Worker deleted it on every save. The music setting
+      has never once applied in production. There is now a test that names
+      every field `UserSettings` carries and fails when one is dropped.
 
 **Start 1, 5 and 8 in parallel** — provider, player view, new feature module.
 None blocks the others, and everything else falls out of them in order.

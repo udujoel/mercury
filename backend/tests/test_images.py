@@ -450,18 +450,130 @@ async def test_muted_senders_are_dropped_before_the_briefing_sees_them():
     assert captured == {}
 
 
-def test_settings_no_longer_carry_a_field_nothing_applies():
-    """`disabled_segments` was in the artifact for one round and is gone.
+def test_disabled_segments_is_carried_and_honoured():
+    """`disabled_segments` is back, and this time the pipeline reads it.
 
-    `_has_valid_segment_coverage_and_order` requires EVERY canonical segment
-    to be present, so making one optional is a change to the script chain and
-    its validator — not a value this artifact can carry. A toggle that stores
-    a preference nothing reads is the exact failure the artifact exists to
-    prevent, so the field is absent rather than ignored.
+    It was in the artifact for one round and was REMOVED, because
+    `_has_valid_segment_coverage_and_order` required every canonical segment
+    to be present — so it stored a preference nothing read, which is the
+    exact failure the artifact exists to prevent. This test is the reason it
+    is allowed back: the field exists AND the chain narrows to it.
+
+    Asserted against the resolver rather than against a hardcoded list, so
+    adding a segment to `Segment` cannot leave this passing while the
+    pipeline ignores it.
     """
-    from app.core.schemas import UserSettings
+    from app.core.schemas import Segment, UserSettings
+    from app.pipeline.script_chain import (
+        STRUCTURAL_SEGMENTS,
+        resolve_segments,
+    )
 
-    assert not hasattr(UserSettings(), "disabled_segments")
+    assert UserSettings().disabled_segments is None, "absent means every segment"
+    assert resolve_segments(None) == list(Segment)
+
+    kept = resolve_segments(["weather", "follow_ups"])
+    assert Segment.WEATHER not in kept
+    assert Segment.FOLLOW_UPS not in kept
+    assert Segment.INBOX in kept
+    # Order is preserved, because the validator checks order against it.
+    assert kept == [s for s in Segment if s in kept]
+
+    # The opening and the close are the FORMAT. A briefing without a
+    # greeting starts mid-sentence and one without a close just stops, so
+    # these are not on offer whatever the artifact says.
+    everything_off = resolve_segments([s.value for s in Segment])
+    assert set(everything_off) == set(STRUCTURAL_SEGMENTS)
+
+    # A name from a phone older or newer than this build. Ignored, not
+    # raised: failing a whole morning over an unrecognised segment name is a
+    # worse outcome than writing the segment.
+    assert resolve_segments(["not_a_segment", "WEATHER "]) == [
+        s for s in Segment if s is not Segment.WEATHER
+    ], "unknown names ignored; known ones matched case- and space-insensitively"
+
+
+@pytest.mark.asyncio
+async def test_a_first_draft_cannot_smuggle_a_disabled_segment_through():
+    """The model ignoring both the prompt and the schema must not reach audio.
+
+    `_complete_json` runs its `repair_check` only on a REPAIRED response, on
+    purpose: a first draft that is merely missing something is the critique
+    pass's business. That reasoning does not carry to a segment the listener
+    removed — with `passes=2` there is no critique pass at all, and with
+    `passes=4` the chain keeps the draft whenever the revision scores worse.
+    Either way an unwanted segment in the first draft would reach the audio.
+    """
+    import json
+
+    from app.core.schemas import BriefingLength
+    from app.pipeline.script_chain import generate_script
+
+    class _DisobedientLLM:
+        """Writes the weather regardless of what it was asked for."""
+
+        async def complete(self, system, prompt, *, temperature=0.7,
+                           json_mode=False, response_schema=None):
+            # Keyed on DRAFT_PROMPT's opening line, not on the word
+            # "outline" — the draft prompt EMBEDS the outline, so a
+            # substring check answered every pass with an outline and the
+            # draft pass then retried three times against a dict.
+            if not prompt.startswith("Write the full script"):
+                return json.dumps({
+                    "segments": [
+                        {"segment": "cold_open", "covers": "x",
+                         "angle": "y", "words": 20},
+                        {"segment": "sign_off", "covers": "x",
+                         "angle": "y", "words": 20},
+                    ]
+                })
+            return json.dumps([
+                {"speaker": "A", "segment": "cold_open", "text": "Morning."},
+                {"speaker": "B", "segment": "weather", "text": "It is raining."},
+                {"speaker": "A", "segment": "sign_off", "text": "See you."},
+            ])
+
+    turns, _ = await generate_script(
+        llm=_DisobedientLLM(),
+        emails=[], events=[], weather=None,
+        length=BriefingLength.STANDARD,
+        date=datetime(2026, 9, 6, tzinfo=UTC),
+        disabled_segments=[s for s in ("weather", "calendar", "inbox",
+                                       "world", "follow_ups")],
+    )
+
+    written = {t.segment.value for t in turns}
+    assert "weather" not in written, (
+        "a segment the listener turned off reached the script"
+    )
+    assert "cold_open" in written and "sign_off" in written
+
+
+def test_a_disabled_segment_is_rejected_if_the_model_writes_it_anyway():
+    """Turning a segment off means it must not appear — either way round.
+
+    The validator used to ask only "is everything present?". With segments
+    optional it also has to ask "is anything here that should not be?",
+    because a model handed a narrowed prompt can still write the weather,
+    and accepting it would be the toggle-that-does-nothing all over again.
+    """
+    from app.core.schemas import Turn
+    from app.pipeline.script_chain import (
+        _has_valid_segment_coverage_and_order,
+        resolve_segments,
+    )
+
+    kept = resolve_segments(["weather"])
+    without = [Turn(speaker="A", segment=s, text="x") for s in kept]
+    assert _has_valid_segment_coverage_and_order(without, kept)
+
+    with_weather = [
+        Turn(speaker="A", segment=s, text="x")
+        for s in resolve_segments(None)
+    ]
+    assert not _has_valid_segment_coverage_and_order(with_weather, kept), (
+        "a segment the listener turned off must fail the script"
+    )
 
 
 def test_the_settings_route_exists_on_fastapi_too(tmp_path, monkeypatch):
@@ -663,11 +775,30 @@ def test_the_default_voices_match_the_host_names():
 
     assert s.host_a_name == "Mara"
     assert s.host_b_name == "Theo"
-    # The British woman for Mara, Brian for Theo.
-    assert DEFAULT_ELEVENLABS_VOICE_A == "3Drdg7QWqr45nZmYpXRP"
+    # A British woman for Mara, Brian for Theo — both PREMADE.
+    #
+    # The id here changed once already, and not for taste. The previous
+    # voice A, "Posh - A British Woman" (3Drdg7QWqr45nZmYpXRP), is a LIBRARY
+    # voice, and every call for it returned 402 paid_plan_required on the
+    # free plan while Brian returned 200. The run degraded that host to
+    # Google and shipped a briefing read by two men, green all the way.
+    assert DEFAULT_ELEVENLABS_VOICE_A == "Xb7hH8MSUJpSbSDYk0k2"
     assert DEFAULT_ELEVENLABS_VOICE_B == "nPczCjzI2devNBz1zQrb"
+    assert (
+        DEFAULT_ELEVENLABS_VOICE_A != "3Drdg7QWqr45nZmYpXRP"
+    ), "that voice is library-only and 402s on the free plan"
     assert s.elevenlabs_voice_a == DEFAULT_ELEVENLABS_VOICE_A
     assert s.elevenlabs_voice_b == DEFAULT_ELEVENLABS_VOICE_B
+
+    # The GOOGLE pair is matched to the same names, and was the other half
+    # of the same bug: Mara had `Neural2-D` (male) and Theo `Neural2-F`
+    # (female). It stayed invisible because these are only reached when
+    # ElevenLabs fails — so the first time the fallback ran for real, it
+    # ran backwards.
+    #
+    # Google's en-US Neural2 set: A, D, I, J are male; C, E, F, G, H female.
+    assert s.tts_voice_host_a == "en-US-Neural2-F", "Mara is a woman"
+    assert s.tts_voice_host_b == "en-US-Neural2-D", "Theo is a man"
 
 
 def test_a_tilde_credentials_path_is_expanded(monkeypatch, tmp_path):
@@ -792,6 +923,81 @@ async def test_music_moves_every_timing_by_exactly_the_intro_length():
         with_music.turns[0].words[0].start_ms
         == without.turns[0].words[0].start_ms + intro_ms
     )
+
+
+def test_the_bed_ducks_under_the_voice_without_moving_a_single_timing():
+    """The mix changes; the arithmetic does not.
+
+    The roadmap asked for the music to recede under the first and last turns
+    rather than stop dead. Both obvious ways of doing that move every timing
+    in the manifest — a crossfade shortens the file, appending a tail
+    lengthens it — which is the ADR-006 failure wearing a nicer coat.
+
+    So this asserts BOTH halves, because either alone passes for the wrong
+    reason: the length must be untouched, and the audio must actually have
+    changed. A duck that no-ops satisfies the first on its own.
+    """
+    from pydub.generators import Sine
+
+    from app.synthesis.music import DUCK_MS, MusicSet
+    from app.synthesis.stitch import _duck
+
+    # Real signal, not silence. The first cut of this test built the bed
+    # from `AudioSegment.silent().apply_gain(-1)` — and gained silence is
+    # still silence, so overlaying it produced byte-identical audio and the
+    # test failed against a duck that was working perfectly. A fixture that
+    # cannot demonstrate the thing it is asserting is worse than no test.
+    intro = Sine(440).to_audio_segment(duration=3000)
+    outro = Sine(330).to_audio_segment(duration=3000)
+    voice = Sine(220).to_audio_segment(duration=8000)
+    combined = intro + voice
+
+    music = MusicSet(name="test", intro=intro, outro=outro, interlude=None)
+    ducked, outro_played_ms = _duck(combined, music, intro_ms=len(intro))
+
+    # What the caller must not append twice. The outro's opening is heard
+    # under the sign-off; appending the whole outro afterwards restarts it
+    # at full level, which stutters more audibly than the hard cut this
+    # replaced.
+    assert outro_played_ms == DUCK_MS
+
+    assert len(ducked) == len(combined), (
+        "the file length must not move — every manifest offset is measured "
+        "against it"
+    )
+    assert ducked[: len(intro)].raw_data == combined[: len(intro)].raw_data, (
+        "the intro itself is untouched; only what follows it is mixed into"
+    )
+    assert (
+        ducked[len(intro) : len(intro) + DUCK_MS].raw_data
+        != combined[len(intro) : len(intro) + DUCK_MS].raw_data
+    ), "the bed must actually be audible under the first turn"
+    assert ducked[-DUCK_MS:].raw_data != combined[-DUCK_MS:].raw_data, (
+        "and under the last one"
+    )
+
+
+def test_a_briefing_too_short_to_duck_is_returned_unharmed():
+    """A mixing nicety must never be able to cost the morning (rule 7)."""
+    from pydub import AudioSegment
+
+    from app.synthesis.music import MusicSet
+    from app.synthesis.stitch import _duck
+
+    music = MusicSet(
+        name="test",
+        intro=AudioSegment.silent(duration=3000),
+        outro=AudioSegment.silent(duration=3000),
+        interlude=None,
+    )
+
+    empty, played = _duck(AudioSegment.silent(duration=0), music, intro_ms=0)
+    assert len(empty) == 0 and played == 0
+
+    # An intro and nothing after it: there is no voice to duck under.
+    only_intro = AudioSegment.silent(duration=3000)
+    kept, _ = _duck(only_intro, music, intro_ms=3000)
+    assert len(kept) == 3000
 
 
 @pytest.mark.asyncio

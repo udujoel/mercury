@@ -61,6 +61,52 @@ RULES
 """
 
 
+# The per-segment definitions, keyed rather than inlined.
+#
+# ROADMAP task 15 turns some of these off. A prompt that still DESCRIBED a
+# segment the pipeline was not going to accept would be asking the model to
+# write something the validator then rejects — which is not "the user turned
+# off the weather", it is a briefing that fails its own coverage check and
+# gets repaired in a loop. The prompt has to describe exactly the segments
+# that are wanted, so the block is assembled from this rather than frozen
+# into the template.
+SEGMENT_DEFINITIONS: dict[str, str] = {
+    "cold_open": (
+        "- cold_open  — Greet the listener by name. State the day and the date. Do\n"
+        "               NOT state a clock time: this briefing is generated overnight\n"
+        "               and heard hours later, so any time you name will be wrong.\n"
+        "               One host makes a SPECIFIC observation about the day ahead\n"
+        "               drawn from the CALENDAR. Never open with a news story or an\n"
+        "               essay."
+    ),
+    "weather": (
+        "- weather    — Current conditions and the day's forecast. One wry remark.\n"
+        "               Short. This is texture, not information."
+    ),
+    "calendar": (
+        "- calendar   — The day walked chronologically. Flag anything needing prep.\n"
+        "               Name attendees. Connect an event to an email or story only\n"
+        "               where a genuine link exists."
+    ),
+    "inbox": (
+        "- inbox      — Top emails by priority. Anything needing a response is\n"
+        "               called out explicitly. Newsletters are summarised as a\n"
+        "               group with the two most interesting items pulled out."
+    ),
+    "world": (
+        "- world      — Two to four clustered stories from the user's interests, with\n"
+        "               full conversational treatment and real disagreement. This is\n"
+        "               where analysis and essays belong, NOT the cold open."
+    ),
+    "follow_ups": (
+        "- follow_ups — Where the listener owes a response. Explicit and actionable."
+    ),
+    "sign_off": (
+        "- sign_off   — Warm close. Occasionally tie back to a theme. Never generic."
+    ),
+}
+
+
 OUTLINE_PROMPT = """Here is today's material.
 
 DATE: {date}
@@ -88,25 +134,7 @@ For each segment give:
 Segments in order, and what each one IS. These definitions are fixed. Do not
 reinterpret them, and do not move content between segments:
 
-- cold_open  — Greet the listener by name. State the day and the date. Do
-               NOT state a clock time: this briefing is generated overnight
-               and heard hours later, so any time you name will be wrong.
-               One host makes a SPECIFIC observation about the day ahead
-               drawn from the CALENDAR. Never open with a news story or an
-               essay.
-- weather    — Current conditions and the day's forecast. One wry remark.
-               Short. This is texture, not information.
-- calendar   — The day walked chronologically. Flag anything needing prep.
-               Name attendees. Connect an event to an email or story only
-               where a genuine link exists.
-- inbox      — Top emails by priority. Anything needing a response is called
-               out explicitly. Newsletters are summarised as a group with the
-               two most interesting items pulled out.
-- world      — Two to four clustered stories from the user's interests, with
-               full conversational treatment and real disagreement. This is
-               where analysis and essays belong, NOT the cold open.
-- follow_ups — Where the listener owes a response. Explicit and actionable.
-- sign_off   — Warm close. Occasionally tie back to a theme. Never generic.
+{segment_definitions}
 
 If a segment genuinely has no material, give it one short line and move its
 words to a segment that does — but never fill an empty segment by borrowing

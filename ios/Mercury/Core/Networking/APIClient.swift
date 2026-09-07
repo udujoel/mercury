@@ -43,6 +43,9 @@ protocol APIClientProtocol {
     func saveSettings(_ settings: UserSettings) async throws
     /// The ElevenLabs voice library, with a playable sample per voice.
     func fetchVoices() async throws -> VoiceList
+    /// Asks the server to rebuild today's briefing from mail that has
+    /// arrived since. Returns how many of the day's allowance are used.
+    func requestRegeneration() async throws -> RegenerationStatus
     /// Registers (or refreshes) this device's APNs token with the backend
     /// so the server cron can wake it with a silent push. Mirrors
     /// `POST /devices/register` in `backend/app/api/devices.py`.
@@ -174,6 +177,30 @@ final class APIClient: APIClientProtocol {
 
     func fetchVoices() async throws -> VoiceList {
         try await request(.voices)
+    }
+
+    func requestRegeneration() async throws -> RegenerationStatus {
+        var urlRequest = URLRequest(url: Endpoint.regenerate.url())
+        urlRequest.httpMethod = Endpoint.regenerate.method
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+        Self.authorize(&urlRequest)
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: urlRequest)
+        } catch {
+            throw APIError.transport(error)
+        }
+        // `validate` throws on 429 with the server's message, which is the
+        // one the user needs: it names how many are left and why there is a
+        // limit at all.
+        try Self.validate(response, body: data)
+        do {
+            return try decoder.decode(RegenerationStatus.self, from: data)
+        } catch {
+            throw APIError.decoding(error)
+        }
     }
 
     func fetchSettings() async throws -> UserSettings? {

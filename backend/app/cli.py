@@ -384,11 +384,12 @@ async def _generate(
         apply_to_environment(user_settings)
         log.info(
             "applied saved settings (length=%s, provider=%s, feeds=%d, "
-            "muted senders=%d)",
+            "muted senders=%d, segments off=%s)",
             length.value,
             user_settings.tts_provider or "unset",
             len(user_settings.feeds),
             len(user_settings.muted_senders),
+            ",".join(user_settings.disabled_segments or []) or "none",
         )
 
     try:
@@ -420,6 +421,9 @@ async def _generate(
             feeds=user_settings.feeds if user_settings else None,
             muted_senders=user_settings.muted_senders if user_settings else None,
             music_set=user_settings.music_set if user_settings else None,
+            disabled_segments=(
+                user_settings.disabled_segments if user_settings else None
+            ),
         )
     except EmptyBriefingError as exc:
         # Named separately from a generic failure because the operator action

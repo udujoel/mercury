@@ -21,6 +21,11 @@ import worker from "../src/index.js";
 
 const TOKEN = "x".repeat(40);
 
+// Mirrors `MAX_REGENERATIONS_PER_DAY` in the Worker, which is not exported.
+// If the Worker's number changes and this one does not, the concurrency
+// test fails loudly rather than asserting the wrong ceiling.
+const MAX_PER_DAY = 3;
+
 /**
  * An R2 stub. `objects` maps key -> {json, size, etag}.
  *
@@ -206,14 +211,53 @@ describe("GET /briefings", () => {
 
 describe("settings", () => {
   /** A bucket that also records writes, which `bucket()` does not. */
+  // Read-your-writes, and `onlyIf` on PUT honoured the way R2 honours it.
+  //
+  // Both matter. The regeneration cap reserves its slot with a conditional
+  // write and re-reads on a lost race, so a stub that ignored `onlyIf` — or
+  // that served `get` from the ORIGINAL objects rather than from what was
+  // written — would make the concurrency path untestable and quietly green.
+  // That is the same trap the `onlyIf`-on-GET note above describes.
   function writableBucket(objects = {}) {
     const base = bucket(objects);
     const written = {};
+    let version = 0;
+
+    const etagOf = (key) =>
+      written[key] === undefined ? undefined : `"w-${written[key].version}"`;
+
     return {
       ...base,
-      written,
-      put: async (key, body) => {
-        written[key] = body;
+      // Bodies only, so assertions stay `written[key]` as they were.
+      get written() {
+        return Object.fromEntries(
+          Object.entries(written).map(([k, v]) => [k, v.body]),
+        );
+      },
+      get: async (key, options) => {
+        const mine = written[key];
+        if (mine === undefined) return base.get(key, options);
+        return {
+          etag: `"w-${mine.version}"`,
+          httpEtag: `"w-${mine.version}"`,
+          size: mine.body.length,
+          body: mine.body,
+          text: async () => mine.body,
+          json: async () => JSON.parse(mine.body),
+        };
+      },
+      put: async (key, body, options) => {
+        const onlyIf = options?.onlyIf;
+        const current = etagOf(key);
+        if (onlyIf?.etagDoesNotMatch === "*" && current !== undefined) {
+          return null; // exists, and the caller asked for a create
+        }
+        if (onlyIf?.etagMatches !== undefined && onlyIf.etagMatches !== current) {
+          return null; // someone else wrote since the caller read
+        }
+        version += 1;
+        written[key] = { body, version };
+        return { key, etag: `"w-${version}"` };
       },
     };
   }
@@ -424,6 +468,423 @@ describe("settings", () => {
   test("GET /voices still needs the token", async () => {
     const res = await worker.fetch(new Request("https://x/voices"), envFor({}));
     assert.equal(res.status, 401);
+  });
+
+  test("POST /regenerate dispatches the same workflow the cron runs", async () => {
+    const original = globalThis.fetch;
+    const calls = [];
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url: String(url), body: JSON.parse(init.body) });
+      return new Response(null, { status: 204 });
+    };
+
+    try {
+      const env = { ...envFor({}), GITHUB_DISPATCH_TOKEN: "t", GITHUB_REPO: "o/r" };
+      env.BRIEFINGS = writableBucket({});
+
+      const res = await worker.fetch(
+        new Request("https://x/regenerate", {
+          method: "POST",
+          headers: { "x-mercury-token": TOKEN },
+        }),
+        env,
+      );
+
+      assert.equal(res.status, 200);
+      assert.equal(calls.length, 1);
+      assert.match(calls[0].url, /\/actions\/workflows\/.+\/dispatches$/);
+      // force, or the run is a no-op: today's briefing already exists,
+      // which is the entire reason someone is pressing this.
+      assert.equal(calls[0].body.inputs.force, "true");
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  test("POST /regenerate needs the token", async () => {
+    const env = { ...envFor({}), GITHUB_DISPATCH_TOKEN: "t", GITHUB_REPO: "o/r" };
+    env.BRIEFINGS = writableBucket({});
+
+    const res = await worker.fetch(
+      new Request("https://x/regenerate", { method: "POST" }),
+      env,
+    );
+
+    assert.equal(res.status, 401);
+    assert.equal(Object.keys(env.BRIEFINGS.written).length, 0);
+  });
+
+  test("POST /regenerate stops at the daily cap", async () => {
+    const original = globalThis.fetch;
+    let dispatches = 0;
+    globalThis.fetch = async () => {
+      dispatches += 1;
+      return new Response(null, { status: 204 });
+    };
+
+    try {
+      const env = { ...envFor({}), GITHUB_DISPATCH_TOKEN: "t", GITHUB_REPO: "o/r" };
+      const store = {};
+      env.BRIEFINGS = {
+        get: async (k) => (store[k] ? { text: async () => store[k] } : null),
+        put: async (k, v) => {
+          store[k] = v;
+        },
+        list: async () => ({ objects: [] }),
+      };
+
+      let last;
+      for (let i = 0; i < 5; i += 1) {
+        last = await worker.fetch(
+          new Request("https://x/regenerate", {
+            method: "POST",
+            headers: { "x-mercury-token": TOKEN },
+          }),
+          env,
+        );
+      }
+
+      // Three allowed, then refused — and no further dispatch after the cap.
+      assert.equal(dispatches, 3);
+      assert.equal(last.status, 429);
+      const body = await last.json();
+      assert.equal(body.used, 3);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  test("a failed dispatch does not burn the day's allowance", async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = async () => new Response("nope", { status: 500 });
+
+    try {
+      const env = { ...envFor({}), GITHUB_DISPATCH_TOKEN: "t", GITHUB_REPO: "o/r" };
+      env.BRIEFINGS = writableBucket({});
+
+      const res = await worker.fetch(
+        new Request("https://x/regenerate", {
+          method: "POST",
+          headers: { "x-mercury-token": TOKEN },
+        }),
+        env,
+      );
+
+      assert.equal(res.status, 502);
+      // The allowance is what matters, not whether an object exists.
+      //
+      // This used to assert nothing had been written at all, which was true
+      // of the old write-late order and is not true of reserve-then-release
+      // — the counter is written, then written back. Asserting the byte
+      // instead of the behaviour would have failed a fix that preserved
+      // exactly the property the test was named for, so it now asserts the
+      // property: the day still has its full allowance.
+      const counter = JSON.parse(
+        env.BRIEFINGS.written[
+          Object.keys(env.BRIEFINGS.written).find((k) =>
+            k.endsWith(".regenerations.json"),
+          )
+        ],
+      );
+      assert.equal(counter.count, 0);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  test("simultaneous taps cannot dispatch past the cap", async () => {
+    const original = globalThis.fetch;
+    let dispatches = 0;
+    globalThis.fetch = async () => {
+      dispatches += 1;
+      // A dispatch that does not resolve immediately, so every request is
+      // in flight at once. With the old read-check-dispatch-write order all
+      // eight read `used === 0`, all eight dispatch, and all eight write
+      // `count: 1` — the cap never engages and this asserts 3, not 8.
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return new Response(null, { status: 204 });
+    };
+
+    try {
+      const env = { ...envFor({}), GITHUB_DISPATCH_TOKEN: "t", GITHUB_REPO: "o/r" };
+      env.BRIEFINGS = writableBucket({});
+
+      const responses = await Promise.all(
+        Array.from({ length: 8 }, () =>
+          worker.fetch(
+            new Request("https://x/regenerate", {
+              method: "POST",
+              headers: { "x-mercury-token": TOKEN },
+            }),
+            env,
+          ),
+        ),
+      );
+
+      assert.equal(dispatches, MAX_PER_DAY);
+      assert.equal(
+        responses.filter((r) => r.status === 200).length,
+        MAX_PER_DAY,
+      );
+      // Everyone else is refused — 429 over the cap, 409 if they lost the
+      // write race often enough to give up. Neither is a 500 and neither
+      // is a silent success.
+      assert.ok(
+        responses.every((r) => [200, 429, 409].includes(r.status)),
+        responses.map((r) => r.status).join(","),
+      );
+
+      const [key] = Object.keys(env.BRIEFINGS.written);
+      assert.equal(JSON.parse(env.BRIEFINGS.written[key]).count, MAX_PER_DAY);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  test("a corrupt counter is treated as spent, not as zero", async () => {
+    const original = globalThis.fetch;
+    let dispatches = 0;
+    globalThis.fetch = async () => {
+      dispatches += 1;
+      return new Response(null, { status: 204 });
+    };
+
+    try {
+      const env = { ...envFor({}), GITHUB_DISPATCH_TOKEN: "t", GITHUB_REPO: "o/r" };
+      // Whatever wrote this, it is not something to bill a briefing
+      // against. Served for every key, because the handler reads exactly
+      // one and the test does not need to recompute today's id to name it.
+      env.BRIEFINGS = {
+        get: async () => ({
+          etag: '"c"',
+          text: async () => "{ this is not json",
+        }),
+        put: async () => ({ key: "k", etag: '"d"' }),
+        list: async () => ({ objects: [] }),
+      };
+
+      const res = await worker.fetch(
+        new Request("https://x/regenerate", {
+          method: "POST",
+          headers: { "x-mercury-token": TOKEN },
+        }),
+        env,
+      );
+
+      assert.equal(res.status, 429);
+      assert.equal(dispatches, 0);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  test("a rollback cannot undo someone else's reservation", async () => {
+    const original = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      if (calls === 1) {
+        // The first dispatch is slow AND fails, which is the window the
+        // rollback has to be safe in.
+        await new Promise((r) => setTimeout(r, 25));
+        return new Response("nope", { status: 500 });
+      }
+      return new Response(null, { status: 204 });
+    };
+
+    try {
+      const env = { ...envFor({}), GITHUB_DISPATCH_TOKEN: "t", GITHUB_REPO: "o/r" };
+      env.BRIEFINGS = writableBucket({});
+      const post = () =>
+        worker.fetch(
+          new Request("https://x/regenerate", {
+            method: "POST",
+            headers: { "x-mercury-token": TOKEN },
+          }),
+          env,
+        );
+
+      const first = post();
+      // Long enough for the first to have reserved and be waiting on its
+      // dispatch, so the second reserves on top of it.
+      await new Promise((r) => setTimeout(r, 5));
+      const second = post();
+      const [a, b] = await Promise.all([first, second]);
+
+      assert.equal(a.status, 502, "the first dispatch failed");
+      assert.equal(b.status, 200, "the second one started");
+
+      // EXACTLY one generation is running, so exactly one is spent.
+      //
+      // Both failure modes this has had land on this one number, which is
+      // why it is pinned rather than bounded:
+      //   0 — the rollback wrote unconditionally and handed back an
+      //       allowance the successful request was holding.
+      //   2 — the rollback was conditional and simply gave up when the
+      //       precondition failed, leaking the failed request's slot and
+      //       bringing the cap on a request early, every day.
+      const [key] = Object.keys(env.BRIEFINGS.written);
+      const counter = JSON.parse(env.BRIEFINGS.written[key]);
+      assert.equal(
+        counter.count,
+        1,
+        `one generation started, so one is spent — got ${counter.count}`,
+      );
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  test("a rollback that loses the race retries instead of leaking the slot", async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = async () => new Response("nope", { status: 500 });
+
+    try {
+      const env = { ...envFor({}), GITHUB_DISPATCH_TOKEN: "t", GITHUB_REPO: "o/r" };
+      const bucket = writableBucket({});
+      const key = () =>
+        Object.keys(bucket.written).find((k) =>
+          k.endsWith(".regenerations.json"),
+        );
+
+      // Exactly one interfering write, slipped in between the rollback's
+      // read and its write — which is the only moment at which the
+      // rollback's precondition can fail, and the moment a rollback that
+      // gives up on a failed precondition leaks its slot forever.
+      let interfered = false;
+      env.BRIEFINGS = {
+        ...bucket,
+        get written() {
+          return bucket.written;
+        },
+        get: bucket.get,
+        list: bucket.list,
+        put: async (k, body, options) => {
+          const decrementing =
+            options?.onlyIf?.etagMatches !== undefined &&
+            JSON.parse(body).count === 0;
+          if (decrementing && !interfered) {
+            interfered = true;
+            // Another request reserves. Unconditional, standing in for a
+            // write that has already committed by the time ours is tried.
+            await bucket.put(
+              k,
+              JSON.stringify({ count: 2, briefing_id: "x" }),
+              {},
+            );
+            // Ours is now stale, exactly as R2 would report it.
+            return null;
+          }
+          return bucket.put(k, body, options);
+        },
+      };
+
+      const res = await worker.fetch(
+        new Request("https://x/regenerate", {
+          method: "POST",
+          headers: { "x-mercury-token": TOKEN },
+        }),
+        env,
+      );
+      assert.equal(res.status, 502, "the dispatch failed");
+
+      // The interfering write left 2. Our rollback owns one of those slots
+      // and must give exactly that one back, whatever else happened — so 1.
+      // A rollback that gave up on the failed precondition would leave 2,
+      // charging the day for a generation that never started and bringing
+      // the cap on a request early, cumulatively, every day.
+      const counter = JSON.parse(bucket.written[key()]);
+      assert.equal(
+        counter.count,
+        1,
+        `the rollback must retry, not leak — got ${counter.count}`,
+      );
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  test("the regeneration counter is keyed so retention sweeps it", async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = async () => new Response(null, { status: 204 });
+
+    try {
+      const env = { ...envFor({}), GITHUB_DISPATCH_TOKEN: "t", GITHUB_REPO: "o/r" };
+      env.BRIEFINGS = writableBucket({});
+
+      await worker.fetch(
+        new Request("https://x/regenerate", {
+          method: "POST",
+          headers: { "x-mercury-token": TOKEN },
+        }),
+        env,
+      );
+
+      // `YYYY-MM-DD.` prefixed, which is what `briefing_id_from_key`
+      // matches — so `delete_briefing` removes it with the briefing rather
+      // than leaving one small object per day in the bucket forever.
+      const [key] = Object.keys(env.BRIEFINGS.written);
+      assert.match(key, /^\d{4}-\d{2}-\d{2}\.regenerations\.json$/);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  test("every field UserSettings carries survives a save", async () => {
+    // The whitelist drops anything it does not name, and a dropped field
+    // looks exactly like a setting that applied and did nothing. `music_set`
+    // was missing from it for a whole release: the picker sent it, the
+    // pipeline read it, and this Worker deleted it in between.
+    //
+    // Listed explicitly rather than derived, so ADDING a field to
+    // `UserSettings` without adding it here fails on the next run of this
+    // test rather than on someone's morning.
+    const env = envFor({});
+    env.BRIEFINGS = writableBucket({});
+
+    const sent = {
+      schema_version: 1,
+      briefing_length: "standard",
+      tts_provider: "elevenlabs",
+      voice_a: "a",
+      voice_b: "b",
+      music_set: "broadsheet",
+      disabled_segments: ["weather", "follow_ups"],
+      feeds: ["https://example.com/feed.xml"],
+      muted_senders: ["noreply@example.com"],
+    };
+
+    const res = await worker.fetch(
+      new Request("https://x/settings", {
+        method: "PUT",
+        headers: { "x-mercury-token": TOKEN },
+        body: JSON.stringify(sent),
+      }),
+      env,
+    );
+
+    assert.equal(res.status, 200);
+    const saved = JSON.parse(env.BRIEFINGS.written["settings.json"]);
+    for (const [key, value] of Object.entries(sent)) {
+      assert.deepEqual(saved[key], value, `${key} was dropped on save`);
+    }
+  });
+
+  test("a segment list of the wrong shape is refused, not dropped", async () => {
+    const env = envFor({});
+    env.BRIEFINGS = writableBucket({});
+
+    const res = await worker.fetch(
+      new Request("https://x/settings", {
+        method: "PUT",
+        headers: { "x-mercury-token": TOKEN },
+        body: JSON.stringify({ disabled_segments: "weather" }),
+      }),
+      env,
+    );
+
+    assert.equal(res.status, 400, "a string is not a list of segments");
+    assert.equal(Object.keys(env.BRIEFINGS.written).length, 0);
   });
 
   test("PUT to anything else is still refused", async () => {

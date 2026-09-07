@@ -114,6 +114,28 @@ struct SettingsView: View {
             .disabled(!isEditable)
 
             Section {
+                ForEach(UserSettings.optionalSegments, id: \.id) { segment in
+                    Toggle(isOn: segmentBinding(segment.id)) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(segment.label)
+                            Text(segment.note)
+                                .font(MercuryType.figureCaption)
+                                .foregroundStyle(MercuryColor.inkFaint.color)
+                        }
+                    }
+                }
+            } header: {
+                Text("What's in it")
+            } footer: {
+                // Says what is NOT on offer, and why, rather than leaving
+                // someone hunting for a switch that was never there.
+                Text("The greeting and the sign-off always stay — they're the "
+                     + "shape of the briefing rather than part of its "
+                     + "contents. Takes effect on the next one.")
+            }
+            .disabled(!isEditable)
+
+            Section {
                 sources
             } header: {
                 Text("Sources")
@@ -356,6 +378,25 @@ struct SettingsView: View {
     private var musicNote: String? {
         guard let id = settings.musicSet else { return nil }
         return UserSettings.musicSets.first { $0.id == id }?.note
+    }
+
+    /// ON means "in the briefing", so the toggle reads the way the section
+    /// header does. The artifact stores the INVERSE — the segments to leave
+    /// out — because absent must mean "everything", which is the state every
+    /// deployment starts in.
+    private func segmentBinding(_ id: String) -> Binding<Bool> {
+        Binding(
+            get: { !settings.disabledSegments.contains(id) },
+            set: { isOn in
+                edit { s in
+                    var off = Set(s.disabledSegments)
+                    if isOn { off.remove(id) } else { off.insert(id) }
+                    // Sorted, so saving the same choices twice produces the
+                    // same bytes and the diff in R2 is meaningful.
+                    s.disabledSegments = off.sorted()
+                }
+            }
+        )
     }
 
     private var lengthBinding: Binding<String> {

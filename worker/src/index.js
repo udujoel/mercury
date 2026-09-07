@@ -173,6 +173,19 @@ export default {
       return handleSettingsWrite(request, env);
     }
 
+    // Rebuild today's briefing from mail that has arrived since.
+    //
+    // The second write this Worker accepts, and narrower than it looks: it
+    // does not generate anything. It asks GitHub to run the SAME workflow
+    // the cron runs, through the same helper, with `force=true`. The
+    // pipeline, the budget and the failure handling are all unchanged.
+    //
+    // Capped per day, because unlike every other route here a press costs
+    // real money — a full Gemini and ElevenLabs generation each time.
+    if (request.method === "POST" && new URL(request.url).pathname === "/regenerate") {
+      return handleRegenerate(request, env);
+    }
+
     if (request.method !== "GET") {
       // Generation is a scheduled batch job (ADR-008), not something a Worker
       // can do — no Python pipeline, no 127-second budget.
@@ -625,6 +638,15 @@ const MAX_SETTINGS_BYTES = 16 * 1024;
 // name filter and was stored, and Pydantic would then reject the whole
 // artifact on the next run — one bad write silently reverting every setting
 // to the environment.
+// EVERY field `UserSettings` carries, and nothing else.
+//
+// This list is a whitelist, and a field missing from it is silently dropped
+// on save — which is indistinguishable, from the phone, from a setting that
+// applied and did nothing. `music_set` was missing: the picker encoded it,
+// `app/pipeline/generate.py` read it, and the Worker in between deleted it
+// on every save. A control that appears to work is the exact failure the
+// settings artifact exists to prevent, so when a field is added to
+// `UserSettings` it belongs here in the same change.
 const SETTINGS_FIELDS = {
   schema_version: "number",
   updated_at: "string",
@@ -632,6 +654,11 @@ const SETTINGS_FIELDS = {
   tts_provider: "string",
   voice_a: "string",
   voice_b: "string",
+  music_set: "string",
+  // ROADMAP task 15. Names of segments to leave out; the job validates them
+  // (`resolve_segments`), which is where the knowledge of what a segment is
+  // belongs — the Worker only checks that this is a list of strings.
+  disabled_segments: "string[]",
   feeds: "string[]",
   muted_senders: "string[]",
 };
@@ -660,6 +687,192 @@ const VOICE_CACHE_SECONDS = 60 * 60 * 6;
 // something unusual, and reaching it now says so in the payload rather
 // than quietly shortening the list.
 const MAX_VOICES = 500;
+
+// How many forced regenerations a day is allowed to have.
+//
+// Not a rate limit against an attacker — the token already handles that —
+// but against a person tapping a button that costs a briefing's worth of
+// Gemini and ElevenLabs each time, on a morning where the news keeps
+// changing and one more refresh always seems reasonable.
+const MAX_REGENERATIONS_PER_DAY = 3;
+
+// Keyed as `<briefing id>.regenerations.json`, NOT under a prefix of its
+// own. `_BRIEFING_KEY` in `app/synthesis/storage.py` matches anything
+// beginning `YYYY-MM-DD.`, and `delete_briefing` removes every object under
+// an id — so this counter is swept by retention along with the briefing it
+// counts. A `regenerations/` prefix would have matched neither and left one
+// small object per day in the bucket forever.
+const regenCountKey = (id) => `${id}.regenerations.json`;
+
+async function handleRegenerate(request, env) {
+  if (!env.MERCURY_API_TOKEN || env.MERCURY_API_TOKEN.length < MIN_TOKEN_LENGTH) {
+    return json({ detail: "Worker is not configured with MERCURY_API_TOKEN." }, 503);
+  }
+  if (!tokensMatch(request.headers.get(TOKEN_HEADER) || "", env.MERCURY_API_TOKEN)) {
+    return json({ detail: `Missing or invalid ${TOKEN_HEADER}.` }, 401);
+  }
+
+  const id = briefingIdFor(new Date(), resolvedTimeZone(env));
+  const key = regenCountKey(id);
+
+  // RESERVE, then dispatch, then release if the dispatch failed.
+  //
+  // The first cut of this read the count, dispatched, then wrote
+  // `count: used + 1`, with a comment calling the race acceptable because
+  // "the failure mode is one extra generation". Both halves were wrong.
+  // Three simultaneous taps all read 0, all dispatch, and all write
+  // `count: 1` — the write is an OVERWRITE, not an increment, so the
+  // counter never passes 1 and the cap never engages at all. Tapping in
+  // parallel is not exotic on a phone; it is what a double-tap on a slow
+  // network looks like.
+  const reservation = await reserveRegeneration(env, key, id);
+  if (!reservation.ok) {
+    return json(
+      {
+        detail: reservation.contended
+          ? "Another regeneration is starting. Try again in a moment."
+          : `Already regenerated ${reservation.used} times today. The limit ` +
+            `is ${MAX_REGENERATIONS_PER_DAY} — each one costs a full briefing.`,
+        used: reservation.used,
+        limit: MAX_REGENERATIONS_PER_DAY,
+      },
+      reservation.contended ? 409 : 429,
+    );
+  }
+
+  const dispatched = await dispatchWorkflow(env, GENERATE_WORKFLOW, {
+    briefing_id: id,
+    force: "true",
+  });
+
+  if (!dispatched) {
+    // Give the allowance back. Counting only after a successful dispatch is
+    // what the old order achieved by writing late; holding a reservation
+    // achieves it by writing early and undoing, which is the version that
+    // is also safe under concurrency.
+    await releaseRegeneration(env, key, id);
+    // The reason is in the Worker log — a missing dispatch token, a repo the
+    // token cannot see, a GitHub outage. None of them are things the phone
+    // can act on, so it gets one honest sentence rather than a guess.
+    return json({ detail: "Could not start a regeneration." }, 502);
+  }
+
+  return json({
+    status: "started",
+    briefing_id: id,
+    used: reservation.used,
+    limit: MAX_REGENERATIONS_PER_DAY,
+  });
+}
+
+// How many times to re-read and retry when someone else wins the write.
+//
+// Losing the race means the count moved, so the retry re-reads it and is
+// then usually either allowed or over the cap. Four attempts is enough for
+// a handful of concurrent taps and small enough that a pathologically
+// contended key answers 409 rather than looping.
+const RESERVE_ATTEMPTS = 4;
+
+/**
+ * Claim one of the day's regenerations, atomically.
+ *
+ * R2 conditional writes are what make this safe without a Durable Object:
+ * `etagMatches` pins the write to the exact object we read, and
+ * `etagDoesNotMatch: "*"` means "only if it does not exist yet". A `put`
+ * whose precondition fails returns null instead of writing, so a loser
+ * re-reads rather than overwriting the winner.
+ */
+async function reserveRegeneration(env, key, id) {
+  for (let attempt = 0; attempt < RESERVE_ATTEMPTS; attempt += 1) {
+    const existing = await env.BRIEFINGS.get(key);
+    let used = 0;
+    if (existing) {
+      try {
+        used = JSON.parse(await existing.text()).count || 0;
+      } catch {
+        // A corrupt counter must not become an unlimited one, so this is
+        // deliberately NOT `used = 0`: an unreadable object is treated as
+        // the day being spent, and retention clears it overnight.
+        used = MAX_REGENERATIONS_PER_DAY;
+      }
+    }
+
+    if (used >= MAX_REGENERATIONS_PER_DAY) return { ok: false, used };
+
+    const written = await env.BRIEFINGS.put(
+      key,
+      JSON.stringify({ count: used + 1, briefing_id: id }),
+      {
+        httpMetadata: { contentType: "application/json" },
+        onlyIf: existing
+          ? { etagMatches: existing.etag ?? existing.httpEtag }
+          : { etagDoesNotMatch: "*" },
+      },
+    );
+
+    // Only `null` is a failed precondition. A stub or a binding that
+    // returns undefined has written, and treating that as a loss would
+    // spin the loop and refuse a request that actually succeeded.
+    if (written !== null) return { ok: true, used: used + 1 };
+  }
+
+  return { ok: false, used: MAX_REGENERATIONS_PER_DAY, contended: true };
+}
+
+/**
+ * Hand a reservation back after a dispatch that never started.
+ *
+ * DECREMENTS, rather than writing an earlier count back over whatever is
+ * there. Two cuts of this were wrong in opposite directions and the second
+ * was subtler than the first:
+ *
+ *   1. An unconditional write of `previous` clobbered a reservation another
+ *      request had made in the gap, and handed its allowance back while its
+ *      paid workflow ran.
+ *   2. Making that write conditional stopped the clobbering and started
+ *      LEAKING instead: when the precondition failed there was nothing to
+ *      retry against, so the failed request's slot stayed counted. One
+ *      failure plus one success left `count: 2` for a single generation,
+ *      and the cap arrived a request early — every day, cumulatively.
+ *
+ * Subtracting one is the representation that composes. It does not care
+ * what else has happened to the counter, only that this reservation is no
+ * longer held, so a lost race is a re-read rather than a lost slot.
+ */
+async function releaseRegeneration(env, key, id) {
+  for (let attempt = 0; attempt < RESERVE_ATTEMPTS; attempt += 1) {
+    const existing = await env.BRIEFINGS.get(key);
+    // Swept by retention mid-flight, or never written. There is no slot to
+    // give back, and creating one here would invent an allowance.
+    if (!existing) return;
+
+    let count;
+    try {
+      count = JSON.parse(await existing.text()).count;
+    } catch {
+      // An unreadable counter is treated as the day being spent everywhere
+      // else in this file; rewriting it here would be the one place that
+      // quietly repairs it into an allowance.
+      return;
+    }
+    if (typeof count !== "number" || count <= 0) return;
+
+    // Written back rather than deleted at zero: R2's `delete` takes no
+    // conditional at all, so it could remove a reservation made in the
+    // meantime with no way to refuse. The key is `<id>.regenerations.json`,
+    // so retention sweeps the object with the briefing either way.
+    const written = await env.BRIEFINGS.put(
+      key,
+      JSON.stringify({ count: count - 1, briefing_id: id }),
+      {
+        httpMetadata: { contentType: "application/json" },
+        onlyIf: { etagMatches: existing.etag ?? existing.httpEtag },
+      },
+    );
+    if (written !== null) return;
+    // Lost the race. Re-read and subtract from whatever is there now.
+  }
+}
 
 async function serveVoices(env) {
   if (!env.ELEVENLABS_API_KEY) {
