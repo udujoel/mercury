@@ -653,6 +653,64 @@ final class PendingRebuildTests: XCTestCase {
                        "the 429 body carries no briefing_id, so it is not today's")
     }
 
+    /// Pausing is not a request for a different briefing.
+    ///
+    /// The refetch branch tested `!playback.isPlaying`, which is TRUE of a
+    /// PAUSED briefing — so pausing to take a call and pressing play again
+    /// reloaded from the network instead of resuming, on every press for
+    /// twenty minutes. Offline that is not merely slow: the fetch throws,
+    /// the load goes to `.failed`, and audio already downloaded and sitting
+    /// in the coordinator stops being playable at all.
+    @MainActor
+    func testAPausedBriefingResumesRatherThanRefetching() async throws {
+        let today = ManifestFixtures.todayId
+        let api = RecordingAPI(
+            manifestResult: .success(
+                ManifestFixtures.made(at: "2026-08-23T05:00:00Z", id: today)))
+        let state = AppState(api: api)
+
+        _ = try await state.regenerateToday()
+        XCTAssertTrue(state.isRegenerating, "a rebuild is outstanding")
+
+        func refetch(
+            playing: Bool = false, position: Int = 0,
+            finished: Bool = false, queued: Bool = false
+        ) -> Bool {
+            AppState.shouldRefetchForRebuild(
+                isRegenerating: true, isPlaying: playing,
+                positionMs: position, hasFinished: finished,
+                hasQueuedAudio: queued)
+        }
+
+        // Mid-briefing and paused. The case that used to refetch.
+        XCTAssertFalse(refetch(position: 180_000, queued: true),
+                       "a paused briefing must resume, not go to the network")
+
+        // Paused inside the FIRST SECOND, so the position is still zero.
+        // `positionMs == 0` alone called this a stopped briefing and put the
+        // same bug back on a narrower path.
+        XCTAssertFalse(refetch(position: 0, queued: true),
+                       "started and paused early is still started")
+
+        // Paused by a phone call mid-briefing: the interruption flushes the
+        // node, so nothing is queued — but there is plenty to resume to.
+        XCTAssertFalse(refetch(position: 180_000, queued: false),
+                       "an interruption is not a stop")
+
+        // The cases that SHOULD refetch, so this is not just "never".
+        XCTAssertTrue(refetch(), "a fresh load has nothing to resume")
+        XCTAssertTrue(refetch(position: 420_000, finished: true, queued: false),
+                      "finished, so it replays anyway")
+
+        // Never mid-listen, which is `prefetchBriefing`'s rule.
+        XCTAssertFalse(refetch(playing: true, position: 90_000, queued: true))
+
+        // Nor with no rebuild outstanding at all.
+        XCTAssertFalse(AppState.shouldRefetchForRebuild(
+            isRegenerating: false, isPlaying: false, positionMs: 0,
+            hasFinished: false, hasQueuedAudio: false))
+    }
+
     /// Left open overnight, the app kept yesterday's `remaining == 0` and
     /// disabled a button whose allowance had reset hours before.
     @MainActor

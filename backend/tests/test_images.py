@@ -549,6 +549,52 @@ async def test_a_first_draft_cannot_smuggle_a_disabled_segment_through():
     assert "cold_open" in written and "sign_off" in written
 
 
+def test_the_word_budget_follows_the_segments_actually_written():
+    """Asking for a full briefing and then rejecting it for being short.
+
+    `world` and `inbox` carry most of the words. With them off, a script
+    cannot reach 80% of a full-length budget, so `_is_within_word_budget`
+    failed on every revision and `_run_critique_and_revise` discarded it and
+    kept the draft — two Gemini calls a morning, spent and thrown away, and
+    the quality gates the critique pass exists to apply never ran for anyone
+    who used the setting.
+    """
+    from app.core.schemas import Segment
+    from app.pipeline.script_chain import (
+        _is_within_word_budget,
+        resolve_segments,
+        scale_budget,
+    )
+
+    full = 1200
+    assert scale_budget(full, resolve_segments(None)) == full, (
+        "every segment on must not move the number"
+    )
+
+    trimmed = resolve_segments(["world", "inbox"])
+    scaled = scale_budget(full, trimmed)
+    assert scaled < full * 0.5, (
+        "world and inbox are most of the briefing, so most of the budget"
+    )
+
+    # The point of the whole thing: a script the right size for the trimmed
+    # briefing passes against the scaled budget and fails against the full
+    # one. Without that second assertion this only tests arithmetic.
+    class _T:
+        def __init__(self, n): self.text = " ".join(["word"] * n)
+
+    script = [_T(scaled)]
+    assert _is_within_word_budget(script, scaled)
+    assert not _is_within_word_budget(script, full), (
+        "this is the rejection the scaling exists to prevent"
+    )
+
+    # Everything optional off leaves only the structural pair, and they
+    # still need enough words to say something.
+    bare = scale_budget(full, resolve_segments([s.value for s in Segment]))
+    assert bare >= 60
+
+
 def test_a_disabled_segment_is_rejected_if_the_model_writes_it_anyway():
     """Turning a segment off means it must not appear — either way round.
 

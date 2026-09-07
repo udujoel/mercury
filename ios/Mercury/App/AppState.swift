@@ -213,10 +213,30 @@ final class AppState {
         // this costs a conditional request and resumes from the saved
         // position when the rebuild has not landed yet.
         //
-        // Only while STOPPED. Interrupting playback to swap the file under
-        // a listener is the thing `prefetchBriefing` refuses to do, and
-        // pressing pause is not a request for a different briefing.
-        if isRegenerating, !playback.isPlaying {
+        // Only while STOPPED — and "stopped" is not "not playing".
+        //
+        // This tested `!playback.isPlaying`, which is TRUE of a paused
+        // briefing, so the comment below described the intent and the code
+        // did the opposite of it: pausing to take a call and pressing play
+        // again refetched and reloaded rather than resuming, on every press
+        // for twenty minutes. Offline it was worse than slow — the fetch
+        // throws, the load goes to `.failed`, and audio already downloaded
+        // and sitting in the coordinator stops being playable at all.
+        //
+        // At the top or finished is the real "stopped": nothing is being
+        // interrupted, so there is nothing to resume and swapping the file
+        // costs the listener nothing.
+        //
+        // Interrupting playback to swap the file under a listener is the
+        // thing `prefetchBriefing` refuses to do, and pressing pause is not
+        // a request for a different briefing.
+        if Self.shouldRefetchForRebuild(
+            isRegenerating: isRegenerating,
+            isPlaying: playback.isPlaying,
+            positionMs: playback.positionMs,
+            hasFinished: playback.hasFinished,
+            hasQueuedAudio: playback.hasQueuedAudio
+        ) {
             await playBriefing()
             return
         }
@@ -509,6 +529,33 @@ final class AppState {
     ///
     /// A manifest generated after the rebuild was requested IS the rebuild,
     /// so the button comes back and the next play stops refetching.
+    /// Whether pressing play should go back to the network for a rebuild.
+    ///
+    /// Pure, because the branch it guards is unreachable in a test: it sits
+    /// behind `isPlaybackLoaded`, which needs a real `AVAudioFile` and so a
+    /// real audio file, an engine and hardware. The decision is the part
+    /// that was wrong, so the decision is the part that is testable.
+    static func shouldRefetchForRebuild(
+        isRegenerating: Bool,
+        isPlaying: Bool,
+        positionMs: Int,
+        hasFinished: Bool,
+        hasQueuedAudio: Bool
+    ) -> Bool {
+        guard isRegenerating, !isPlaying else { return false }
+        // Finished, or never started. NOT merely "not playing", which is
+        // true of a paused briefing — and not `positionMs == 0` either,
+        // which is true of one paused inside its first second.
+        //
+        // Two signals, because neither answers "has this been started" on
+        // its own. `hasQueuedAudio` is false for a fresh load AND for a
+        // briefing an interruption flushed, so a phone call mid-listen
+        // would look untouched; `positionMs` is zero for a fresh load AND
+        // for the first second of a real one. Together: nothing queued and
+        // nowhere to resume to.
+        return hasFinished || (positionMs == 0 && !hasQueuedAudio)
+    }
+
     @MainActor
     private func noteRebuildLanded(_ manifest: BriefingManifest) {
         guard let rebuild else { return }

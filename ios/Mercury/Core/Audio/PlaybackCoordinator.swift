@@ -81,6 +81,19 @@ final class PlaybackCoordinator {
     /// disagreed about reality. This is the reality.
     var isLoaded: Bool { file != nil }
 
+    /// Whether audio is queued on the player node right now.
+    ///
+    /// Out of the DEBUG seams below and into production because
+    /// `AppState.shouldRefetchForRebuild` needs it: "has this briefing been
+    /// started" cannot be answered by the position alone, since a briefing
+    /// paused within its first second still reads zero.
+    ///
+    /// Not a complete answer on its own either — `invalidateSchedule` clears
+    /// this when an interruption flushes the node, so a briefing paused by a
+    /// phone call reads false while having plenty to resume. It is one of
+    /// two signals, and the caller uses both.
+    var hasQueuedAudio: Bool { hasScheduled }
+
     /// Which briefing the loaded audio belongs to.
     ///
     /// `isLoaded` alone is not enough for anything that seeks by offset.

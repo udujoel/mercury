@@ -608,6 +608,40 @@ def _has_valid_segment_coverage_and_order(
     return True
 
 
+def scale_budget(budget: int, segments: list[Segment]) -> int:
+    """The word budget, apportioned to the segments actually being written.
+
+    A briefing with `world` and `inbox` turned off cannot reach 80% of a
+    full-length budget — those two carry most of the words — so
+    `_is_within_word_budget` failed on every revision and
+    `_run_critique_and_revise` discarded it and kept the draft. Two Gemini
+    calls a morning, spent and thrown away, and the quality gates the
+    critique pass exists to apply never ran for anyone who used the setting.
+
+    Weighted rather than divided evenly, because the segments are nowhere
+    near the same size: a sign-off is two lines and `world` is half the
+    briefing. The weights are the relative sizes the outline prompt already
+    implies, and they only have to be roughly right — they feed a ±20% band,
+    not an exact target.
+    """
+    weights = {
+        Segment.COLD_OPEN: 6,
+        Segment.WEATHER: 5,
+        Segment.CALENDAR: 18,
+        Segment.INBOX: 22,
+        Segment.WORLD: 40,
+        Segment.FOLLOW_UPS: 5,
+        Segment.SIGN_OFF: 4,
+    }
+    total = sum(weights.values())
+    kept = sum(weights[s] for s in segments if s in weights)
+    if kept <= 0 or kept >= total:
+        return budget
+    # Floored, so a briefing of only the structural segments still asks for
+    # a sentence or two rather than for nothing.
+    return max(int(round(budget * kept / total)), 60)
+
+
 def _is_within_word_budget(turns: list[Turn], budget: int) -> bool:
     words = sum(len(t.text.split()) for t in turns)
     lo, hi = budget * 0.8, budget * 1.2
@@ -1244,13 +1278,16 @@ async def generate_script(
     if passes not in (2, 4):
         raise ValueError(f"passes must be 2 or 4, got {passes}")
 
-    budget = LENGTH_BUDGETS[length]["words"]
     # ROADMAP task 15. One list, computed once, and every pass below is
     # given it: the prompt's definitions, both response schemas, the draft's
     # repair check and the revision's validator. A segment turned off in one
     # of those and left on in another is worse than not offering the setting
     # — it is a model told to write something the validator then rejects.
     segments = resolve_segments(disabled_segments)
+    # AFTER the segments are known, and used for the prompt as well as for
+    # the check — asking for a full-length briefing and then rejecting it
+    # for being short is two different opinions about the same number.
+    budget = scale_budget(LENGTH_BUDGETS[length]["words"], segments)
     stories = stories or []
     source_data = _flatten_source_text(
         emails, events, weather, aggregated_email_count, stories
