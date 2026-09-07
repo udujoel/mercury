@@ -48,7 +48,19 @@ struct DeskFeed: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        // LAZY, and this is a real cost rather than a preference.
+        //
+        // A plain `VStack` builds every row immediately, and each row holds
+        // an `AsyncImage` — so opening Home fired thirteen image downloads
+        // at once before a single one was on screen. That went unnoticed
+        // for as long as the deployed Worker had no `/digest` route and the
+        // desk was always empty; the first morning it actually rendered,
+        // Home got visibly slower to open.
+        //
+        // `TranscriptView` deliberately does NOT use this — there a lazy
+        // stack measures rows during an animated `scrollTo` and the text
+        // shakes. Nothing scrolls this programmatically.
+        LazyVStack(alignment: .leading, spacing: 0) {
             // Two rows, then the lead, then the remainder. Putting the lead
             // at the very top would push the play button off the screen,
             // and the play button is still what this app is for.
@@ -206,18 +218,15 @@ struct LeadCard: View {
         }
     }
 
-    /// The day's accent rather than grey. A newsletter-only story HAS no
-    /// picture — rule 5 discards the body its images live in — so on a quiet
-    /// morning this is the ordinary case, and grey would read as an image
-    /// that failed to load.
+    /// Mercury's own mark, not a blank panel.
+    ///
+    /// A newsletter-only story HAS no picture — rule 5 discards the body its
+    /// images live in — so on a quiet morning this is the ORDINARY case, not
+    /// an error. A flat wash read as an image that had failed to load; the
+    /// sunrise says "this story has no photograph" in the app's own voice,
+    /// and it is the same mark as the icon and the lock screen.
     private var accentGround: some View {
-        LinearGradient(
-            colors: [
-                MercuryColor.accent.color.opacity(0.55),
-                MercuryColor.accent.color.opacity(0.85),
-            ],
-            startPoint: .topLeading, endPoint: .bottomTrailing
-        )
+        MercuryMark()
     }
 }
 
@@ -277,11 +286,11 @@ struct Thumbnail: View {
                     case .success(let image):
                         image.resizable().aspectRatio(contentMode: .fill)
                     default:
-                        MercuryColor.accent.color.opacity(0.18)
+                        MercuryMark()
                     }
                 }
             } else {
-                MercuryColor.accent.color.opacity(0.18)
+                MercuryMark()
             }
         }
         .frame(width: side, height: side)
@@ -313,4 +322,74 @@ struct Thumbnail: View {
         .mercuryGutter()
     }
     .background(MercuryColor.surface.color)
+}
+
+
+/// The sunrise, as a view.
+///
+/// Stands in wherever a story has no picture of its own, which is the
+/// ordinary case rather than a failure: rule 5 discards the email bodies
+/// that images live in, so a newsletter-only story has nothing to show. A
+/// tinted rectangle read as a photograph that had failed to load — this
+/// reads as "no photograph", in the same mark as the app icon and the lock
+/// screen card.
+///
+/// Drawn from `MercuryArtwork`'s geometry rather than by loading its bitmap:
+/// a thumbnail is 72pt and a lead card is the full width, and rasterising
+/// the larger one to fill the smaller wastes memory on every row.
+struct MercuryMark: View {
+    var body: some View {
+        // `Canvas`, not stacked shapes with offsets and a mask.
+        //
+        // The first cut positioned a `Circle` and masked its lower half, and
+        // the mask was taller than the circle — so it clipped nothing and
+        // every thumbnail showed a full disc floating above the rule rather
+        // than a sunrise. Three interacting offsets, none of them wrong on
+        // their own.
+        //
+        // Drawing the clip explicitly removes the arithmetic: the sky is a
+        // rectangle, the sun is a circle inside it, and the rule sits on the
+        // boundary. It also matches `scripts/make_app_icon.py` line for
+        // line, which is the point — this is the same mark.
+        Canvas { context, size in
+            let side = max(size.width, size.height)
+            let horizon = size.height * MercuryArtwork.horizonY
+            let radius = side * MercuryArtwork.sunRadius
+
+            context.fill(Path(CGRect(origin: .zero, size: size)),
+                         with: .color(Color(MercuryArtwork.paper)))
+
+            let accent = GraphicsContext.Shading.color(
+                Color(MercuryArtwork.accent))
+
+            // The sun: a disc CLIPPED to the sky, so it reads as rising out
+            // of the horizon rather than resting on it.
+            context.drawLayer { sky in
+                sky.clip(to: Path(CGRect(x: 0, y: 0,
+                                         width: size.width, height: horizon)))
+                sky.fill(
+                    Path(ellipseIn: CGRect(
+                        x: size.width / 2 - radius, y: horizon - radius,
+                        width: radius * 2, height: radius * 2)),
+                    with: accent)
+            }
+
+            // The masthead device: a heavy rule and a hairline under it.
+            let inset = size.width * MercuryArtwork.ruleInset
+            let width = size.width - inset * 2
+            context.fill(
+                Path(CGRect(x: inset, y: horizon, width: width,
+                            height: side * MercuryArtwork.ruleWeight)),
+                with: accent)
+            context.fill(
+                Path(CGRect(
+                    x: inset,
+                    y: horizon + side * (MercuryArtwork.ruleWeight
+                                         + MercuryArtwork.hairlineGap),
+                    width: width,
+                    height: max(side * MercuryArtwork.hairlineWeight, 0.5))),
+                with: accent)
+        }
+        .accessibilityHidden(true)
+    }
 }

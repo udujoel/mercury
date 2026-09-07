@@ -8,6 +8,7 @@ touching the pipeline.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
@@ -116,10 +117,23 @@ class FallbackTTSProvider:
     a run that is against the clock, and a briefing alternating between two
     voices turn by turn would be worse than one that changes voice once.
 
-    It does change voice once, mid-briefing, and that is deliberately not
-    hidden: an ERROR log names it. A briefing that is half one voice and half
-    another is unpleasant and obviously wrong, which is the correct way for
-    this to fail — silently shipping is the thing to avoid.
+    **`probe()` exists so that switch does not usually happen mid-briefing.**
+    The original reasoning here was that a briefing changing voice partway is
+    "unpleasant and obviously wrong, which is the correct way for this to
+    fail" — sound when the failure is a rare outage, and wrong once it became
+    the normal case. ElevenLabs answers `402 paid_plan_required` for library
+    voices and `401 detected_unusual_activity` from CI's datacenter IPs, so
+    every morning shipped a briefing in THREE voices: two ElevenLabs hosts
+    for the first turns, then a Google one for the rest. The listener heard a
+    stranger take over, and the transcript stopped tracking the words because
+    only the ElevenLabs turns carry timings.
+
+    A loud failure that fires daily is not a signal, it is the product. One
+    short call before the run decides the provider once, so a briefing has
+    exactly two voices and either all of its word timings or none.
+
+    A genuine mid-run outage still switches, still logs at ERROR, and still
+    ships — which is what rule 7 asks for and what the probe cannot cover.
     """
 
     def __init__(self, primary: TTSProvider, build_fallback) -> None:
@@ -184,6 +198,41 @@ class FallbackTTSProvider:
                 type(self._primary).__name__, exc,
                 type(self._fallback).__name__,
             )
+
+    async def probe(self) -> None:
+        """Decide the provider ONCE, before any turn is synthesised.
+
+        BOTH voices, because a briefing has two hosts and either can be the
+        broken one. Probing only `voice_a` left the exact bug this method
+        was added to remove: when host A is fine and host B is a library
+        voice the plan cannot speak, the probe passes, the first A turns are
+        synthesised by the primary, and the first B turn fails over — a
+        briefing in three voices with word timings on only some of it.
+
+        Two short calls rather than one is the price of that, and it is two
+        calls of two words against a run that makes forty.
+
+        Deliberately not fatal. `_fail_over` re-raises when the fallback
+        itself cannot be built, and letting that propagate from HERE would
+        turn a preflight into the thing that ends a run which used to
+        degrade and ship (rule 7). If neither provider can speak, the
+        failure belongs to the turn that discovers it, with all the context
+        that carries — not to a probe.
+        """
+        if self._failed_over:
+            return
+        for voice in (self._primary.voice_a, self._primary.voice_b):
+            try:
+                await self._primary.synthesize("Good morning.", voice)
+            except Exception as exc:  # noqa: BLE001 - any failure is a failover
+                try:
+                    await self._fail_over(exc)
+                except Exception:  # noqa: BLE001 - preflight is never fatal
+                    logging.getLogger(__name__).exception(
+                        "preflight could not switch providers; leaving the "
+                        "decision to the first turn that fails"
+                    )
+                return
 
     async def synthesize(self, text: str, voice_id: str) -> Speech:
         if not self._failed_over:

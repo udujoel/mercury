@@ -554,6 +554,106 @@ describe("settings", () => {
     }
   });
 
+  test("an unconfigured dispatch token says so, rather than 'try again'", async () => {
+    // The button returned a bare 502 for months while the cause was a
+    // secret nobody had set — and the reason sat in a Worker log the phone
+    // cannot read. "Could not start" reads as bad luck; this reads as a
+    // thing to go and fix.
+    const env = { ...envFor({}), GITHUB_REPO: "o/r" };
+    delete env.GITHUB_DISPATCH_TOKEN;
+    env.BRIEFINGS = writableBucket({});
+
+    const res = await worker.fetch(
+      new Request("https://x/regenerate", {
+        method: "POST",
+        headers: { "x-mercury-token": TOKEN },
+      }),
+      env,
+    );
+
+    assert.equal(res.status, 503, "not transient, so not a 502");
+    const body = await res.json();
+    // NAMES the variable, because the token and the repo live in different
+    // places — a secret and a wrangler.toml var — and "the dispatch token"
+    // sends someone to the wrong one half the time.
+    assert.match(body.detail, /GITHUB_DISPATCH_TOKEN \(a secret\)/);
+    assert.doesNotMatch(body.detail, /GITHUB_REPO/, "that one IS set here");
+    // And the same configuration drives the morning trigger, which is the
+    // half nobody would connect on their own.
+    assert.match(body.detail, /punctual morning trigger/);
+  });
+
+  test("a missing repo names the repo, not the token", async () => {
+    const env = { ...envFor({}), GITHUB_DISPATCH_TOKEN: "t" };
+    delete env.GITHUB_REPO;
+    env.BRIEFINGS = writableBucket({});
+
+    const res = await worker.fetch(
+      new Request("https://x/regenerate", {
+        method: "POST",
+        headers: { "x-mercury-token": TOKEN },
+      }),
+      env,
+    );
+
+    assert.equal(res.status, 503);
+    const body = await res.json();
+    assert.match(body.detail, /GITHUB_REPO \(a wrangler.toml var\)/);
+    assert.doesNotMatch(body.detail, /GITHUB_DISPATCH_TOKEN/);
+  });
+
+  test("a refused token is not reported as something to retry", async () => {
+    // 401 and 403 never resolve by waiting: expired, revoked, or missing the
+    // Actions permission. Telling someone to try again later is telling them
+    // to do nothing, forever.
+    for (const status of [401, 403]) {
+      const original = globalThis.fetch;
+      globalThis.fetch = async () => new Response("bad credentials", { status });
+      try {
+        const env = {
+          ...envFor({}),
+          GITHUB_DISPATCH_TOKEN: "t",
+          GITHUB_REPO: "o/r",
+        };
+        env.BRIEFINGS = writableBucket({});
+
+        const res = await worker.fetch(
+          new Request("https://x/regenerate", {
+            method: "POST",
+            headers: { "x-mercury-token": TOKEN },
+          }),
+          env,
+        );
+
+        assert.equal(res.status, 503, `${status} is permanent, not a 502`);
+        assert.match((await res.json()).detail, /expired, been revoked/);
+      } finally {
+        globalThis.fetch = original;
+      }
+    }
+  });
+
+  test("a GitHub outage still reads as transient", async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = async () => new Response("upstream", { status: 500 });
+    try {
+      const env = { ...envFor({}), GITHUB_DISPATCH_TOKEN: "t", GITHUB_REPO: "o/r" };
+      env.BRIEFINGS = writableBucket({});
+
+      const res = await worker.fetch(
+        new Request("https://x/regenerate", {
+          method: "POST",
+          headers: { "x-mercury-token": TOKEN },
+        }),
+        env,
+      );
+
+      assert.equal(res.status, 502, "a 5xx really does resolve by waiting");
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
   test("a failed dispatch does not burn the day's allowance", async () => {
     const original = globalThis.fetch;
     globalThis.fetch = async () => new Response("nope", { status: 500 });

@@ -30,6 +30,27 @@ struct HomeView: View {
         "Rebuilding from your latest mail. It takes a few minutes; the new "
         + "briefing appears the next time you press play."
 
+    /// Ask for a rebuild, and say what happened.
+    ///
+    /// Named rather than written inline in the toolbar: the note it sets is
+    /// rendered by the body below, so the button and its consequence were
+    /// two places that had to agree.
+    private func requestRebuild() {
+        Task {
+            do {
+                _ = try await appState.regenerateToday()
+                regenerateNote = Self.startedNote
+            } catch {
+                // Through the same presenter the load errors use. Without it
+                // a transport failure printed "Network error: Error
+                // Domain=NSURLErrorDomain…" onto the page, under a masthead.
+                regenerateNote = HomeErrorPresentation
+                    .present(error.localizedDescription)
+                    .sentence
+            }
+        }
+    }
+
     private var rows: [BriefingDigest.Row] { BriefingDigest.rows(for: appState.manifest) }
 
     /// The exception path, and ONLY it.
@@ -131,28 +152,6 @@ struct HomeView: View {
                             .disabled(appState.loadState == .loading)
                     }
 
-                    RegenerateButton(
-                        isRunning: appState.isRegenerating,
-                        remaining: appState.regeneration?.remaining,
-                        onConfirm: {
-                            Task {
-                                do {
-                                    _ = try await appState.regenerateToday()
-                                    regenerateNote = Self.startedNote
-                                } catch {
-                                    // Through the same presenter the load
-                                    // errors use. Without it a transport
-                                    // failure printed "Network error:
-                                    // Error Domain=NSURLErrorDomain…" onto
-                                    // the page, under a masthead.
-                                    regenerateNote = HomeErrorPresentation
-                                        .present(error.localizedDescription)
-                                        .sentence
-                                }
-                            }
-                        }
-                    )
-                    .padding(.top, MercurySpace.section)
 
                     if let regenerateNote {
                         Text(regenerateNote)
@@ -200,6 +199,21 @@ struct HomeView: View {
                 PlayerView()
             }
             .toolbar {
+                // Beside the gear rather than at the foot of the page.
+                //
+                // It lived below the desk, which meant scrolling past a
+                // dozen stories to reach the control for "this is stale" —
+                // the exact moment you are least willing to scroll. Two
+                // items, and the destructive one is not the one your thumb
+                // lands on by default.
+                ToolbarItem(placement: .topBarTrailing) {
+                    RegenerateButton(
+                        isRunning: appState.isRegenerating,
+                        remaining: appState.regeneration?.remaining,
+                        style: .toolbar,
+                        onConfirm: requestRebuild
+                    )
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showSettings = true } label: {
                         Image(systemName: "gearshape")
