@@ -339,40 +339,56 @@ struct Thumbnail: View {
 /// the larger one to fill the smaller wastes memory on every row.
 struct MercuryMark: View {
     var body: some View {
-        GeometryReader { geo in
-            let side = max(geo.size.width, geo.size.height)
-            ZStack {
-                Color(MercuryArtwork.paper)
+        // `Canvas`, not stacked shapes with offsets and a mask.
+        //
+        // The first cut positioned a `Circle` and masked its lower half, and
+        // the mask was taller than the circle — so it clipped nothing and
+        // every thumbnail showed a full disc floating above the rule rather
+        // than a sunrise. Three interacting offsets, none of them wrong on
+        // their own.
+        //
+        // Drawing the clip explicitly removes the arithmetic: the sky is a
+        // rectangle, the sun is a circle inside it, and the rule sits on the
+        // boundary. It also matches `scripts/make_app_icon.py` line for
+        // line, which is the point — this is the same mark.
+        Canvas { context, size in
+            let side = max(size.width, size.height)
+            let horizon = size.height * MercuryArtwork.horizonY
+            let radius = side * MercuryArtwork.sunRadius
 
-                // The half-disc, resting on the rule.
-                Circle()
-                    .fill(Color(MercuryArtwork.accent))
-                    .frame(width: side * MercuryArtwork.sunRadius * 2,
-                           height: side * MercuryArtwork.sunRadius * 2)
-                    .offset(y: side * MercuryArtwork.horizonY
-                            - side * MercuryArtwork.sunRadius
-                            - geo.size.height / 2
-                            + side * MercuryArtwork.sunRadius)
-                    .mask(
-                        Rectangle()
-                            .frame(height: side * MercuryArtwork.horizonY)
-                            .frame(maxHeight: .infinity, alignment: .top)
-                    )
+            context.fill(Path(CGRect(origin: .zero, size: size)),
+                         with: .color(Color(MercuryArtwork.paper)))
 
-                // The masthead device: a heavy rule with a hairline under it.
-                VStack(spacing: side * MercuryArtwork.hairlineGap) {
-                    Rectangle()
-                        .frame(height: side * MercuryArtwork.ruleWeight)
-                    Rectangle()
-                        .frame(height: max(side * MercuryArtwork.hairlineWeight, 0.5))
-                }
-                .foregroundStyle(Color(MercuryArtwork.accent))
-                .padding(.horizontal, side * MercuryArtwork.ruleInset)
-                .frame(maxHeight: .infinity, alignment: .top)
-                .offset(y: side * MercuryArtwork.horizonY)
+            let accent = GraphicsContext.Shading.color(
+                Color(MercuryArtwork.accent))
+
+            // The sun: a disc CLIPPED to the sky, so it reads as rising out
+            // of the horizon rather than resting on it.
+            context.drawLayer { sky in
+                sky.clip(to: Path(CGRect(x: 0, y: 0,
+                                         width: size.width, height: horizon)))
+                sky.fill(
+                    Path(ellipseIn: CGRect(
+                        x: size.width / 2 - radius, y: horizon - radius,
+                        width: radius * 2, height: radius * 2)),
+                    with: accent)
             }
-            .frame(width: geo.size.width, height: geo.size.height)
-            .clipped()
+
+            // The masthead device: a heavy rule and a hairline under it.
+            let inset = size.width * MercuryArtwork.ruleInset
+            let width = size.width - inset * 2
+            context.fill(
+                Path(CGRect(x: inset, y: horizon, width: width,
+                            height: side * MercuryArtwork.ruleWeight)),
+                with: accent)
+            context.fill(
+                Path(CGRect(
+                    x: inset,
+                    y: horizon + side * (MercuryArtwork.ruleWeight
+                                         + MercuryArtwork.hairlineGap),
+                    width: width,
+                    height: max(side * MercuryArtwork.hairlineWeight, 0.5))),
+                with: accent)
         }
         .accessibilityHidden(true)
     }

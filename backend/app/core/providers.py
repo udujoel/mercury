@@ -8,6 +8,7 @@ touching the pipeline.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
@@ -201,21 +202,37 @@ class FallbackTTSProvider:
     async def probe(self) -> None:
         """Decide the provider ONCE, before any turn is synthesised.
 
-        Two words through the primary. If they fail, the fallback is built
-        now and the whole briefing is spoken by it — consistently, in two
-        voices, rather than changing narrator partway through.
+        BOTH voices, because a briefing has two hosts and either can be the
+        broken one. Probing only `voice_a` left the exact bug this method
+        was added to remove: when host A is fine and host B is a library
+        voice the plan cannot speak, the probe passes, the first A turns are
+        synthesised by the primary, and the first B turn fails over — a
+        briefing in three voices with word timings on only some of it.
 
-        Deliberately cheap and deliberately not fatal: a probe that fails
-        for its own reasons must not cost the briefing, so anything other
-        than success simply means "use the fallback", which is where an
-        unusable primary was heading anyway.
+        Two short calls rather than one is the price of that, and it is two
+        calls of two words against a run that makes forty.
+
+        Deliberately not fatal. `_fail_over` re-raises when the fallback
+        itself cannot be built, and letting that propagate from HERE would
+        turn a preflight into the thing that ends a run which used to
+        degrade and ship (rule 7). If neither provider can speak, the
+        failure belongs to the turn that discovers it, with all the context
+        that carries — not to a probe.
         """
         if self._failed_over:
             return
-        try:
-            await self._primary.synthesize("Good morning.", self._primary.voice_a)
-        except Exception as exc:  # noqa: BLE001 - any failure is a failover
-            await self._fail_over(exc)
+        for voice in (self._primary.voice_a, self._primary.voice_b):
+            try:
+                await self._primary.synthesize("Good morning.", voice)
+            except Exception as exc:  # noqa: BLE001 - any failure is a failover
+                try:
+                    await self._fail_over(exc)
+                except Exception:  # noqa: BLE001 - preflight is never fatal
+                    logging.getLogger(__name__).exception(
+                        "preflight could not switch providers; leaving the "
+                        "decision to the first turn that fails"
+                    )
+                return
 
     async def synthesize(self, text: str, voice_id: str) -> Speech:
         if not self._failed_over:

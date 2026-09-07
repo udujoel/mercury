@@ -450,7 +450,7 @@ async function dispatchWorkflow(env, workflow, inputs) {
       `cannot dispatch ${workflow}: GITHUB_DISPATCH_TOKEN and GITHUB_REPO ` +
         "must both be set (wrangler secret put / wrangler.toml [vars])",
     );
-    return false;
+    return { ok: false, status: null };
   }
 
   // `fetch` REJECTS on a transport failure — DNS, TLS, connection reset — and
@@ -480,7 +480,7 @@ async function dispatchWorkflow(env, workflow, inputs) {
     );
   } catch (err) {
     console.error(`dispatch of ${workflow} failed: ${err}`);
-    return false;
+    return { ok: false, status: null };
   }
 
   if (!response.ok) {
@@ -492,11 +492,11 @@ async function dispatchWorkflow(env, workflow, inputs) {
       `dispatch of ${workflow} failed: HTTP ${response.status} ` +
         `${await response.text()}`,
     );
-    return false;
+    return { ok: false, status: response.status };
   }
 
   console.log(`dispatched ${workflow} (${JSON.stringify(inputs)})`);
-  return true;
+  return { ok: true, status: response.status };
 }
 
 /**
@@ -740,12 +740,12 @@ async function handleRegenerate(request, env) {
     );
   }
 
-  const dispatched = await dispatchWorkflow(env, GENERATE_WORKFLOW, {
+  const dispatch = await dispatchWorkflow(env, GENERATE_WORKFLOW, {
     briefing_id: id,
     force: "true",
   });
 
-  if (!dispatched) {
+  if (!dispatch.ok) {
     // Give the allowance back. Counting only after a successful dispatch is
     // what the old order achieved by writing late; holding a reservation
     // achieves it by writing early and undoing, which is the version that
@@ -761,21 +761,46 @@ async function handleRegenerate(request, env) {
     // GITHUB_DISPATCH_TOKEN exists is configuration, not a secret, and it
     // is the difference between "try again later" and "this will never work
     // until someone runs one command".
-    if (!env.GITHUB_DISPATCH_TOKEN || !env.GITHUB_REPO) {
+    // NAME the missing piece, because they are set in different places and
+    // an operator told "the token" will not go and look at wrangler.toml.
+    // `GITHUB_DISPATCH_TOKEN` is a secret (`wrangler secret put`);
+    // `GITHUB_REPO` is a plain `[vars]` entry.
+    const missing = [
+      env.GITHUB_DISPATCH_TOKEN ? null : "GITHUB_DISPATCH_TOKEN (a secret)",
+      env.GITHUB_REPO ? null : "GITHUB_REPO (a wrangler.toml var)",
+    ].filter(Boolean);
+    if (missing.length) {
       return json(
         {
           detail:
-            "This server cannot start generations: its GitHub dispatch " +
-            "token is not configured. Rebuilds — and the punctual morning " +
-            "trigger, which uses the same token — will not work until it " +
-            "is set.",
+            `This server cannot start generations: ${missing.join(" and ")} ` +
+            "is not configured. Rebuilds — and the punctual morning trigger, " +
+            "which uses the same configuration — will not work until it is set.",
         },
         503,
       );
     }
-    // Anything else is transient from the phone's point of view: a repo the
-    // token cannot see, a revoked token, a GitHub outage. The Worker log
-    // has the status.
+    // A 401 or 403 is not transient either.
+    //
+    // The first cut of this comment called a revoked token and a repo the
+    // token cannot see "transient", which they are not — neither resolves
+    // by waiting, and telling someone to try again later is telling them to
+    // do nothing forever. `dispatchWorkflow` records the status so the
+    // difference between "come back later" and "go and fix something" can
+    // be made here rather than guessed at.
+    if (dispatch.status === 401 || dispatch.status === 403) {
+      return json(
+        {
+          detail:
+            "This server's GitHub token was refused (" +
+            `${dispatch.status}). It has expired, been revoked, or ` +
+            "cannot see the repository. Rebuilds will not work until it is " +
+            "replaced.",
+        },
+        503,
+      );
+    }
+    // What is left really is transient: a GitHub outage, a 5xx, a timeout.
     return json({ detail: "Could not start a regeneration." }, 502);
   }
 
