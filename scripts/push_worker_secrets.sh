@@ -39,7 +39,21 @@ while IFS= read -r line || [[ -n "$line" ]]; do
 
   key="${line%%=*}"
   value="${line#*=}"
-  key="$(printf '%s' "$key" | tr -d '[:space:]')"
+  # Trim, not squeeze. This used to be `tr -d '[:space:]'`, which also ate
+  # whitespace INSIDE the name — so `MY KEY=v` became a plausible-looking
+  # `MYKEY` instead of an error. Let wrangler reject a malformed name out
+  # loud; the only thing worth silently fixing here is indentation.
+  key="${key#"${key%%[![:space:]]*}"}"
+  key="${key%"${key##*[![:space:]]}"}"
+
+  # Trim outside whitespace BEFORE looking at quotes, so `KEY = "a b"` keeps
+  # its inner spaces and loses its outer ones. Not cosmetic: the key is
+  # whitespace-stripped just above, so without this a hand-edited
+  # `GITHUB_DISPATCH_TOKEN = github_pat_...` is ACCEPTED and uploaded with a
+  # leading space, and GitHub answers 401 at 03:40. Dropping the line would
+  # be better than that; keeping the value intact is better still.
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
 
   # Strip one matching pair of surrounding quotes, if present.
   if [[ "$value" == \"*\" || "$value" == \'*\' ]]; then
@@ -62,8 +76,12 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   # writes one line to a log nobody reads, and the phone then asks for the
   # wrong day's briefing. That is the failure this check exists for; it is
   # unreachable from the Worker side, because by then the damage is silent.
-  if [[ "$key" == "USER_TIMEZONE" ]] && command -v python3 >/dev/null 2>&1; then
-    if ! python3 -c 'import sys,zoneinfo; zoneinfo.ZoneInfo(sys.argv[1])' "$value" \
+  if [[ "$key" == "USER_TIMEZONE" ]]; then
+    if ! command -v python3 >/dev/null 2>&1; then
+      # Say so. A check that quietly skips itself is worse than no check —
+      # it leaves the operator believing the zone was validated.
+      echo "WARNING: no python3, so USER_TIMEZONE '$value' was NOT checked." >&2
+    elif ! python3 -c 'import sys,zoneinfo; zoneinfo.ZoneInfo(sys.argv[1])' "$value" \
          >/dev/null 2>&1; then
       echo "USER_TIMEZONE '$value' is not an IANA zone (want e.g. Europe/Lisbon)." >&2
       exit 1
