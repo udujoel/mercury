@@ -798,8 +798,13 @@ async function reserveRegeneration(env, key, id) {
         // `releaseRegeneration` already guarded this exact shape. The two
         // halves of one counter disagreeing about what a malformed object
         // means is how a cap stops being a cap.
+        // `Number.isInteger`, not `isFinite`: a count of 1.5 is malformed
+        // state, and `isFinite` accepted it — granting a generation and
+        // storing 2.5, so the counter kept working while never holding a
+        // number anything wrote. A count is a tally; fractions belong on
+        // the spent path with every other shape nobody wrote.
         used =
-          typeof count === "number" && Number.isFinite(count) && count >= 0
+          Number.isInteger(count) && count >= 0
             ? count
             : MAX_REGENERATIONS_PER_DAY;
       } catch {

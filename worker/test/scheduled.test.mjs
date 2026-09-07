@@ -647,7 +647,16 @@ describe("settings", () => {
     // `undefined || 0` and handed out three fresh paid generations, while
     // `releaseRegeneration` refused to touch the same object — two halves
     // of one counter disagreeing about what malformed means.
-    for (const body of ['{"briefing_id":"x"}', '{"count":null}', '{"count":"2"}']) {
+    for (const body of [
+      '{"briefing_id":"x"}',
+      '{"count":null}',
+      '{"count":"2"}',
+      // Fractional: `Number.isFinite` accepted it, granting a generation and
+      // storing 2.5 — a counter that keeps working while never holding a
+      // number anything wrote.
+      '{"count":1.5}',
+      '{"count":-1}',
+    ]) {
       const original = globalThis.fetch;
       let dispatches = 0;
       globalThis.fetch = async () => {
