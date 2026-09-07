@@ -485,3 +485,29 @@ def test_an_id_that_would_not_survive_its_own_key_is_refused():
     assert not is_briefing_id("2026-09-07.manifest")
     assert not is_briefing_id("2026-09-07-0412 ")
     assert is_briefing_id("2026-09-07-0412")
+
+
+def test_a_full_late_hour_finds_the_next_free_minute(tmp_path, monkeypatch):
+    """The clamp collided at exactly the minute it was protecting.
+
+    Clamping the bump at 23:59 meant that with a briefing already at 23:59
+    and an earlier clock, the "next" id WAS 23:59 — the collision the
+    function exists to prevent, produced by the code preventing it.
+    """
+    from app import cli
+    from app.synthesis.storage import LocalFilesystemStorage
+
+    storage = LocalFilesystemStorage(base_dir=tmp_path)
+    monkeypatch.setattr("app.synthesis.storage.build_storage", lambda: storage)
+
+    for taken in ["2026-09-07-2357", "2026-09-07-2359"]:
+        (tmp_path / f"{taken}.manifest.json").write_text("{}")
+
+    # 23:59 is the newest, so nothing can sort after it. The run must still
+    # get a name — a NAMING concern costing the morning is the failure rule
+    # 7 exists to prevent — and it must not be one already taken.
+    got = cli._free_briefing_id("2026-09-07", "0412")
+    assert got not in {"2026-09-07-2359", "2026-09-07-2357"}, (
+        f"collided with an existing briefing: {got}"
+    )
+    assert got.startswith("2026-09-07-"), got

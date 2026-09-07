@@ -117,11 +117,52 @@ def _free_briefing_id(day: str, preferred_hhmm: str) -> str:
     if newest is None or candidate > newest:
         return candidate
 
-    # One minute past the newest, rolling into the hour, clamped at 23:59 —
-    # a day cannot hold more runs than that, and is not close.
+    # The first FREE minute at or after one past the newest.
+    #
+    # The first cut clamped at 23:59, which collides at exactly the point
+    # the clamp was meant to protect: with a briefing already at 23:59 and
+    # an earlier clock, the bump returned 23:59 again — the same id, which
+    # is the collision this function exists to prevent, arrived at by the
+    # code preventing it.
+    taken = {i[-4:] for i in existing if len(i) > 10}
     hhmm = newest[-4:] if len(newest) > 10 else "0000"
-    minutes = min(int(hhmm[:2]) * 60 + int(hhmm[2:]) + 1, 23 * 60 + 59)
-    return f"{day}-{minutes // 60:02d}{minutes % 60:02d}"
+    after_newest = int(hhmm[:2]) * 60 + int(hhmm[2:]) + 1
+
+    def first_free(start: int) -> str | None:
+        for minutes in range(start, 24 * 60):
+            stamp = f"{minutes // 60:02d}{minutes % 60:02d}"
+            if stamp not in taken:
+                return f"{day}-{stamp}"
+        return None
+
+    # Preferred: sorts after everything, which is what keeps newest-first
+    # meaningful.
+    ordered = first_free(after_newest)
+    if ordered is not None:
+        return ordered
+
+    # Nothing left after the newest — a day already holding a briefing at
+    # 23:59. Ordering is now impossible, and the choice is between a
+    # briefing that exists but does not sort last and no briefing at all.
+    #
+    # Rule 7 decides it: a NAMING concern must not cost the morning. The
+    # run gets a free minute wherever one is, so nothing is overwritten and
+    # nothing fails; it simply is not the newest of its day, which is a
+    # cosmetic wrong in a situation that needs 1439 briefings to reach.
+    anywhere = first_free(0)
+    if anywhere is not None:
+        log.warning(
+            "%s already holds a briefing at %s, so this run cannot sort "
+            "last; naming it %s instead", day, max(taken), anywhere,
+        )
+        return anywhere
+
+    # 1440 briefings in one day. There is no name left that does not destroy
+    # one, and silently overwriting is the one option worse than failing.
+    raise ValueError(
+        f"no free minute left on {day}: it already holds {len(existing)} "
+        "briefings, and every remaining name would overwrite one"
+    )
 
 
 def _newest_briefing_id(today_id: str) -> str | None:
