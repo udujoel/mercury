@@ -368,27 +368,57 @@ def _format_follow_ups(emails: list[Item], *, limit: int) -> str:
     how long it has been sitting there — so the sender, the subject and the
     age are the whole line.
     """
-    owed = [em for em in emails if em.requires_response]
+    owed = _owed_replies(emails)
     if not owed:
-        # Said plainly rather than left blank. The segment is structural for
-        # the validator, so the model will write SOMETHING here; telling it
-        # the inbox is clear is the one phrasing that cannot become an
-        # invention.
-        return "(nothing needs a reply)"
-
+        return "(no emails awaiting a reply)"
     # Oldest first: the thing that has been waiting three days is more
     # overdue than the one that arrived an hour ago, and "overdue" is the
     # only ordering this segment has any use for.
-    owed.sort(key=lambda em: em.timestamp)
-    lines = [
-        f"- {em.source_name} <{em.author}> [{em.timestamp.isoformat()}]: {em.title}"
+    return "\n".join(
+        f"- {em.source_name} <{em.author or 'unknown'}> "
+        f"[{em.timestamp.isoformat()}]: {em.title}"
         for em in owed[:limit]
-    ]
+    )
+
+
+def _owed_replies(emails: list[Item]) -> list[Item]:
+    """The owed replies, oldest first."""
+    return sorted(
+        (em for em in emails if em.requires_response),
+        key=lambda em: em.timestamp,
+    )
+
+
+def _follow_up_policy(emails: list[Item], *, limit: int) -> str:
+    """Mercury's own statement about the list above. Trusted instruction.
+
+    OUTSIDE the fence, for the reason `_inbox_policy` documents: a rule about
+    the data, fenced together with the data, tells the model to obey it and
+    to distrust it in the same breath. The first cut of this put both of
+    these sentences inside `_fence_untrusted` — which is the same mistake,
+    written in the same file that documents it.
+
+    Two cases, and the empty one matters most. `follow_ups` is required by
+    the validator, so the model WILL write something here; left with a bare
+    "(none)" it invents an errand. Telling it plainly that the inbox is clear
+    is the one phrasing that cannot become an invention.
+    """
+    owed = _owed_replies(emails)
+    if not owed:
+        return (
+            "\n\nNothing in the inbox is awaiting a reply. Say so, briefly "
+            "and as good news, and do not invent an errand to fill the "
+            "segment."
+        )
     if len(owed) > limit:
         # Counted, not silently dropped. A cap that hides what it cut is how
         # "plus eleven others" became the entire inbox segment.
-        lines.append(f"- (and {len(owed) - limit} more awaiting a reply)")
-    return "\n".join(lines)
+        return (
+            f"\n\n{len(owed) - limit} further email(s) are also awaiting a "
+            "reply and are NOT listed above. Acknowledge them as a count "
+            "only, and never invent who they were from or what they said."
+        )
+    return ""
 
 
 def _fence_untrusted(body: str) -> str:
@@ -1348,6 +1378,18 @@ async def generate_script(
         emails, events, weather, aggregated_email_count, stories
     )
 
+    # Whose owed replies the follow-ups segment draws on.
+    #
+    # `follow_up_candidates` is the inbox as it stood BEFORE selection cut it
+    # to the handful that get read out, because the message most worth
+    # catching in this segment is exactly the one that ranked too low to be
+    # read out. Falls back to `emails` only for callers that pass nothing,
+    # which in production is none: `generate.py` is the single caller and it
+    # always passes.
+    _follow_up_source = (
+        follow_up_candidates if follow_up_candidates is not None else emails
+    )
+
     outline_prompt = OUTLINE_PROMPT.format(
         # Spell the weekday out rather than handing over an ISO timestamp.
         # Live runs opened with "It's Thursday, August 21st" for a date that
@@ -1410,11 +1452,11 @@ async def generate_script(
         #
         # Fenced like every other block of mail: these are subject lines
         # written by anyone who can reach the inbox.
-        follow_ups=_fence_untrusted(
-            _format_follow_ups(
-                follow_up_candidates if follow_up_candidates is not None else emails,
-                limit=FOLLOW_UP_LIMIT,
+        follow_ups=(
+            _fence_untrusted(
+                _format_follow_ups(_follow_up_source, limit=FOLLOW_UP_LIMIT)
             )
+            + _follow_up_policy(_follow_up_source, limit=FOLLOW_UP_LIMIT)
         ),
         total_words=budget,
         segment_definitions="\n".join(

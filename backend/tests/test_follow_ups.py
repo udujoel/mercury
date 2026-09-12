@@ -13,7 +13,11 @@ nothing read it for the segment named after it.
 from datetime import UTC, datetime
 
 from app.core.schemas import Item, SourceType
-from app.pipeline.script_chain import FOLLOW_UP_LIMIT, _format_follow_ups
+from app.pipeline.script_chain import (
+    FOLLOW_UP_LIMIT,
+    _follow_up_policy,
+    _format_follow_ups,
+)
 
 
 def _email(title: str, *, owed: bool, days_ago: int = 0, sender: str = "Priya") -> Item:
@@ -43,14 +47,41 @@ def test_only_emails_awaiting_a_reply_are_listed():
     assert "receipt" not in out
 
 
-def test_an_empty_inbox_says_so_rather_than_going_blank():
+def test_an_empty_inbox_is_told_to_the_model_as_an_instruction():
     """The segment is structural, so the model writes SOMETHING here.
 
-    An empty block invites it to invent one; a plain statement cannot be
-    misread.
+    A bare "(none)" invites it to invent an errand; being told plainly that
+    the inbox is clear, and told not to invent one, cannot be misread.
     """
-    out = _format_follow_ups([_email("FYI", owed=False)], limit=FOLLOW_UP_LIMIT)
-    assert out == "(nothing needs a reply)"
+    clear = [_email("FYI", owed=False)]
+    assert _format_follow_ups(clear, limit=FOLLOW_UP_LIMIT) == (
+        "(no emails awaiting a reply)")
+    policy = _follow_up_policy(clear, limit=FOLLOW_UP_LIMIT)
+    assert "Nothing in the inbox is awaiting a reply" in policy
+    assert "do not invent" in policy
+
+
+def test_mercurys_own_statements_sit_outside_the_untrusted_fence():
+    """The mistake this file documents, and nearly repeated.
+
+    `_inbox_policy` is appended AFTER `_fence_untrusted(...)` because a rule
+    about the data, fenced together with the data, tells the model to obey it
+    and to distrust it in the same breath. The follow-ups policy has to be
+    built the same way — so it must live in its own function and not be
+    baked into the formatted block.
+    """
+    import inspect
+
+    from app.pipeline import script_chain
+
+    body = inspect.getsource(script_chain._format_follow_ups)
+    assert "do not invent" not in body, (
+        "Mercury's instruction to the model has leaked inside the fenced block")
+
+    call = inspect.getsource(script_chain.generate_script)
+    fenced = call.split("follow_ups=(", 1)[1].split("),", 1)[0]
+    assert "_fence_untrusted(" in fenced
+    assert fenced.index("_follow_up_policy(") > fenced.index("_fence_untrusted(")
 
 
 def test_oldest_first_because_overdue_is_the_only_useful_order():
@@ -67,10 +98,18 @@ def test_oldest_first_because_overdue_is_the_only_useful_order():
 
 def test_the_cap_counts_what_it_cut_rather_than_hiding_it():
     owed = [_email(f"Question {i}", owed=True, days_ago=i) for i in range(9)]
-    out = _format_follow_ups(owed, limit=FOLLOW_UP_LIMIT)
-    named = [ln for ln in out.splitlines() if ln.startswith("- ")]
-    assert len(named) == FOLLOW_UP_LIMIT + 1
-    assert f"and {9 - FOLLOW_UP_LIMIT} more awaiting a reply" in out
+
+    named = _format_follow_ups(owed, limit=FOLLOW_UP_LIMIT).splitlines()
+    assert len(named) == FOLLOW_UP_LIMIT, "the fenced list is capped"
+
+    policy = _follow_up_policy(owed, limit=FOLLOW_UP_LIMIT)
+    assert f"{9 - FOLLOW_UP_LIMIT} further email(s)" in policy
+    assert "never invent" in policy
+
+
+def test_no_policy_line_when_nothing_was_cut():
+    owed = [_email("Only one", owed=True)]
+    assert _follow_up_policy(owed, limit=FOLLOW_UP_LIMIT) == ""
 
 
 def test_no_bodies_reach_the_segment():
