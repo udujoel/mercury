@@ -1023,7 +1023,14 @@ final class AppState {
     @MainActor
     private func playStoredBriefing() async -> Bool {
         guard let store,
-              let stored = try? await store.storedBriefing(id: AppDelegate.briefingId(for: .now)),
+              // By DAY. Asking by id meant asking for `2026-09-12` against
+              // rows keyed `2026-09-12-0535`, which matched nothing — so
+              // this fallback has returned false on every offline morning
+              // since 2026-09-07, and the user saw a network error for a
+              // briefing that was already on the phone. Third instance of
+              // the same bug as the prefetch and the rebuild above.
+              let stored = try? await store.storedBriefing(
+                  forDay: AppDelegate.briefingId(for: .now)),
               let path = stored.localAudioPath,
               FileManager.default.fileExists(atPath: path)
         else { return false }

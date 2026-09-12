@@ -1,5 +1,20 @@
 # Mercury iOS client — Phase 1 MVP
 
+> **HISTORICAL — superseded by ADR-012 (2026-09-12).**
+>
+> This describes the Phase 1 app as it stood, and parts of it are no longer
+> true of the code. In particular the `WeatherCard` / `CalendarCard` /
+> `InboxCard` deck and its fan-and-drag interaction, described below as the
+> iOS architecture, **were deleted**: the visual register is now Particle's
+> light editorial rather than Huxe's ambient dark, Home is a masthead plus
+> `TodaysBriefingCard` plus the desk (`DeskFeed`), and the suite is 339 tests
+> rather than 20.
+>
+> Kept because the reasoning about the hand-written `project.pbxproj`, the
+> playback bugs and the decoding mismatch is still the best record of why
+> those things are the way they are. Read it as history, not as a map. For
+> what the app is today see `docs/ROADMAP.md` and `docs/LOG.md`.
+
 Status: builds clean, unit tests pass (20/20). A prior session had already
 written most of this app before hitting a context limit; this pass finished
 it — fixed a broken hand-written `project.pbxproj`, a broken test target,
