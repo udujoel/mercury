@@ -587,6 +587,17 @@ something in this project:
       So this is: invert `DigestNewsletter.story_ids` through
       `DigestStory.topics` into topic → senders, widen the source filter
       past `_is_newsletter`, and render it. See task 25.
+      **REVISED 2026-09-12, after checking the live digest.** The join works
+      — 107 resolutions across 44 newsletters, 32 topics reached — but the
+      topics are the wrong GRAIN. `prompts.py` asks for "one to three
+      lowercase single words", so what comes back is `ai`, `society`,
+      `history`: categories, not subjects, with `ai` alone spanning 16
+      stories. A section keyed on those says "AI — 11 senders", barely
+      better than the list it replaces, and gives task 18 nothing to
+      research. The extraction has to change too — subjects, not tags — so
+      this is a prompt and schema change rather than a rendering job. Only
+      40 of 209 stories carry topics at all (`DIGEST_MAX_ENRICHED = 40`).
+      See docs/LOG.md.
 - [ ] 18. **Research each topic independently, with Gemini.** The point of
       the feature, in the user's words: "make sure the story is rich and
       informed, not just what's in the email." A newsletter is a POINTER to

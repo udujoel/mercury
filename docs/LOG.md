@@ -18,6 +18,87 @@ what is *planned*; this is what *happened*.
 
 ---
 
+## 2026-09-12 — `topics` is a category tag, not a subject
+
+Scoping task 25 ("render what already arrives") against the live 2026-09-11
+digest, and the render turns out not to be the job.
+
+**The join works.** Inverting `DigestNewsletter.story_ids` through
+`DigestStory.topics` resolves 107 times across 44 newsletters and reaches 32
+topics. Mechanically, task 17's "which senders covered each subject" is
+already computable from what ships today.
+
+**The topics are the wrong grain.** What comes back is `ai`, `society`,
+`history`, `culture`, `remembrance` — categories, not subjects — and `ai`
+alone spans 16 stories. The cause is one line in `prompts.py`:
+
+> `topics` is one to three lowercase single words.
+
+A single lowercase word can only ever be a category. So a topic-led section
+built on this field renders "AI — 11 senders", barely better than the list it
+replaces, and it gives task 18 nothing to research: "go find out more about
+`ai`" is not a research question, and the second step is that task's entire
+value.
+
+Also: only **40 of 209** stories carry topics at all, because
+`DIGEST_MAX_ENRICHED = 40` caps enrichment.
+
+**Consequence.** Task 17 is a prompt and schema change, not a rendering job —
+subjects like "Apple's CEO handoff to Ternus" rather than `apple`, and a
+decision about whether the coarse tags are still wanted alongside them for
+grouping. Task 25 stands alone: the `newsletters` list is ready to render
+sender-led and answers "what arrived" before subjects get finer.
+
+**Why the audit missed it.** Eight agents could find features nothing calls.
+This one is called, populated, decoded by the client, and correct against its
+own spec — the spec asks for the wrong thing. No test would fail. It took
+reading real output and asking whether it answers the question the feature
+exists for: the ten second test, pointed at the page instead of the audio.
+
+---
+
+## 2026-09-12 — The follow-ups segment had no follow-ups
+
+`script_chain.py` passed the literal string `"(none)"` into the prompt, so
+**every briefing ever generated contained a follow-ups segment written from
+nothing** — while the segment was a full citizen everywhere else: in the
+`Segment` enum, with a label, a prompt definition, a word budget, required by
+the validator, and offered to the user as a toggle reading "Where you owe
+someone a reply". The same shape as the `n_stories=0` incident.
+
+**The data was never missing.** `classify_priority` has set
+`Item.requires_response` since Phase 1, and `ranking.py:50` reads it as an
+urgency signal for scoring. The flag that answers this segment's question was
+computed on every run and used for everything except the segment named after
+it.
+
+**Decision: candidates come from the inbox before selection.** The message
+most worth catching here is the one that ranked too low to be read out. Safe
+to add as a parameter because `generate_script` has exactly ONE production
+caller, which all three entry points funnel through; with three call sites it
+would have been another `music_set`.
+
+**Decision: no bodies.** The inbox segment already quotes them. Repeating one
+would spend the follow-ups budget re-reading mail just heard, and widen rule
+5's exposure for nothing.
+
+**Two review findings on my own work, both real.** Mercury's own instructions
+were inside `_fence_untrusted` — the exact mistake the same file documents
+avoiding, since a rule fenced with the data tells the model to obey it and
+distrust it in one breath. And `_owed_replies` sorted datetimes directly,
+which raises `TypeError` when `parsedate_to_datetime` returns a naive value
+for a `Date` header carrying `-0000` (RFC 5322's "timezone unknown"). That
+would have killed a whole briefing from inside a formatting helper, against
+rule 7 — and `scoring.py:49` already had the safe idiom one file away.
+
+**A test design that worked.** `_fake_generate_script` says in its own
+comment that it stands in for the real chain's SIGNATURE, "so a new keyword
+the pipeline starts passing shows up here as a TypeError rather than silently
+taking a different path in tests than in production." It did exactly that, on
+the first run, in eight tests at once.
+
+---
+
 ## 2026-09-12 — The audit: almost everything is built, almost none of it arrives
 
 Eight audit agents over the code, sixteen adversarial verification passes, and
