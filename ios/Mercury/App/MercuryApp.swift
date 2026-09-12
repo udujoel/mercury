@@ -155,14 +155,17 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
                 return
             }
             let nextWake = appState.nextWakeDate
-            // The task fires shortly before *today's* wake time, so the
-            // briefing it should prefetch is today's — `briefing_id` is a
-            // "YYYY-MM-DD" date string (PRD 3.7, `sample_manifest.json`),
-            // deterministic from the clock alone. No server round trip is
-            // needed to learn which id to ask for.
-            let expectedId = AppDelegate.briefingId(for: .now)
+            // This used to derive the id from the clock, on the reasoning
+            // that `briefing_id` is a "YYYY-MM-DD" date string (PRD 3.7,
+            // `sample_manifest.json`) and so needs no round trip. That was
+            // true until PR #33 gave a day four briefings named for the
+            // minute each ran; the derived id then matched nothing in R2 and
+            // every nightly prefetch 404ed for five days without a sound.
+            //
+            // `AppState.prefetchTodaysBriefing` asks the server what it
+            // actually has. See `briefingToPrefetch` for which one it picks.
             BackgroundScheduler.handlePrefetch(task, nextWakeTime: nextWake) {
-                await appState.prefetchBriefing(id: expectedId)
+                await appState.prefetchTodaysBriefing()
             }
         }
 

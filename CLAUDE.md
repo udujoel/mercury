@@ -71,7 +71,8 @@ script quality, voice quality or pacing. Fix the most frequent category first.
 ## Current phase
 
 Phases 0-2 complete. Phase 3 (voice) was built then dropped — ADR-009.
-Next: deploy via GitHub Actions + Cloudflare R2 (ADR-008, docs/DEPLOYMENT.md).
+Deployed — GitHub Actions generates, a Cloudflare Worker and R2 serve
+(ADR-008, docs/DEPLOYMENT.md). Current work: docs/ROADMAP.md.
 
 Phase 2's news half was finished and connected to nothing until
 2026-08-31. RSS ingestion, cross-source dedup, clustering and ranking all

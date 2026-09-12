@@ -563,6 +563,54 @@ enum ManifestFixtures {
 ///
 /// The Worker answers the moment GitHub accepts the dispatch; the run
 /// behind it takes about seven minutes. Everything here is about that gap.
+/// Which briefing the background task puts on the phone before the alarm.
+final class PrefetchSelectionTests: XCTestCase {
+
+    func testPicksTodaysNewestNotTheIndexHead() {
+        let id = AppState.briefingToPrefetch(
+            from: ["2026-09-13-0012", "2026-09-12-2155", "2026-09-12-0535"],
+            today: "2026-09-12")
+        XCTAssertEqual(id, "2026-09-12-2155",
+                       "tomorrow's 00:12 run is newest overall, not today's")
+    }
+
+    /// The bug this whole file exists for: a derived bare-day id matches
+    /// nothing R2 holds, so the prefetch has to select, not compute.
+    func testATimedIdIsFoundForABareDayToday() {
+        XCTAssertEqual(
+            AppState.briefingToPrefetch(from: ["2026-09-12-0535"], today: "2026-09-12"),
+            "2026-09-12-0535")
+    }
+
+    /// Legacy ids from before 2026-09-07 are still in the bucket.
+    func testALegacyBareDayIdIsStillSelectable() {
+        XCTAssertEqual(
+            AppState.briefingToPrefetch(from: ["2026-09-06"], today: "2026-09-06"),
+            "2026-09-06")
+    }
+
+    /// Deliberate: yesterday's briefing must NOT be presented as today's, and
+    /// prefetching one would suppress the waiting room, which appears only
+    /// when there is no briefing at all.
+    func testNothingIsPrefetchedWhenTodayHasNoBriefing() {
+        XCTAssertNil(AppState.briefingToPrefetch(
+            from: ["2026-09-11-2155", "2026-09-10-0537"], today: "2026-09-12"))
+    }
+
+    func testAnEmptyIndexPrefetchesNothing() {
+        XCTAssertNil(AppState.briefingToPrefetch(from: [], today: "2026-09-12"))
+    }
+
+    /// Selection must not lean on the server's ordering.
+    func testOrderingOfTheIndexDoesNotChangeTheAnswer() {
+        let ids = ["2026-09-12-0535", "2026-09-12-2155", "2026-09-12-1213"]
+        let expected = "2026-09-12-2155"
+        XCTAssertEqual(AppState.briefingToPrefetch(from: ids, today: "2026-09-12"), expected)
+        XCTAssertEqual(AppState.briefingToPrefetch(from: ids.reversed(), today: "2026-09-12"), expected)
+        XCTAssertEqual(AppState.briefingToPrefetch(from: ids.sorted(), today: "2026-09-12"), expected)
+    }
+}
+
 final class PendingRebuildTests: XCTestCase {
 
     @MainActor
@@ -616,6 +664,72 @@ final class PendingRebuildTests: XCTestCase {
 
         XCTAssertFalse(state.isRegenerating,
                        "a briefing generated after the request IS the rebuild")
+    }
+
+    /// The shape production actually produces, which no other test here uses.
+    ///
+    /// A rebuild is asked for by DAY: the phone knows only `2026-09-12`, the
+    /// Worker dispatches `briefing_day`, and the job appends the minute it
+    /// really ran. So the manifest that lands is never EQUAL to the id the
+    /// rebuild was recorded under — it is same-day, and equality can only
+    /// ever fail.
+    ///
+    /// Every other test in this class speaks in bare-day ids, which is
+    /// exactly why the suite stayed green for five days while the button
+    /// stayed disabled and the spinner ran to its 20-minute expiry. The
+    /// fixtures had not been told that a day now holds four briefings.
+    ///
+    /// Two comparisons are on trial, not one. `supersedes` is only captured
+    /// when the briefing on screen is judged to be today's, and that judgement
+    /// was the same equality — so with a timed id on screen the floor silently
+    /// fell back to the request time as well.
+    @MainActor
+    func testARebuildEndsWhenTodaysTimedBriefingLands() async throws {
+        let day = ManifestFixtures.todayId
+        let thisMorning = ManifestFixtures.made(
+            at: "2026-08-23T05:35:00Z", id: "\(day)-0535")
+        let api = RecordingAPI(manifestResult: .success(thisMorning))
+        let state = AppState(api: api)
+
+        await state.playBriefing()
+        _ = try await state.regenerateToday()
+        XCTAssertTrue(state.isRegenerating)
+
+        // Still serving this morning's. Not the rebuild.
+        await state.playBriefing()
+        XCTAssertTrue(state.isRegenerating,
+                      "the briefing already on screen is not the rebuild")
+
+        // The job ran at 14:30 and named the briefing for that minute.
+        api.manifestResult = .success(
+            ManifestFixtures.made(at: "2026-08-23T14:30:00Z", id: "\(day)-1430"))
+        await state.playBriefing()
+
+        XCTAssertFalse(
+            state.isRegenerating,
+            "a newer briefing for the day that was asked for IS the rebuild")
+    }
+
+    /// The guard still has to hold, or the fix is just its removal.
+    @MainActor
+    func testAnotherDaysBriefingStillDoesNotEndTheRebuild() async throws {
+        let day = ManifestFixtures.todayId
+        let api = RecordingAPI(
+            manifestResult: .success(
+                ManifestFixtures.made(at: "2026-08-23T05:35:00Z", id: "\(day)-0535")))
+        let state = AppState(api: api)
+
+        await state.playBriefing()
+        _ = try await state.regenerateToday()
+
+        // An archive morning, opened while the rebuild runs. Newer than the
+        // floor by wall-clock, and still not what was asked for.
+        api.manifestResult = .success(
+            ManifestFixtures.made(at: "2026-09-30T08:00:00Z", id: "2026-09-30-0800"))
+        await state.playBriefing()
+
+        XCTAssertTrue(state.isRegenerating,
+                      "a different morning says nothing about today's rebuild")
     }
 
     /// Nothing played yet, so there is no briefing timestamp to beat.

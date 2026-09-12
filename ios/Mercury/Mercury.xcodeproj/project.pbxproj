@@ -60,6 +60,7 @@
 		8EC27C0EB2744E109748AE41 /* Colors.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5B2336CF13D4CBCB4EC14D0 /* Colors.swift */; };
 		91BAD9FF70394EFD98DBDED7 /* TranscriptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8A081F606CC4D82A84AB0AF /* TranscriptView.swift */; };
 		AA11BB22CC33DD44EE55F001 /* BriefingClock.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE55F002 /* BriefingClock.swift */; };
+		AA11BB22CC33DD44EE55FB01 /* BriefingID.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE55FB02 /* BriefingID.swift */; };
 		AC4C8018E670491B88F0A95B /* ResumePositionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A069221208CA44B1888D4792 /* ResumePositionTests.swift */; };
 		BC47CFCD7E914CCFAFB432E0 /* MercuryApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14E68D94060547A199EDF858 /* MercuryApp.swift */; };
 		C1EFE552AA2D469F857840EA /* AmbientBackground.swift in Sources */ = {isa = PBXBuildFile; fileRef = 780D907237CC400484ACD3C3 /* AmbientBackground.swift */; };
@@ -136,6 +137,7 @@
 		2E6D208506BB47919431D65F /* TodaysBriefingCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodaysBriefingCard.swift; sourceTree = "<group>"; };
 		DDC079C69CB342979682EDCA /* BriefingDigest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BriefingDigest.swift; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE55F002 /* BriefingClock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BriefingClock.swift; sourceTree = "<group>"; };
+		AA11BB22CC33DD44EE55FB02 /* BriefingID.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BriefingID.swift; sourceTree = "<group>"; };
 		B295B9B6265A41DAB22E89B9 /* sample_manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = sample_manifest.json; sourceTree = "<group>"; };
 		6D7890DC734345CAB69E483B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B33F2A2C9B5A4A1EACD41181 /* NowPlayingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingService.swift; sourceTree = "<group>"; };
@@ -189,6 +191,7 @@
 				64CA9555107046F5A0B76CA7 /* RegenerationStatus.swift */,
 				311E37B13C9641598CB3F111 /* Digest.swift */,
 				AA11BB22CC33DD44EE55F002 /* BriefingClock.swift */,
+				AA11BB22CC33DD44EE55FB02 /* BriefingID.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -536,6 +539,7 @@
 				F3FF1CAB19F24CAB93BBB038 /* RegenerationStatus.swift in Sources */,
 				2DF8017D72B74863AF95C909 /* Digest.swift in Sources */,
 				AA11BB22CC33DD44EE55F001 /* BriefingClock.swift in Sources */,
+				AA11BB22CC33DD44EE55FB01 /* BriefingID.swift in Sources */,
 				35553941EBBA4F60AD83C8DC /* APIClient.swift in Sources */,
 				7A6EB2262FAE4FE4BBEFC626 /* Endpoints.swift in Sources */,
 				1DFFF7D042234B42BC2F69A3 /* BriefingStore.swift in Sources */,
