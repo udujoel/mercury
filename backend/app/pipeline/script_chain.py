@@ -63,6 +63,14 @@ logger = logging.getLogger(__name__)
 _VALID_SEGMENTS = {s.value for s in Segment}
 _VALID_SPEAKERS = {"A", "B"}
 
+# How many owed replies the follow-ups segment names individually.
+#
+# Six, because the segment gets one of the smaller word budgets and a
+# list longer than that stops being a prompt to act and becomes another
+# thing to feel behind on. The remainder is counted out loud rather than
+# dropped.
+FOLLOW_UP_LIMIT = 6
+
 
 # ──────────────────────────────────────────────────────────────
 # Robust JSON parsing — lifted from scripts/spike_04_llm.py.
@@ -335,6 +343,100 @@ INJECTION_WARNING = (
 def _strip_fence_markers(text: str) -> str:
     """Stop content smuggling a fence marker to escape its own block."""
     return text.replace(SOURCE_FENCE_OPEN, "").replace(SOURCE_FENCE_CLOSE, "")
+
+
+def _format_follow_ups(emails: list[Item], *, limit: int) -> str:
+    """The emails the listener owes a reply to.
+
+    **Why this function did not exist.** `generate_script` passed the literal
+    string `"(none)"` into the prompt, so every briefing ever generated
+    contained a follow-ups segment written from nothing — while the segment
+    was a full citizen everywhere else: in the `Segment` enum, with a label, a
+    prompt definition, a word budget, required by the validator, and offered
+    to the user as a toggle reading "Where you owe someone a reply". Exactly
+    the shape of the `n_stories=0` incident CLAUDE.md records.
+
+    The data was never missing. `classify_priority` has set
+    `Item.requires_response` since Phase 1 and `ranking.py:50` reads it as an
+    urgency signal for scoring — so the flag that answers this segment's
+    question was computed on every run and used for everything except the
+    segment named after it.
+
+    No bodies. The inbox segment already quotes them; repeating them here
+    would spend the follow-ups budget re-reading mail the listener has just
+    heard. What this segment owes is the shorter answer — who, about what, and
+    how long it has been sitting there — so the sender, the subject and the
+    age are the whole line.
+    """
+    owed = _owed_replies(emails)
+    if not owed:
+        return "(no emails awaiting a reply)"
+    # Oldest first: the thing that has been waiting three days is more
+    # overdue than the one that arrived an hour ago, and "overdue" is the
+    # only ordering this segment has any use for.
+    return "\n".join(
+        f"- {em.source_name} <{em.author or 'unknown'}> "
+        f"[{em.timestamp.isoformat()}]: {em.title}"
+        for em in owed[:limit]
+    )
+
+
+def _owed_replies(emails: list[Item]) -> list[Item]:
+    """The owed replies, oldest first.
+
+    Sorted on the POSIX timestamp rather than on the datetime, because
+    `Item.timestamp` is not guaranteed to be timezone-aware and comparing a
+    naive datetime with an aware one raises TypeError.
+
+    That is not theoretical. `gmail._parse_date` falls through to
+    `parsedate_to_datetime(date_str)` whenever `internalDate` is missing or
+    unparseable, and that returns a NAIVE datetime for a `Date` header
+    carrying `-0000` — RFC 5322's way of saying the sender's timezone is
+    unknown, which plenty of mailers emit — or no offset at all. One such
+    email beside one ordinary email, and a direct sort raises from inside a
+    formatting helper and takes the whole briefing with it. Rule 7 says a
+    source can fail without ending the run; a crash here would end it over a
+    date header.
+
+    `scoring.py:49` already sorts these same objects this way. The idiom was
+    in the codebase; this simply uses it.
+    """
+    return sorted(
+        (em for em in emails if em.requires_response),
+        key=lambda em: em.timestamp.timestamp(),
+    )
+
+
+def _follow_up_policy(emails: list[Item], *, limit: int) -> str:
+    """Mercury's own statement about the list above. Trusted instruction.
+
+    OUTSIDE the fence, for the reason `_inbox_policy` documents: a rule about
+    the data, fenced together with the data, tells the model to obey it and
+    to distrust it in the same breath. The first cut of this put both of
+    these sentences inside `_fence_untrusted` — which is the same mistake,
+    written in the same file that documents it.
+
+    Two cases, and the empty one matters most. `follow_ups` is required by
+    the validator, so the model WILL write something here; left with a bare
+    "(none)" it invents an errand. Telling it plainly that the inbox is clear
+    is the one phrasing that cannot become an invention.
+    """
+    owed = _owed_replies(emails)
+    if not owed:
+        return (
+            "\n\nNothing in the inbox is awaiting a reply. Say so, briefly "
+            "and as good news, and do not invent an errand to fill the "
+            "segment."
+        )
+    if len(owed) > limit:
+        # Counted, not silently dropped. A cap that hides what it cut is how
+        # "plus eleven others" became the entire inbox segment.
+        return (
+            f"\n\n{len(owed) - limit} further email(s) are also awaiting a "
+            "reply and are NOT listed above. Acknowledge them as a count "
+            "only, and never invent who they were from or what they said."
+        )
+    return ""
 
 
 def _fence_untrusted(body: str) -> str:
@@ -1255,6 +1357,7 @@ async def generate_script(
     length: BriefingLength,
     date: datetime,
     aggregated_email_count: int = 0,
+    follow_up_candidates: list[Item] | None = None,
     stories: list[Story] | None = None,
     passes: int = 2,
     disabled_segments: Iterable[str] | None = None,
@@ -1291,6 +1394,18 @@ async def generate_script(
     stories = stories or []
     source_data = _flatten_source_text(
         emails, events, weather, aggregated_email_count, stories
+    )
+
+    # Whose owed replies the follow-ups segment draws on.
+    #
+    # `follow_up_candidates` is the inbox as it stood BEFORE selection cut it
+    # to the handful that get read out, because the message most worth
+    # catching in this segment is exactly the one that ranked too low to be
+    # read out. Falls back to `emails` only for callers that pass nothing,
+    # which in production is none: `generate.py` is the single caller and it
+    # always passes.
+    _follow_up_source = (
+        follow_up_candidates if follow_up_candidates is not None else emails
     )
 
     outline_prompt = OUTLINE_PROMPT.format(
@@ -1344,7 +1459,31 @@ async def generate_script(
         # Fenced: article bodies are third-party text from feeds anyone can
         # publish to, exactly like email bodies.
         stories=_fence_untrusted(_format_stories(stories)),
-        follow_ups="(none)",
+        # Was the literal string "(none)" — see `_format_follow_ups`.
+        #
+        # Drawn from `follow_up_candidates` — the inbox BEFORE selection cut
+        # it to the handful read out — rather than from `emails`, because an
+        # email needing a reply that ranked below the cut is precisely the
+        # one you would otherwise never hear about.
+        #
+        # Not literally every message: `generate.py` passes `inbox_emails`,
+        # which excludes those absorbed into world stories and the
+        # newsletter-cluster duplicates. In practice those are newsletters,
+        # which `classify_priority` never marks as requiring a response — but
+        # the distinction matters to anyone counting from this list later.
+        #
+        # `requires_response` boosts a message's rank, so the two sets
+        # usually overlap anyway — "usually" is not good enough for the
+        # segment whose entire job is not missing one.
+        #
+        # Fenced like every other block of mail: these are subject lines
+        # written by anyone who can reach the inbox.
+        follow_ups=(
+            _fence_untrusted(
+                _format_follow_ups(_follow_up_source, limit=FOLLOW_UP_LIMIT)
+            )
+            + _follow_up_policy(_follow_up_source, limit=FOLLOW_UP_LIMIT)
+        ),
         total_words=budget,
         segment_definitions="\n".join(
             SEGMENT_DEFINITIONS[s.value] for s in segments
