@@ -264,6 +264,21 @@ struct HomeView: View {
             .onChange(of: appState.playback.isPlaying) { _, isPlaying in
                 if isPlaying { showPlayer = true }
             }
+            // The edge back. This observer had only ever pointed one way —
+            // into the player — so the sign-off left the listener sitting on
+            // a dead player screen with a finished briefing, and getting to
+            // the morning's stories meant knowing to tap Back.
+            //
+            // Keyed on `hasFinished` rather than on `!isPlaying`, and the
+            // distinction is the whole point: `isPlaying` goes false on
+            // every pause, and yanking someone out of the player because
+            // they paused to listen to something else would be a worse bug
+            // than the one being fixed. `hasFinished` is set in exactly one
+            // place — `PlaybackCoordinator.finish()` — and means the audio
+            // reached its end.
+            .onChange(of: appState.playback.hasFinished) { _, finished in
+                if finished { showPlayer = false }
+            }
         }
     }
 
