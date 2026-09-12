@@ -102,6 +102,7 @@ async def _fake_generate_script(
     date,
     background_events: list[CalendarEvent] | None = None,
     aggregated_email_count: int = 0,
+    follow_up_candidates: list[Item] | None = None,
     stories: list | None = None,
     passes: int = 2,
     # Accepted and unused, deliberately: this fake stands in for the real

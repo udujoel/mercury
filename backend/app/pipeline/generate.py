@@ -241,6 +241,12 @@ async def generate_briefing(
         # so most of the inbox disappeared without so much as a "plus eleven
         # others, nothing urgent".
         aggregated_email_count=selection.get("aggregated_count", 0),
+        # The WHOLE inbox, not the handful that made the cut. The follow-ups
+        # segment exists to catch what you owe a reply to, and the message
+        # most worth catching is exactly the one that ranked too low to be
+        # read out — so handing it `selection["emails"]` would make the
+        # segment blind in the case it was built for.
+        follow_up_candidates=inbox_emails,
         stories=world_stories,
         # Phase 2: outline -> draft -> critique -> revise. The chain keeps
         # the draft if revision scores worse on the quality gates, which a

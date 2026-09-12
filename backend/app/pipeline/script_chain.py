@@ -63,6 +63,14 @@ logger = logging.getLogger(__name__)
 _VALID_SEGMENTS = {s.value for s in Segment}
 _VALID_SPEAKERS = {"A", "B"}
 
+# How many owed replies the follow-ups segment names individually.
+#
+# Six, because the segment gets one of the smaller word budgets and a
+# list longer than that stops being a prompt to act and becomes another
+# thing to feel behind on. The remainder is counted out loud rather than
+# dropped.
+FOLLOW_UP_LIMIT = 6
+
 
 # ──────────────────────────────────────────────────────────────
 # Robust JSON parsing — lifted from scripts/spike_04_llm.py.
@@ -335,6 +343,52 @@ INJECTION_WARNING = (
 def _strip_fence_markers(text: str) -> str:
     """Stop content smuggling a fence marker to escape its own block."""
     return text.replace(SOURCE_FENCE_OPEN, "").replace(SOURCE_FENCE_CLOSE, "")
+
+
+def _format_follow_ups(emails: list[Item], *, limit: int) -> str:
+    """The emails the listener owes a reply to.
+
+    **Why this function did not exist.** `generate_script` passed the literal
+    string `"(none)"` into the prompt, so every briefing ever generated
+    contained a follow-ups segment written from nothing — while the segment
+    was a full citizen everywhere else: in the `Segment` enum, with a label, a
+    prompt definition, a word budget, required by the validator, and offered
+    to the user as a toggle reading "Where you owe someone a reply". Exactly
+    the shape of the `n_stories=0` incident CLAUDE.md records.
+
+    The data was never missing. `classify_priority` has set
+    `Item.requires_response` since Phase 1 and `ranking.py:50` reads it as an
+    urgency signal for scoring — so the flag that answers this segment's
+    question was computed on every run and used for everything except the
+    segment named after it.
+
+    No bodies. The inbox segment already quotes them; repeating them here
+    would spend the follow-ups budget re-reading mail the listener has just
+    heard. What this segment owes is the shorter answer — who, about what, and
+    how long it has been sitting there — so the sender, the subject and the
+    age are the whole line.
+    """
+    owed = [em for em in emails if em.requires_response]
+    if not owed:
+        # Said plainly rather than left blank. The segment is structural for
+        # the validator, so the model will write SOMETHING here; telling it
+        # the inbox is clear is the one phrasing that cannot become an
+        # invention.
+        return "(nothing needs a reply)"
+
+    # Oldest first: the thing that has been waiting three days is more
+    # overdue than the one that arrived an hour ago, and "overdue" is the
+    # only ordering this segment has any use for.
+    owed.sort(key=lambda em: em.timestamp)
+    lines = [
+        f"- {em.source_name} <{em.author}> [{em.timestamp.isoformat()}]: {em.title}"
+        for em in owed[:limit]
+    ]
+    if len(owed) > limit:
+        # Counted, not silently dropped. A cap that hides what it cut is how
+        # "plus eleven others" became the entire inbox segment.
+        lines.append(f"- (and {len(owed) - limit} more awaiting a reply)")
+    return "\n".join(lines)
 
 
 def _fence_untrusted(body: str) -> str:
@@ -1255,6 +1309,7 @@ async def generate_script(
     length: BriefingLength,
     date: datetime,
     aggregated_email_count: int = 0,
+    follow_up_candidates: list[Item] | None = None,
     stories: list[Story] | None = None,
     passes: int = 2,
     disabled_segments: Iterable[str] | None = None,
@@ -1344,7 +1399,23 @@ async def generate_script(
         # Fenced: article bodies are third-party text from feeds anyone can
         # publish to, exactly like email bodies.
         stories=_fence_untrusted(_format_stories(stories)),
-        follow_ups="(none)",
+        # Was the literal string "(none)" — see `_format_follow_ups`.
+        #
+        # Drawn from `follow_up_candidates` (the WHOLE inbox) rather than
+        # from `emails` (the handful that made the cut), because an email
+        # needing a reply that ranked below the cut is precisely the one you
+        # would otherwise never hear about. `requires_response` boosts a
+        # message's rank, so these usually overlap — "usually" is not good
+        # enough for the segment whose entire job is not missing one.
+        #
+        # Fenced like every other block of mail: these are subject lines
+        # written by anyone who can reach the inbox.
+        follow_ups=_fence_untrusted(
+            _format_follow_ups(
+                follow_up_candidates if follow_up_candidates is not None else emails,
+                limit=FOLLOW_UP_LIMIT,
+            )
+        ),
         total_words=budget,
         segment_definitions="\n".join(
             SEGMENT_DEFINITIONS[s.value] for s in segments

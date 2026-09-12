@@ -501,7 +501,7 @@ The evidence, all from the live system on 2026-09-11/12:
       `music_set`-class bug is itself run by nothing — the guard against the
       failure class is an instance of it.
 
-- [ ] 24. **`follow_ups` is built from the literal string "(none)".**
+- [x] 24. **`follow_ups` is built from the literal string "(none)".** DONE.
       `script_chain.py:1347` hardcodes it, exactly as `n_stories=0` once was.
       The segment is a full citizen everywhere else — enum, label, prompt,
       budget, validator-required, and a user-facing toggle reading "Where you
