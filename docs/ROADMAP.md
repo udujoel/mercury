@@ -103,13 +103,13 @@ and there is no ~70-second on-device generation to narrate any more, because
 generation happens on the cron. Task 4's waiting room covers the case where
 there is nothing to fetch.
 
-- [ ] Cards are semi-transparent, so the card behind bleeds through the
+- [x] CLOSED — Cards are semi-transparent, so the card behind bleeds through the
       greeting text. PRD 3.3 specifies opaque over true black
-- [ ] Weather card shows a placeholder "San Francisco" and is not wired to the
+- [x] CLOSED — Weather card shows a placeholder "San Francisco" and is not wired to the
       Open-Meteo data the backend already fetches correctly
-- [ ] Card deck sits small and centred; PRD 3.3 wants roughly 0.62 of screen
+- [x] CLOSED — Card deck sits small and centred; PRD 3.3 wants roughly 0.62 of screen
       width with the fanned offsets
-- [ ] Loading state is a bare spinner for the ~70s generation — it should say
+- [x] CLOSED — Loading state is a bare spinner for the ~70s generation — it should say
       what is happening
 
 ## Phase 2 — News, clustering, automation (weeks 8 to 11)
@@ -174,7 +174,7 @@ before the feature was dropped.
 
 </details>
 
-## Next — The show (current)
+## Next — The show (built, see task 20-22 for what is not reaching the phone)
 
 Seven requests from 2026-09-04, reordered once the code was actually read.
 This pulls forward two items from Phase 4 (story detail, summary styles) and
@@ -411,6 +411,116 @@ allowed to be. Right now "voice quality" is a legitimate reason to turn it off
 and there is nothing to do about it. After task 1 it stops being an excuse;
 after task 3, so does "it sounds like a read-out rather than a show".
 
+## Next — The loop that actually runs (current)
+
+Written 2026-09-12 from an audit that read production, not the roadmap. Eight
+regions, sixteen adversarial verification passes. The headline is uncomfortable:
+**"The show" is almost entirely built, and almost none of it is reaching the
+phone.** Nothing below is new scope. It is the gap between merged and working.
+
+The evidence, all from the live system on 2026-09-11/12:
+
+- `GET /settings` returns `{}`. Every toggle in 11b, 12 and 15 has only ever
+  run through its env-var fallback.
+- Every production run since at least 2026-09-10 logs `401 quota_exceeded`
+  from ElevenLabs, fails over to Google, and exits 0 green. Runs 34470039964,
+  34528479152, 34562691604, 34646633440.
+- Every shipped manifest has `words: null` on all 38 turns, because only
+  ElevenLabs emits them.
+- The four-a-day briefings work (32 in the bucket) and `/status` is green —
+  but all 40 recent runs are `event=schedule`. The Cloudflare punctual
+  trigger has never dispatched one.
+- The inbox segment is 188s of a 490s briefing — 38% — and spends six of its
+  fourteen turns discussing a report about the user's own GitHub commits,
+  after reading out a EUR 3.15 taxi receipt and before the warning that his
+  Binance account is about to be restricted.
+
+### Tasks
+
+- [ ] 20. **The ids that predict the wrong briefing.** #33 changed the id
+      shape and two places that PREDICT ids were not updated — neither
+      appears in that diff, which is the "newly reachable, not newly
+      written" lesson in its purest form.
+      - `MercuryApp.swift:163` derives a bare `YYYY-MM-DD` for the
+        background prefetch, and its comment argues no round trip is needed.
+        R2 has held only `-HHMM` ids since 2026-09-07, so **every nightly
+        prefetch has 404ed for five days** — and ADR-001's entire promise is
+        that the audio is finished before you wake.
+      - `AppState.swift:419` records the pending rebuild under the bare day
+        while the job lands `YYYY-MM-DD-HHMM`, so the equality at `:564`
+        never holds and the spinner runs until the 20-minute expiry.
+      The day-prefix concept is named on the server (`briefing_day`,
+      `DAY_PREFIX_LENGTH`) and nowhere on the phone, where it is open-coded
+      once in `ArchiveView.swift:168`. Name it once and the third site stops
+      being invisible.
+
+- [ ] 21. **Word timings that survive the cache.** `TurnEntity`
+      (`PersistenceModels.swift:66`) has no `words` field, so highlighting
+      degrades to whole-line on every manifest that comes back from
+      SwiftData — offline, relaunch, and the notification tap. Task 6 works
+      only on a live fetch, and nothing on screen distinguishes the two.
+      `BriefingManifest` also still has no `schema_version` although the
+      digest and settings artifacts both carry one; task 2's "schema version
+      bump" was never done.
+
+- [ ] 22. **Decide ElevenLabs, then make the failover audible.** The code is
+      right and the account is out of credits. Either buy Starter or set
+      `TTS_PROVIDER=google` and stop the roadmap claiming a voice that does
+      not ship. Either way the daily silent narrator-swap must stop being a
+      green run: `degraded_sources` is computed and written on every run and
+      the iOS client does not decode it, so the one field that could say
+      "this morning is not what you configured" is dropped on the floor.
+      Note `elevenlabs_tts.py:232` special-cases the 402 that cost a day in
+      September and not the 401 that fires every morning now.
+
+- [ ] 26. **The briefing has to END.** Asked for 2026-09-12 after listening
+      to one all the way through. When the narration finishes, the podcast
+      does not stop: the lock screen keeps the card with a play button and
+      the app stays on the player screen. Three separate defects on one path,
+      and each is a one-liner that was never written:
+      - `PlaybackCoordinator.finish()` tells `NowPlayingService` rate 0.0,
+        which is exactly how iOS spells PAUSED. `NowPlayingService` has no
+        `clear()` at all, and nothing sets `playbackState = .stopped`, so the
+        system has been told the briefing is paused mid-way forever.
+      - Nothing calls `setActive(false)` on the audio session on the finish
+        path — `setActive(true)` appears five times in the app and its
+        opposite zero times — so Mercury keeps audio focus and the Now
+        Playing slot after it has stopped making sound.
+      - `HomeView:264` observes `isPlaying` and only ever navigates TO the
+        player (`if isPlaying { showPlayer = true }`). There is no edge back,
+        so the sign-off leaves you on a dead player screen.
+      Ends with: the card disappears from the lock screen, the session is
+      released, and Home is on screen with the desk. Replay must still work
+      — `finish()` deliberately keeps the file, and clearing Now Playing must
+      not become unloading the audio.
+
+- [ ] 23. **CI that runs the suites nobody runs.** There is no iOS job and no
+      Worker job. `backend.yml` filters on `backend/**`, which `worker/**`
+      does not match, and 18 Swift test files run only when someone
+      remembers. The worker test written specifically to stop the next
+      `music_set`-class bug is itself run by nothing — the guard against the
+      failure class is an instance of it.
+
+- [ ] 24. **`follow_ups` is built from the literal string "(none)".**
+      `script_chain.py:1347` hardcodes it, exactly as `n_stories=0` once was.
+      The segment is a full citizen everywhere else — enum, label, prompt,
+      budget, validator-required, and a user-facing toggle reading "Where you
+      owe someone a reply". Every briefing therefore contains a follow-ups
+      segment written from nothing. This is task 16's territory: "what needs
+      a reply" IS this segment, and it should be built before 16 rather than
+      beside it.
+
+- [ ] 25. **Render what already arrives.** The backend has shipped
+      `digest.newsletters` since PR #17 and `DigestStory.topics` since the
+      enrichment pass; iOS decodes both (`Digest.swift:27`, `:101`) and no
+      view reads either. A large part of task 17 is rendering data already
+      crossing the wire every launch. Cheapest item in the audit.
+
+**Gate:** one morning where the phone has the audio before the alarm, the
+narrator is the configured one, and the transcript highlights per word after
+a cold launch. Today none of those three is true, and every one of them is
+marked done.
+
 ## Next — The digest worth reading (queued)
 
 "The show" made the audio good. This phase is about the half you LOOK at, and
@@ -465,18 +575,49 @@ something in this project:
       the buckets; the audio names the first two and the count of the rest.
       The bar: after listening you can decide whether to open Gmail before
       lunch, and be right.
-- [ ] 17. **Newsletter topics, extracted.** A `newsletters` section on the
-      desk that is topic-led rather than sender-led: what subjects arrived
-      this morning, and which senders covered each. Pure extraction, no
-      research yet — this is the step that makes 18 possible and it is worth
-      shipping on its own, because "what did my newsletters talk about" is
-      already a question the current digest cannot answer.
-- [ ] 18. **Research those topics against other sources.** For the top N
-      topics from 17, search beyond the newsletter and return findings with
-      citations. Behind a `ResearchProvider` protocol (rule 6). Capped by N
-      and by a wall-clock budget, degrading to 17's extraction when it fails
-      or runs long (rule 7). Every finding carries the source it came from
-      (rule 3).
+- [ ] 17. **Topics extracted from the whole inbox, not just newsletters.**
+      Widened 2026-09-12: newsletters AND any other news the mail carries —
+      a press release, a forwarded article, a product announcement. The desk
+      gets a topic-led section rather than a sender-led one: what subjects
+      arrived this morning, and which senders covered each.
+      Two thirds of this is already running and invisible. The backend has
+      shipped `digest.newsletters` since PR #17 (44 entries in the live
+      2026-09-11 digest) and `DigestStory.topics` since the enrichment pass;
+      iOS decodes both (`Digest.swift:27`, `:101`) and no view reads either.
+      So this is: invert `DigestNewsletter.story_ids` through
+      `DigestStory.topics` into topic → senders, widen the source filter
+      past `_is_newsletter`, and render it. See task 25.
+- [ ] 18. **Research each topic independently, with Gemini.** The point of
+      the feature, in the user's words: "make sure the story is rich and
+      informed, not just what's in the email." A newsletter is a POINTER to
+      a subject someone thought was worth your time; Mercury currently
+      repeats what it said. For the top N topics from 17, go and find out
+      what else is true, and come back with findings the email did not
+      contain.
+      **Gemini, not Groq** (changed 2026-09-12 at the user's direction).
+      That is the better call for a reason worth writing down: Gemini is
+      ALREADY this project's LLM — `GEMINI_API_KEY` is in the environment,
+      `GeminiProvider` is the working implementation, and its free tier has
+      been carrying every generation for months without once hitting the
+      datacenter-IP block that made the ElevenLabs free tier unusable from
+      CI. Adding Groq would have meant a second vendor, a second key and a
+      second free tier to be surprised by.
+      Still behind a `ResearchProvider` protocol (rule 6) — the protocol is
+      not about Groq, it is about not welding the research step to whoever
+      is cheapest this quarter.
+      Constraints that bite, all of them already paid for once here:
+      - **Rule 5.** Bodies are ephemeral. Research works from an extracted
+        TOPIC and its own sources, never from a stored email. Anything that
+        wants a body later is a design error.
+      - **Rule 3.** Every finding carries a citation the user can open. A
+        researched paragraph with no source is worse on a page than in
+        audio, because it LOOKS authoritative.
+      - **Rule 7.** Research is network, third-party and slow — the most
+        failure-prone thing in the pipeline. It degrades to 17's extraction
+        and the briefing still ships.
+      - **Budget.** The 2026-09-05 run took 423 seconds. Research is N more
+        calls on top, so N and a wall-clock cap are part of the task, not a
+        later optimisation.
 - [ ] 19. **The calendar strip.** One line at the top of Home, a week at a
       time, today emphasised. Tapping a day loads that day's briefing and
       desk — the archive's job, moved to where people will actually use it.

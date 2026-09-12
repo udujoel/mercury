@@ -410,8 +410,13 @@ final class AppState {
         // status under the wrong day and discard it.
         await api.syncServerClock()
         let today = AppDelegate.briefingId(for: .now)
-        // Only when the briefing on screen IS today's. See `supersedes`.
-        let previous = manifest?.briefingId == today ? manifest?.generatedAt : nil
+        // Only when the briefing on screen is one of TODAY's. See
+        // `supersedes`. Same-day rather than equal: `today` is a bare day and
+        // every briefing made since 2026-09-07 carries a time, so equality
+        // matched nothing and the baseline silently fell back to the request
+        // time on every press.
+        let previous = manifest.map { BriefingID.sameDay($0.briefingId, today) } == true
+            ? manifest?.generatedAt : nil
 
         do {
             let status = try await api.requestRegeneration()
@@ -559,9 +564,18 @@ final class AppState {
     @MainActor
     private func noteRebuildLanded(_ manifest: BriefingManifest) {
         guard let rebuild else { return }
-        // The rebuild was for ONE briefing. Adopting a different one — an
-        // archive morning, say — says nothing about whether it finished.
-        guard manifest.briefingId == rebuild.briefingId else { return }
+        // The rebuild was for ONE MORNING. Adopting a different one — an
+        // archive day, say — says nothing about whether it finished.
+        //
+        // Same-day, not equal, and it cannot be equal: the phone asks by day
+        // (the Worker dispatches `briefing_day`) and the job names the
+        // briefing for the minute it actually ran, so the id that lands is
+        // `2026-09-12-1430` against a rebuild recorded as `2026-09-12`.
+        // Equality therefore never held, and nothing cleared the pending
+        // state but the 20-minute expiry — the spinner kept turning while
+        // the new briefing was already on screen.
+        guard BriefingID.sameDay(manifest.briefingId, rebuild.briefingId)
+        else { return }
         // With no baseline there is no server timestamp to beat, so the
         // request time stands in. That compares a server clock to a device
         // one, and it is the only comparison here that crosses clocks — but
@@ -804,6 +818,65 @@ final class AppState {
             }
             throw error
         }
+    }
+
+    /// Which of the server's briefings to put on the phone before the alarm.
+    ///
+    /// **Why this is not derived from the clock any more.** It used to be:
+    /// a day held one briefing, its id WAS the day, and `MercuryApp` computed
+    /// it locally with a comment arguing that no round trip was needed. PR
+    /// #33 made a day hold four, each named for the minute its run happened,
+    /// so the clock can no longer name one — and the derived id has 404ed on
+    /// every background run since 2026-09-07. ADR-001's whole promise is that
+    /// the audio is finished before you wake, so this is the one fetch that
+    /// most needs to ask rather than assume.
+    ///
+    /// Pure on purpose. The request belongs to the caller, so this can be
+    /// pinned by a test without a server or a background task.
+    ///
+    /// - Parameters:
+    ///   - index: every briefing id the server holds, newest first, as
+    ///     `/briefings` returns them. Ids are `yyyy-MM-dd` (legacy, before
+    ///     2026-09-07) or `yyyy-MM-dd-HHmm`. May be empty.
+    ///   - today: today's day in the server's zone, `yyyy-MM-dd`.
+    /// - Returns: the id to download, or nil to download nothing this run.
+    static func briefingToPrefetch(from index: [String],
+                                   today: String) -> String? {
+        // Today's newest, or nothing.
+        //
+        // The tempting alternative is `index.first` — then something is
+        // always on the phone. It is the wrong trade here: on a morning the
+        // cron failed, yesterday's briefing would be sitting there presented
+        // as today's, and it would ALSO suppress the waiting room, which
+        // only appears when there is no briefing at all. A stale briefing
+        // that looks current is worse than an honest empty morning, and
+        // task 4 exists to make the empty morning say so out loud.
+        //
+        // Newest by string sort rather than by list order: `/briefings` is
+        // documented newest-first, but a prefetch that silently depends on
+        // the server's ordering is a second place for the id format to
+        // drift. Both shapes sort correctly — `2026-09-12` precedes
+        // `2026-09-12-0535`, and the timed ids order by time within a day.
+        index.filter { BriefingID.day(of: $0) == today }.max()
+    }
+
+    /// The background task's entry point: ask what exists, then fetch it.
+    ///
+    /// One extra request inside a ~30-second window, and it is the same
+    /// request `playBriefing` already makes — so what the alarm finds on the
+    /// phone and what a tap would fetch cannot drift apart again.
+    func prefetchTodaysBriefing() async -> Bool {
+        await api.syncServerClock()
+        let index: [String]
+        do {
+            index = try await api.fetchBriefingIndex()
+        } catch {
+            return false
+        }
+        guard let id = Self.briefingToPrefetch(
+            from: index, today: AppDelegate.briefingId(for: .now))
+        else { return false }
+        return await prefetchBriefing(id: id)
     }
 
     /// SECONDARY/PRIMARY-layer entry point (ADR-001, PRD 3.6): downloads a
