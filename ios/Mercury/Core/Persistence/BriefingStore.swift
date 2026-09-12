@@ -153,6 +153,32 @@ actor BriefingStore {
         return try modelContext.fetch(descriptor).first.map(Self.stored)
     }
 
+    /// The newest briefing stored for a DAY.
+    ///
+    /// **Why a day and not an id.** The offline fallback knows only what day
+    /// it is — the clock cannot name a briefing any more. It used to be able
+    /// to: until 2026-09-07 a day held one briefing whose id WAS the day, so
+    /// `storedBriefing(id:)` with a clock-derived string was the same
+    /// question as this one. Once a day held four, that lookup asked for
+    /// `2026-09-12` against rows keyed `2026-09-12-0535` under an exact-match
+    /// predicate, and quietly returned nil every time — so a user with last
+    /// night's briefing already on the device was shown a network error on a
+    /// plane.
+    ///
+    /// Sorted by id descending and then prefix-matched, rather than filtered
+    /// in the predicate: string order on these ids IS chronological order,
+    /// and the row count is bounded by retention, so the scan is small and
+    /// it avoids depending on which string operators SwiftData can translate
+    /// into its store queries.
+    func storedBriefing(forDay day: String) throws -> Stored? {
+        let descriptor = FetchDescriptor<BriefingEntity>(
+            sortBy: [SortDescriptor(\.id, order: .reverse)]
+        )
+        return try modelContext.fetch(descriptor)
+            .first { BriefingID.day(of: $0.id) == day }
+            .map(Self.stored)
+    }
+
     /// Rebuilds the wire manifest from what was stored.
     ///
     /// Both lists are sorted on the way out. SwiftData relationships are

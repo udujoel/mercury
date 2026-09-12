@@ -14,6 +14,11 @@ Full spec: `docs/mercury_ios_prd_blueprint.docx`. Roadmap and phase gates:
 ADR-012 — the visual register is Particle's light editorial, not Huxe's
 ambient dark. Huxe still governs behaviour.
 
+`docs/LOG.md` is the working log: what was decided, what was found in
+production, and what turned out not to be true. **Append to it as you work** —
+an entry earns its place only if a reader could not reconstruct it from the
+repository, so record reasoning and evidence, not what `git log` already says.
+
 ## Core architecture decision
 
 **The server generates. The phone plays.**
