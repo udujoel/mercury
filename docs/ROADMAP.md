@@ -454,7 +454,19 @@ The evidence, all from the live system on 2026-09-11/12:
       once in `ArchiveView.swift:168`. Name it once and the third site stops
       being invisible.
 
-- [ ] 21. **Word timings that survive the cache.** `TurnEntity`
+- [ ] 21. **Word timings that survive the cache.** REDUCED IN VALUE by the
+      2026-09-12 Google decision, and needs a call before anyone starts.
+      Google Neural2 emits no word timings at all, so the cache can only
+      preserve something that is never produced. Word-level highlighting now
+      needs the SSML `<mark>` + v1beta1 `timepoints` path this roadmap
+      previously called "a pipeline built to be thrown away" — it is no
+      longer throwaway, because there is no ElevenLabs behind it, but it is
+      still a real build. The alternative is to accept line-level
+      highlighting permanently and say so in the PRD.
+      The `schema_version` half stands on its own and is worth doing either
+      way: `BriefingManifest` is the one artifact the client cannot skip and
+      the only one with no version to refuse on.
+      Original text: `TurnEntity`
       (`PersistenceModels.swift:66`) has no `words` field, so highlighting
       degrades to whole-line on every manifest that comes back from
       SwiftData — offline, relaunch, and the notification tap. Task 6 works
@@ -463,15 +475,27 @@ The evidence, all from the live system on 2026-09-11/12:
       digest and settings artifacts both carry one; task 2's "schema version
       bump" was never done.
 
-- [ ] 22. **Decide ElevenLabs, then make the failover audible.** The code is
-      right and the account is out of credits. Either buy Starter or set
-      `TTS_PROVIDER=google` and stop the roadmap claiming a voice that does
-      not ship. Either way the daily silent narrator-swap must stop being a
-      green run: `degraded_sources` is computed and written on every run and
-      the iOS client does not decode it, so the one field that could say
-      "this morning is not what you configured" is dropped on the floor.
-      Note `elevenlabs_tts.py:232` special-cases the 402 that cost a day in
-      September and not the 401 that fires every morning now.
+- [x] 22. **DECIDED 2026-09-12: Google is the voice.** The owner declined a
+      paid ElevenLabs plan, so the default moved to `google` in both places
+      that decide it (the pydantic default and `_BLANK_DEFAULTS`, which is
+      what an unset `TTS_PROVIDER` secret — production's actual state —
+      falls through to).
+      This changes no audio. Every briefing since at least 2026-09-10 has
+      been Google already; what ends is the daily lie, where four runs a day
+      logged `401 quota_exceeded`, failed over, and exited 0 green while the
+      roadmap claimed a voice the product had not used in days.
+      ElevenLabs is NOT deleted. `ElevenLabsTTSProvider` stays, tested, and
+      `TTS_PROVIDER=elevenlabs` still selects it — rule 6 exists so a
+      provider can be swapped back the day someone funds it.
+      **Found while making the switch:** `apply_to_environment` mapped the
+      app's voice settings only to `ELEVENLABS_VOICE_*`, while
+      `google_tts.py` reads `tts_voice_host_a/_b`, which nothing could
+      write. Making Google the default would therefore have made the voice
+      picker save, round-trip and change nothing — the `music_set` bug in
+      different clothes. Voices are now routed to the ACTIVE provider's
+      variables. The iOS screen's `usesElevenLabs` also returned true for a
+      null provider "because the server default is ElevenLabs", which had
+      become false.
 
 - [ ] 26. **The briefing has to END.** Asked for 2026-09-12 after listening
       to one all the way through. When the narration finishes, the podcast
@@ -640,10 +664,14 @@ navigation.
 ## Phase 5 — Polish and release (weeks 20 to 23)
 
 - [ ] Briefing history with transcript search
-- [ ] CarPlay and StandBy widgets
-- [ ] Home and Lock Screen widgets
+- [ ] CarPlay and StandBy widgets — BLOCKED BY CHOICE (2026-09-12): needs a
+      paid Apple Developer Program membership, which the owner has declined.
+- [ ] Home and Lock Screen widgets — same. Widgets need an App Group, which
+      needs a paid membership.
 - [ ] Shortcuts and Siri intents
 - [ ] Voice and host name customisation
 - [ ] Reliability: token refresh, backoff, partial-failure degradation
 - [ ] Cost instrumentation
-- [ ] TestFlight
+- [ ] TestFlight — BLOCKED BY CHOICE (2026-09-12): paid membership.
+      Mercury runs on Joel's own device via a free personal team, which
+      is enough for one user and is the scope this project has.

@@ -8,6 +8,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _ORIGINAL_ENVIRONMENT: dict[str, str | None] = {}
 
 
+# Spellings of "elevenlabs" a settings artifact might carry. Mirrors
+# `SettingsView.elevenLabsAliases` on the phone; the two are the same
+# question asked on either side of the wire.
+_ELEVENLABS_ALIASES = frozenset(
+    {"elevenlabs", "eleven_labs", "eleven-labs", "11labs"}
+)
+
+
 def apply_to_environment(user_settings) -> None:
     """Write saved settings into the process environment, then rebuild.
 
@@ -23,10 +31,34 @@ def apply_to_environment(user_settings) -> None:
     """
     import os
 
+    # WHICH voice variables the chosen voices land in depends on the
+    # provider, and getting this wrong is invisible.
+    #
+    # `UserSettings.voice_a/voice_b` are provider-neutral by name and were
+    # mapped only to `ELEVENLABS_VOICE_*`, from a time when ElevenLabs was
+    # the default and Google was a fallback nobody was supposed to reach.
+    # Google became the default on 2026-09-12, and `google_tts.py` reads
+    # `tts_voice_host_a/_b` — which nothing could write. So the voice
+    # setting would have applied to a provider that never runs while the
+    # provider that does run kept its built-in voices: a picker that saves,
+    # round-trips and changes nothing, which is precisely the `music_set`
+    # bug wearing different clothes.
+    #
+    # Resolved against the same default the rest of the process uses, so an
+    # artifact that leaves `tts_provider` null lands its voices in the
+    # variables the server default will actually read.
+    provider = (user_settings.tts_provider
+                or _BLANK_DEFAULTS["tts_provider"]).strip().lower()
+    voice_a_key, voice_b_key = (
+        ("ELEVENLABS_VOICE_A", "ELEVENLABS_VOICE_B")
+        if provider in _ELEVENLABS_ALIASES
+        else ("TTS_VOICE_HOST_A", "TTS_VOICE_HOST_B")
+    )
+
     mapping = {
         "TTS_PROVIDER": user_settings.tts_provider,
-        "ELEVENLABS_VOICE_A": user_settings.voice_a,
-        "ELEVENLABS_VOICE_B": user_settings.voice_b,
+        voice_a_key: user_settings.voice_a,
+        voice_b_key: user_settings.voice_b,
     }
     for key, value in mapping.items():
         if value:
@@ -104,7 +136,11 @@ DEFAULT_ELEVENLABS_VOICE_B = "nPczCjzI2devNBz1zQrb"
 # read off the model, so the fallback cannot change shape when a field's
 # declaration does.
 _BLANK_DEFAULTS = {
-    "tts_provider": "elevenlabs",
+    # Google, per the decision documented on `tts_provider` below. This is
+    # the value a BLANK env var falls back to, and it has to move with the
+    # pydantic default or an unset `TTS_PROVIDER` secret — which is exactly
+    # what production has — would still select ElevenLabs.
+    "tts_provider": "google",
     "elevenlabs_voice_a": DEFAULT_ELEVENLABS_VOICE_A,
     "elevenlabs_voice_b": DEFAULT_ELEVENLABS_VOICE_B,
     # The GOOGLE pair too, and they were missing.
@@ -140,12 +176,30 @@ class Settings(BaseSettings):
     embedding_model: str = "gemini-embedding-001"
 
     # TTS
-    # ElevenLabs by default. `build_tts_provider` falls back to Google and
-    # logs loudly when the key is missing or ElevenLabs is unreachable, so a
-    # deployment with no ElevenLabs key still ships a briefing — it just
-    # ships in the old voice. Defaulting the other way meant a key on its
-    # own did nothing, and the difference was invisible.
-    tts_provider: str = "elevenlabs"
+    #
+    # **Google, decided 2026-09-12.** This defaulted to ElevenLabs on the
+    # reasoning that a key on its own should be enough to switch voices, with
+    # `build_tts_provider` falling back to Google when the key was missing or
+    # the service unreachable. That fallback was written for a rare outage.
+    # What it actually did was fire on EVERY run: the free-tier account ran
+    # out of credits, so four runs a day logged `401 quota_exceeded`, failed
+    # over, shipped in Google's voices, and exited 0 green. The roadmap
+    # claimed a voice the product had not used in days.
+    #
+    # The owner has decided against a paid plan, so the honest default is the
+    # provider that actually speaks. This is not a downgrade of behaviour —
+    # every briefing since at least 2026-09-10 has been Google — it is the
+    # configuration finally agreeing with the audio.
+    #
+    # ElevenLabs is NOT deleted. `ElevenLabsTTSProvider` stays, tested, and
+    # `TTS_PROVIDER=elevenlabs` still selects it, because rule 6 exists so a
+    # provider can be swapped back the day someone funds it. What changes is
+    # which one you get by saying nothing.
+    #
+    # Consequence worth stating plainly: Google Neural2 returns no word
+    # timings, so the transcript highlights by line rather than by word. See
+    # ROADMAP task 21.
+    tts_provider: str = "google"
     google_tts_credentials: str = "./credentials/gcp-tts.json"
     # Matched to the host NAMES, like the ElevenLabs pair above — and for
     # the same reason, because these were the other half of the same bug.

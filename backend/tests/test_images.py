@@ -760,19 +760,22 @@ def test_the_fetch_time_guard_still_blocks_private_destinations():
             assert_public_url(blocked)
 
 
-def test_a_google_only_deployment_still_runs_live_after_elevenlabs_became_default(
+def test_a_google_only_deployment_still_runs_live(
     monkeypatch, tmp_path
 ):
     """The regression the default change introduced.
 
-    `tts_provider` now defaults to "elevenlabs". A gate that demanded the
-    CONFIGURED provider's credentials sent every existing Google-only
+    The gate must ask whether EITHER provider can work, not whether the
+    CONFIGURED one can. When the default was "elevenlabs" a gate that
+    demanded the configured provider's credentials sent every Google-only
     install to `FakeTTSProvider` on upgrade — fixture tones behind a real
-    manifest and a real push notification, which is precisely what
+    manifest and a real push notification, exactly what
     `_credentials_configured` exists to prevent.
 
-    `build_tts_provider` falls back to Google, so the gate has to ask
-    whether EITHER provider can work.
+    The default is "google" since 2026-09-12, which makes the ORIGINAL
+    failure unreachable — so this now guards the mirror image: an
+    ElevenLabs-only deployment must not be refused either, and the
+    neither-configured case must still refuse.
     """
     from app.api import briefing as briefing_api
     from app.core.config import get_settings
@@ -788,7 +791,7 @@ def test_a_google_only_deployment_still_runs_live_after_elevenlabs_became_defaul
     monkeypatch.setenv("ELEVENLABS_API_KEY", "")
     get_settings.cache_clear()
 
-    assert get_settings().tts_provider == "elevenlabs"
+    assert get_settings().tts_provider == "google"
     assert briefing_api._credentials_configured() is True
 
     # And with NEITHER provider configured it still refuses, which is the
@@ -1176,7 +1179,7 @@ def test_a_blank_env_var_falls_back_to_the_default(monkeypatch):
         get_settings.cache_clear()
 
         s = get_settings()
-        assert s.tts_provider == "elevenlabs", f"blank {blank!r} won"
+        assert s.tts_provider == "google", f"blank {blank!r} won"
         assert s.elevenlabs_voice_a == DEFAULT_ELEVENLABS_VOICE_A
         assert s.elevenlabs_voice_b == DEFAULT_ELEVENLABS_VOICE_B
         assert s.tts_voice_host_a == DEFAULT_GOOGLE_VOICE_A, f"blank {blank!r} won"

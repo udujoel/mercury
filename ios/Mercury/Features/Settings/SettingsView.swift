@@ -198,13 +198,16 @@ struct SettingsView: View {
         ["elevenlabs", "eleven_labs", "eleven-labs", "11labs"]
 
     private var usesElevenLabs: Bool {
-        // Nil counts. It means "server default", and the server default is
-        // now ElevenLabs — so the voices are relevant rather than hidden.
-        // The client cannot read the server's environment, so a deployment
-        // that overrides it to Google will show these controls; the footer
-        // says which provider is actually in use is the server's to decide.
-        guard let provider = settings.ttsProvider?.lowercased() else { return true }
-        return Self.elevenLabsAliases.contains(provider)
+        // Nil means "server default", and the server default changed to
+        // Google on 2026-09-12 — the owner decided against a paid ElevenLabs
+        // plan, and the free tier had been failing over on every run anyway.
+        // This used to return true for nil on the reasoning that the default
+        // was ElevenLabs; leaving it would offer ElevenLabs voice rows to
+        // every user who has never touched the provider setting, which is
+        // all of them, for a provider their briefings do not use.
+        guard let provider = settings.ttsProvider?.lowercased() else { return false }
+        return Self.elevenLabsAliases.contains(
+            provider.trimmingCharacters(in: .whitespaces))
     }
 
     /// A row that opens the picker, showing the chosen voice's NAME rather
