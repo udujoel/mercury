@@ -98,4 +98,24 @@ final class NowPlayingService {
         info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? Double(rate) : 0.0
         center.nowPlayingInfo = info
     }
+
+    /// Take the card off the lock screen.
+    ///
+    /// **Why rate 0 was not enough.** Everything above expresses "stopped"
+    /// as `MPNowPlayingInfoPropertyPlaybackRate = 0.0` — but that is how
+    /// iOS spells PAUSED, not stopped. A paused card stays on the lock
+    /// screen with a play button, which is correct while the user is
+    /// halfway through and wrong once the sign-off has played: the briefing
+    /// is over and Mercury was still presenting itself as a podcast waiting
+    /// to be resumed.
+    ///
+    /// `nowPlayingInfo = nil` is what removes it. `playbackState` is set
+    /// too, and explicitly: on iOS the system infers state from the rate
+    /// unless told, and leaving it inferred is what produced the paused
+    /// card in the first place. Set it BEFORE nilling the dictionary —
+    /// after, there is no item for the state to describe.
+    func clear() {
+        center.playbackState = .stopped
+        center.nowPlayingInfo = nil
+    }
 }

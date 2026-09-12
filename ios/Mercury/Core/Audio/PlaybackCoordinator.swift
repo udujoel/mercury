@@ -278,11 +278,35 @@ final class PlaybackCoordinator {
         )
         // The first segment, so the card is right before a word is spoken
         // rather than only after the first boundary is crossed.
+        publishNowPlaying(positionMs: 0)
+    }
+
+    /// Build the whole lock-screen card from the loaded manifest.
+    ///
+    /// Extracted from `load` because `finish()` now CLEARS the card, and a
+    /// replay after a finish never goes through `load` again. Without this,
+    /// pressing play on a finished briefing would land in
+    /// `setPlaybackState`, whose `center.nowPlayingInfo ?? [:]` would then
+    /// build a card out of nothing but an elapsed time and a rate — no
+    /// title, no briefing name, no artwork. Clearing a card obliges you to
+    /// own rebuilding it.
+    private func publishNowPlaying(positionMs ms: Int) {
+        guard let manifest else { return }
         nowPlaying.update(
-            title: manifest.segments.first?.label ?? Self.fallbackTitle,
+            title: Self.segmentLabel(at: ms, in: manifest) ?? Self.fallbackTitle,
             briefing: Self.briefingName(for: manifest),
             durationMs: manifest.durationMs,
-            positionMs: 0, rate: rate, isPlaying: false)
+            positionMs: ms, rate: rate, isPlaying: false)
+    }
+
+    /// The segment covering `ms`, for the card's title line.
+    ///
+    /// Internal rather than private so a test can pin it: a replay that
+    /// resumes mid-briefing must name the segment it resumes INTO, not the
+    /// cold open, or the rebuilt card contradicts the audio.
+    static func segmentLabel(at ms: Int, in manifest: BriefingManifest) -> String? {
+        manifest.segments.last(where: { $0.startMs <= ms })?.label
+            ?? manifest.segments.first?.label
     }
 
     // MARK: - Transport
@@ -528,10 +552,18 @@ final class PlaybackCoordinator {
         }
 
         hasScheduled = true
+        // Coming back from a finish means the lock-screen card was cleared,
+        // and every path that revives a finished briefing — play(), a
+        // lock-screen scrub, seek(toSegment:) — funnels through here. So
+        // this is the one place that has to put the card back, and doing it
+        // here rather than in play() is what stops the next entry point
+        // from being forgotten the way finish() itself was.
+        let wasFinished = hasFinished
         hasFinished = false
         scheduleBaseMs = window.positionMs
         positionMs = window.positionMs
         resolveTurn(atMs: window.positionMs, fromSeek: true)
+        if wasFinished { publishNowPlaying(positionMs: window.positionMs) }
 
         if startPlaying {
             player.play()
@@ -646,7 +678,38 @@ final class PlaybackCoordinator {
         let end = audioDurationMs > 0 ? audioDurationMs : (manifest?.durationMs ?? positionMs)
         positionMs = max(0, end)
         scheduleBaseMs = positionMs
-        nowPlaying.setPlaybackState(isPlaying: false, positionMs: positionMs, rate: rate)
+
+        // The briefing is OVER. It used to say so with rate 0, which is how
+        // iOS spells "paused" — so the lock screen kept a play button and
+        // the phone went on presenting Mercury as a podcast someone had
+        // stopped halfway. Take the card down instead.
+        nowPlaying.clear()
+
+        // And give the audio session back. `setActive(true)` appeared five
+        // times in this app and its opposite zero times, so Mercury held
+        // audio focus after it had stopped making sound — anything else the
+        // user was listening to stayed ducked, and the Now Playing slot
+        // stayed ours. `.notifyOthersOnDeactivation` is what lets the music
+        // app come back up.
+        //
+        // The engine is paused rather than stopped: pausing keeps the node
+        // graph intact so a replay is cheap, and the session cannot be
+        // deactivated while it is still running. `play()` revives both
+        // through `ensureEngineRunning`, which already does setActive(true)
+        // and engine.start() — the replay path this makes necessary was
+        // there before this change needed it.
+        engine.pause()
+        do {
+            try AVAudioSession.sharedInstance().setActive(
+                false, options: .notifyOthersOnDeactivation)
+        } catch {
+            // Not fatal, and not worth failing the finish over: the audio
+            // has stopped either way. Worth printing, because a session
+            // that refuses to deactivate means something else still holds
+            // a running node.
+            print("[Mercury] Could not deactivate the audio session: \(error)")
+        }
+
         onFinished?()
     }
 
