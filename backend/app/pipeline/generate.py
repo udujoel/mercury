@@ -241,7 +241,9 @@ async def generate_briefing(
         # so most of the inbox disappeared without so much as a "plus eleven
         # others, nothing urgent".
         aggregated_email_count=selection.get("aggregated_count", 0),
-        # The WHOLE inbox, not the handful that made the cut. The follow-ups
+        # The inbox as it stood BEFORE selection cut it to the handful that
+        # get read out — not literally every message, since `inbox_emails`
+        # already excludes what was absorbed into a world story. The follow-ups
         # segment exists to catch what you owe a reply to, and the message
         # most worth catching is exactly the one that ranked too low to be
         # read out — so handing it `selection["emails"]` would make the

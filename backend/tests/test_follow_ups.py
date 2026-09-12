@@ -112,6 +112,32 @@ def test_no_policy_line_when_nothing_was_cut():
     assert _follow_up_policy(owed, limit=FOLLOW_UP_LIMIT) == ""
 
 
+def test_a_date_header_with_an_unknown_timezone_does_not_end_the_run():
+    """RFC 5322 `-0000` means "timezone unknown", and plenty of mailers send it.
+
+    `gmail._parse_date` falls through to `parsedate_to_datetime` when
+    `internalDate` is missing or unparseable, and that returns a NAIVE
+    datetime for `-0000` or for no offset at all. Sorting a naive datetime
+    against an aware one raises TypeError — which, from inside this helper,
+    would propagate out of `generate_script` and take the whole briefing with
+    it. Rule 7: a source can fail without ending the run.
+    """
+    from email.utils import parsedate_to_datetime
+
+    naive = parsedate_to_datetime("Fri, 11 Sep 2026 09:00:00 -0000")
+    assert naive.tzinfo is None, "the premise of this test"
+
+    mixed = [_email("Aware and newer", owed=True)]
+    mixed[0].timestamp = datetime(2026, 9, 12, 9, 0, tzinfo=UTC)
+    older = _email("Naive and older", owed=True)
+    older.timestamp = naive
+    mixed.append(older)
+
+    out = _format_follow_ups(mixed, limit=FOLLOW_UP_LIMIT)
+    assert out.index("Naive and older") < out.index("Aware and newer"), (
+        "and it still sorts oldest-first across the two kinds")
+
+
 def test_no_bodies_reach_the_segment():
     """The inbox segment already quotes them.
 

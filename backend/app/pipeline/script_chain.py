@@ -382,10 +382,28 @@ def _format_follow_ups(emails: list[Item], *, limit: int) -> str:
 
 
 def _owed_replies(emails: list[Item]) -> list[Item]:
-    """The owed replies, oldest first."""
+    """The owed replies, oldest first.
+
+    Sorted on the POSIX timestamp rather than on the datetime, because
+    `Item.timestamp` is not guaranteed to be timezone-aware and comparing a
+    naive datetime with an aware one raises TypeError.
+
+    That is not theoretical. `gmail._parse_date` falls through to
+    `parsedate_to_datetime(date_str)` whenever `internalDate` is missing or
+    unparseable, and that returns a NAIVE datetime for a `Date` header
+    carrying `-0000` — RFC 5322's way of saying the sender's timezone is
+    unknown, which plenty of mailers emit — or no offset at all. One such
+    email beside one ordinary email, and a direct sort raises from inside a
+    formatting helper and takes the whole briefing with it. Rule 7 says a
+    source can fail without ending the run; a crash here would end it over a
+    date header.
+
+    `scoring.py:49` already sorts these same objects this way. The idiom was
+    in the codebase; this simply uses it.
+    """
     return sorted(
         (em for em in emails if em.requires_response),
-        key=lambda em: em.timestamp,
+        key=lambda em: em.timestamp.timestamp(),
     )
 
 
@@ -1443,12 +1461,20 @@ async def generate_script(
         stories=_fence_untrusted(_format_stories(stories)),
         # Was the literal string "(none)" — see `_format_follow_ups`.
         #
-        # Drawn from `follow_up_candidates` (the WHOLE inbox) rather than
-        # from `emails` (the handful that made the cut), because an email
-        # needing a reply that ranked below the cut is precisely the one you
-        # would otherwise never hear about. `requires_response` boosts a
-        # message's rank, so these usually overlap — "usually" is not good
-        # enough for the segment whose entire job is not missing one.
+        # Drawn from `follow_up_candidates` — the inbox BEFORE selection cut
+        # it to the handful read out — rather than from `emails`, because an
+        # email needing a reply that ranked below the cut is precisely the
+        # one you would otherwise never hear about.
+        #
+        # Not literally every message: `generate.py` passes `inbox_emails`,
+        # which excludes those absorbed into world stories and the
+        # newsletter-cluster duplicates. In practice those are newsletters,
+        # which `classify_priority` never marks as requiring a response — but
+        # the distinction matters to anyone counting from this list later.
+        #
+        # `requires_response` boosts a message's rank, so the two sets
+        # usually overlap anyway — "usually" is not good enough for the
+        # segment whose entire job is not missing one.
         #
         # Fenced like every other block of mail: these are subject lines
         # written by anyone who can reach the inbox.
