@@ -138,6 +138,20 @@ struct HomeView: View {
                         DeskFeed(stories: deskStories) { selectedStory = $0 }
                     }
 
+                    // What several outlets independently thought worth
+                    // covering, above what one sender emailed. A stronger
+                    // claim on attention, so it comes first.
+                    if !corroborated.isEmpty {
+                        SectionLabel("More than one outlet")
+                            .padding(.top, MercurySpace.section)
+                            .padding(.bottom, MercurySpace.snug)
+
+                        CorroboratedSection(
+                            items: corroborated,
+                            summary: CorroboratedStories.summary(corroborated),
+                            onSelect: { selectedStory = $0 })
+                    }
+
                     // What arrived, under what was made of it. The
                     // backend has shipped this list since PR #17 and no
                     // view has ever read it.
@@ -343,6 +357,17 @@ struct HomeView: View {
         // its lead — capping here picked the most-covered story of the first
         // twelve rather than of the morning.
         return digest.covered + digest.uncovered
+    }
+
+    /// Stories two or more distinct outlets carried.
+    ///
+    /// Counted from `sources` here rather than read from `sourceCount`,
+    /// deliberately: every briefing already in R2 was generated before that
+    /// field was fixed to count outlets instead of cluster members, so a
+    /// restored morning would otherwise show a survey company that emailed
+    /// four times as the best-corroborated story of the day.
+    private var corroborated: [CorroboratedStories.Item] {
+        CorroboratedStories.items(from: deskStories)
     }
 
     /// The senders whose newsletters arrived for the briefing on screen.
