@@ -13,22 +13,32 @@ final class NewsletterDeskTests: XCTestCase {
     /// Built through the real decoder rather than a memberwise init, so
     /// these tests exercise the same path production does — and so a wire
     /// field being renamed shows up here rather than only in the app.
+    ///
+    /// Serialised by `JSONSerialization` rather than by string interpolation.
+    /// The first cut hand-rolled the JSON and force-tried the decode, which
+    /// review rightly flagged: a sender name or subject containing a quote
+    /// would produce malformed JSON and an opaque crash with no line number.
+    /// Reporting that failure better was the suggested fix; not being able
+    /// to produce it is a better one, so the escaping is the library's job
+    /// now and the decode cannot fail on input this builds.
     private func newsletter(
         _ sender: String, _ subject: String,
         at hour: Int = 9, inBriefing: Bool = false, storyIds: [String] = [],
         dated: Bool = true
     ) -> DigestNewsletter {
-        let received = dated
-            ? "\"received_at\":\"2026-09-11T\(String(format: "%02d", hour)):00:00Z\","
-            : ""
-        let ids = storyIds.map { "\"\($0)\"" }.joined(separator: ",")
-        let json = """
-        {"id":"\(sender)-\(subject)","source_name":"\(sender)",
-         "sender":"\(sender.lowercased())@example.com","subject":"\(subject)",
-         \(received)"story_ids":[\(ids)],"in_briefing":\(inBriefing)}
-        """
-        return try! JSONDecoder.mercury().decode(
-            DigestNewsletter.self, from: Data(json.utf8))
+        var fields: [String: Any] = [
+            "id": "\(sender)-\(subject)",
+            "source_name": sender,
+            "sender": "\(sender.lowercased())@example.com",
+            "subject": subject,
+            "story_ids": storyIds,
+            "in_briefing": inBriefing,
+        ]
+        if dated {
+            fields["received_at"] = "2026-09-11T\(String(format: "%02d", hour)):00:00Z"
+        }
+        let data = try! JSONSerialization.data(withJSONObject: fields)
+        return try! JSONDecoder.mercury().decode(DigestNewsletter.self, from: data)
     }
 
     // MARK: - Grouping
@@ -113,7 +123,6 @@ final class NewsletterDeskTests: XCTestCase {
     func testNoneInTheBriefingDropsTheClauseRatherThanSayingZero() {
         let summary = NewsletterDesk.summary(for: [newsletter("A", "1")])
         XCTAssertEqual(summary, "1 newsletter this morning.")
-        XCTAssertFalse(summary?.contains("0") == true)
     }
 
     func testNoNewslettersMeansNoSectionAtAll() {
