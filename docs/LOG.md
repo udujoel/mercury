@@ -58,10 +58,31 @@ So task 17 has two possible shapes, and the cluster-based one is far cheaper:
 - the `topics` tag needs the extraction rewritten to emit subjects
 - the CLUSTER needs nothing; it needs rendering
 
-The catch is coverage: only 24 of 209 stories are multi-source, and 14 of 44
-newsletters contribute to one. So a cluster-led section is honest but short.
-Worth deciding before building: a short true section, or a longer one that
-needs the extraction change first.
+The catch is coverage, and the number moves once `source_count` is fixed.
+**15 of 209** stories have two or more distinct OUTLETS — not the 24 the
+broken count reported, because the survey company that emailed four times
+drops out along with every other single-sender cluster.
+
+What is left is what a corroborated-news section should look like:
+
+    [3] OpenAI Agents API Now in Public Beta     TLDR, TLDR AI, TLDR DevOps
+    [3] Houthi Advance Threatens Global Trade    CNBC, the BBC, the NYT
+    [2] Lawyer Punished for AI Fake Testimony    Ars Technica, The Verge
+    [2] Social Security COLA Projected to Rise   CNBC, MarketWatch
+
+One nuance to decide alongside it: TLDR, TLDR AI and TLDR DevOps count as
+three outlets. They are three newsletters with separate editorial, so that
+is defensible — but they are one publisher, and a corroboration claim from
+one house is weaker than one from three. There is no publisher field today
+to settle it.
+
+So the fork for task 17, with honest numbers:
+
+- **Cluster-led, buildable now.** ~15 rows, roughly 7% of the digest. Short,
+  true, reads well. No prompt change, no schema change, no re-run.
+- **Subject extraction rewritten first.** Covers far more of the digest and
+  gives task 18 something specific to research — at the cost of a prompt
+  change, a schema change, and every existing digest keeping the old shape.
 
 ---
 
