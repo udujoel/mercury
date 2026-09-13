@@ -69,3 +69,25 @@ def test_the_same_story_under_two_headlines_still_counts_twice():
 def test_a_single_member_is_one_and_an_empty_cluster_is_zero():
     assert _distinct_source_count([_item("TLDR", "Issue")]) == 1
     assert _distinct_source_count([]) == 0
+
+
+def test_the_count_and_the_sources_list_answer_different_questions():
+    """The invariant the schema used to claim, corrected.
+
+    `sources` is per-article attribution — one entry per cluster member,
+    each with its own title and url, so the BBC covering a story twice gives
+    two openable rows. `source_count` answers "how many outlets corroborated
+    this", and the BBC twice is one outlet.
+
+    Deduplicating `sources` to restore `count == len(sources)` would throw
+    away a link the reader can open, so they deliberately differ — and the
+    count can only ever be the smaller of the two.
+    """
+    members = [
+        _item("the BBC", "Houthi advance", kind=SourceType.RSS),
+        _item("the BBC", "Houthi advance, updated", kind=SourceType.RSS),
+        _item("CNBC", "Red Sea shipping", kind=SourceType.RSS),
+    ]
+    count = _distinct_source_count(members)
+    assert count == 2
+    assert count < len(members), "the whole point: fewer outlets than articles"

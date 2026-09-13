@@ -555,7 +555,13 @@ async def test_a_story_the_ranker_dropped_is_still_on_the_desk(
         assert story.segment is None
         # Still browsable: a headline and its sources, always.
         assert story.headline
-        assert story.source_count == len(story.sources) >= 1
+        # NOT `== len(sources)`, which this asserted until 2026-09-13 and
+        # which passed only because this fixture's uncovered stories each
+        # have distinct senders. `source_count` is distinct publications;
+        # `sources` is per-article attribution and may repeat an outlet.
+        assert len(story.sources) >= 1
+        assert story.source_count == len({s.source_name for s in story.sources})
+        assert story.source_count <= len(story.sources)
 
 
 async def test_a_personal_email_is_not_rendered_as_a_browsable_story():
