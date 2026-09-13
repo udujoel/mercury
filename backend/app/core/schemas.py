@@ -322,6 +322,17 @@ class DigestStory(BaseModel):
     # The lead image of whichever source has one, preferring the canonical.
     # Null is ordinary: newsletters have none at all.
     image_url: str | None = None
+    # The specific thing this story is about — "Houthi forces advancing on
+    # Red Sea shipping lanes" — shared verbatim across stories about the
+    # same thing, which is what lets them group. Null when a story has no
+    # specific subject, which a weekly roundup genuinely does not.
+    #
+    # Optional on the wire: every digest already in R2 was written before
+    # this existed, and the archive can open any of them.
+    subject: str | None = None
+    # CATEGORIES — `ai`, `finance` — for filtering a long list. Several
+    # unrelated stories sharing one is expected and fine. Not a subject:
+    # see `subject` above and docs/LOG.md, 2026-09-12.
     topics: list[str] = Field(default_factory=list)
     # Distinct PUBLICATIONS, which is not `len(sources)` and used to be.
     #

@@ -579,7 +579,9 @@ something in this project:
       the buckets; the audio names the first two and the count of the rest.
       The bar: after listening you can decide whether to open Gmail before
       lunch, and be right.
-- [~] 17. **Topics extracted from the whole inbox, not just newsletters.**
+- [x] 17. **Topics extracted from the whole inbox, not just newsletters.**
+      DONE. The extraction was rewritten for SUBJECTS (2026-09-13) and the
+      outlet section now groups by them. Original text:
       HALF DONE. The cluster-led half shipped: "More than one outlet"
       on Home names the stories several outlets independently carried,
       which is "what subjects arrived and who covered each" answered
