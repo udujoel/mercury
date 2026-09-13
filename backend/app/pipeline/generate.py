@@ -45,16 +45,29 @@ from app.core.schemas import (
 )
 from app.pipeline.dedup import build_stories
 from app.pipeline.digest import (
+    attach_research,
     build_digest,
     build_enrichment_prompt,
     digest_stories,
     enrich_stories,
+    research_subjects,
     stories_to_enrich,
 )
 from app.pipeline.ranking import score_stories
 from app.synthesis.music import DEFAULT_SET as DEFAULT_MUSIC_SET
 from app.synthesis.stitch import synthesize_briefing
 from app.synthesis.storage import BriefingStorage, build_storage
+
+try:
+    from app.providers.gemini_research import (
+        build_research_provider as _real_build_research_provider,
+    )
+except ImportError:  # pragma: no cover - the provider is optional
+    def _real_build_research_provider():
+        return None
+
+# Distinguishes "the caller said nothing" from "the caller said no".
+_UNSET = object()
 
 log = logging.getLogger(__name__)
 
@@ -132,6 +145,15 @@ async def generate_briefing(
     # briefing sounds like, as distinct from `synthesize_briefing`, which
     # adds only what it is given.
     music_set: str | None = None,
+    # Task 18. Injected rather than built here so a test can hand in a fake
+    # and so the one production caller decides — `generate_briefing` has a
+    # single caller funnel, which is why `follow_up_candidates` could be
+    # added the same way without repeating the `music_set` drift.
+    #
+    # `_unset` rather than None as the default: None must keep meaning
+    # "research is OFF", and a test that passes nothing should get the real
+    # provider like production does, not silently skip the stage.
+    research_provider: Any = _UNSET,
     max_messages: int = 60,
     # PRD F-02 and the ROADMAP both specify today plus 72 hours. What is
     # SPOKEN is decided by select_for_briefing; this is only the fetch
@@ -330,6 +352,24 @@ async def generate_briefing(
         manifest=manifest,
         cards=cards,
     )
+
+    # Task 18: go and find out what else is true about the morning's
+    # subjects, and attach it with its sources.
+    #
+    # AFTER the digest is built and BEFORE it is saved, deliberately. The
+    # digest is what supplies the subjects and the outlet counts that decide
+    # which are worth researching, and research must not be able to delay or
+    # break the artifact it decorates — `research_subjects` never raises, is
+    # capped by count and by wall clock, and returns an empty dict on any
+    # failure, so the worst case is the digest that would have been saved
+    # anyway (rule 7).
+    if research_provider is _UNSET:
+        research_provider = _real_build_research_provider()
+    if research_provider is not None:
+        found = await research_subjects(digest.stories, research_provider)
+        digest = digest.model_copy(
+            update={"stories": attach_research(digest.stories, found)}
+        )
 
     # to_thread, because BriefingStorage is synchronous and R2Storage is boto3.
     # This is ~3MB up on a blocking socket, and it runs inside the API process
