@@ -448,3 +448,48 @@ final class HomeErrorPresentationTests: XCTestCase {
         XCTAssertEqual(shown.headline, "Today's briefing didn't load.")
     }
 }
+
+/// The fourth site of the id-shape bug, found on the simulator.
+///
+/// `title` compared a briefing id against a bare `yyyy-MM-dd`. That was the
+/// same question until 2026-09-07 and a different one since: today's
+/// briefing is `2026-09-13-0535`, today is `2026-09-13`, they are never
+/// equal — so today's own briefing was titled "Sunday's briefing" every day.
+final class BriefingTitleDayTests: XCTestCase {
+
+    private let sunday = DateComponents(
+        calendar: Calendar(identifier: .gregorian), timeZone: .gmt,
+        year: 2026, month: 9, day: 13, hour: 9).date!
+
+    func testTodaysTimedBriefingIsCalledTodays() {
+        XCTAssertEqual(
+            BriefingDigest.title(briefingId: "2026-09-13-0535",
+                                 generatedAt: sunday, now: sunday),
+            "Today's briefing",
+            "a timed id for today is still today")
+    }
+
+    func testALegacyBareDayIdForTodayIsStillTodays() {
+        XCTAssertEqual(
+            BriefingDigest.title(briefingId: "2026-09-13",
+                                 generatedAt: sunday, now: sunday),
+            "Today's briefing")
+    }
+
+    /// The guard must still hold, or the fix is just its removal.
+    func testAnotherDayIsNamedByItsWeekday() {
+        let friday = DateComponents(
+            calendar: Calendar(identifier: .gregorian), timeZone: .gmt,
+            year: 2026, month: 9, day: 11, hour: 9).date!
+        XCTAssertEqual(
+            BriefingDigest.title(briefingId: "2026-09-11-0535",
+                                 generatedAt: friday, now: sunday),
+            "Friday's briefing")
+    }
+
+    func testNoBriefingReadsAsToday() {
+        XCTAssertEqual(
+            BriefingDigest.title(briefingId: nil, generatedAt: nil, now: sunday),
+            "Today's briefing")
+    }
+}

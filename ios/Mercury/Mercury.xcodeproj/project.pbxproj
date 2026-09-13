@@ -22,6 +22,7 @@
 		AA11BB22CC33DD44EE55FC01 /* NewsletterDesk.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE55FC02 /* NewsletterDesk.swift */; };
 		AA11BB22CC33DD44EE55FD03 /* CorroboratedSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE55FD04 /* CorroboratedSection.swift */; };
 		AA11BB22CC33DD44EE55FD01 /* CorroboratedStories.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE55FD02 /* CorroboratedStories.swift */; };
+		AA11BB22CC33DD44EE55FE01 /* CalendarStrip.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE55FE02 /* CalendarStrip.swift */; };
 		F7055DA6D9FD449290472607 /* APIClientCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A8B6C748468445682D56984 /* APIClientCacheTests.swift */; };
 		E5DF1051C55F4D9F881C9AB4 /* PlaybackCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06EA8B5CE80A4C93901A531A /* PlaybackCoordinatorTests.swift */; };
 		01624F0A33E74F10BC4C0803 /* ScheduleSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBD7D2CD769D46C6A0A5EDA8 /* ScheduleSetupView.swift */; };
@@ -61,6 +62,7 @@
 		A1B2C3D40031444455556666 /* BriefingEndsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40032444455556666 /* BriefingEndsTests.swift */; };
 		A1B2C3D40041444455556666 /* NewsletterDeskTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40042444455556666 /* NewsletterDeskTests.swift */; };
 		A1B2C3D40051444455556666 /* CorroboratedStoriesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40052444455556666 /* CorroboratedStoriesTests.swift */; };
+		A1B2C3D40061444455556666 /* CalendarStripTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40062444455556666 /* CalendarStripTests.swift */; };
 		A1B2C3D40033444455556666 /* StoredBriefingLookupTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40034444455556666 /* StoredBriefingLookupTests.swift */; };
 		E75405F450744A038B656053 /* DigestDecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8FFEB83D34D47D28DDE42CD /* DigestDecodingTests.swift */; };
 		7E97FD97918C4F1E9E94F233 /* BackgroundSchedulerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F32E4E9056748DB84F2950A /* BackgroundSchedulerTests.swift */; };
@@ -116,6 +118,7 @@
 		A1B2C3D40032444455556666 /* BriefingEndsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BriefingEndsTests.swift; sourceTree = "<group>"; };
 		A1B2C3D40042444455556666 /* NewsletterDeskTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewsletterDeskTests.swift; sourceTree = "<group>"; };
 		A1B2C3D40052444455556666 /* CorroboratedStoriesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CorroboratedStoriesTests.swift; sourceTree = "<group>"; };
+		A1B2C3D40062444455556666 /* CalendarStripTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarStripTests.swift; sourceTree = "<group>"; };
 		A1B2C3D40034444455556666 /* StoredBriefingLookupTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoredBriefingLookupTests.swift; sourceTree = "<group>"; };
 		D8FFEB83D34D47D28DDE42CD /* DigestDecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DigestDecodingTests.swift; sourceTree = "<group>"; };
 		310D73BEA60748D8B4DAA3FA /* ShowNotesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShowNotesView.swift; sourceTree = "<group>"; };
@@ -152,6 +155,7 @@
 		AA11BB22CC33DD44EE55FC02 /* NewsletterDesk.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewsletterDesk.swift; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE55FD04 /* CorroboratedSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CorroboratedSection.swift; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE55FD02 /* CorroboratedStories.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CorroboratedStories.swift; sourceTree = "<group>"; };
+		AA11BB22CC33DD44EE55FE02 /* CalendarStrip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarStrip.swift; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE55F002 /* BriefingClock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BriefingClock.swift; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE55FB02 /* BriefingID.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BriefingID.swift; sourceTree = "<group>"; };
 		B295B9B6265A41DAB22E89B9 /* sample_manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = sample_manifest.json; sourceTree = "<group>"; };
@@ -276,6 +280,7 @@
 				AA11BB22CC33DD44EE55FC02 /* NewsletterDesk.swift */,
 				AA11BB22CC33DD44EE55FD04 /* CorroboratedSection.swift */,
 				AA11BB22CC33DD44EE55FD02 /* CorroboratedStories.swift */,
+				AA11BB22CC33DD44EE55FE02 /* CalendarStrip.swift */,
 			);
 			path = Home;
 			sourceTree = "<group>";
@@ -423,6 +428,7 @@
 				A1B2C3D40032444455556666 /* BriefingEndsTests.swift */,
 				A1B2C3D40042444455556666 /* NewsletterDeskTests.swift */,
 				A1B2C3D40052444455556666 /* CorroboratedStoriesTests.swift */,
+				A1B2C3D40062444455556666 /* CalendarStripTests.swift */,
 				A1B2C3D40034444455556666 /* StoredBriefingLookupTests.swift */,
 				D8FFEB83D34D47D28DDE42CD /* DigestDecodingTests.swift */,
 				E4F896E2D9B44EC9B3C48E6A /* BinarySearchTests.swift */,
@@ -587,6 +593,7 @@
 				AA11BB22CC33DD44EE55FC01 /* NewsletterDesk.swift in Sources */,
 				AA11BB22CC33DD44EE55FD03 /* CorroboratedSection.swift in Sources */,
 				AA11BB22CC33DD44EE55FD01 /* CorroboratedStories.swift in Sources */,
+				AA11BB22CC33DD44EE55FE01 /* CalendarStrip.swift in Sources */,
 				75A24BF137A9486EB3C3C718 /* ConnectAccountsView.swift in Sources */,
 				01624F0A33E74F10BC4C0803 /* ScheduleSetupView.swift in Sources */,
 				1EE07575DD4B4E41A465A538 /* WelcomeView.swift in Sources */,
@@ -619,6 +626,7 @@
 				A1B2C3D40031444455556666 /* BriefingEndsTests.swift in Sources */,
 				A1B2C3D40041444455556666 /* NewsletterDeskTests.swift in Sources */,
 				A1B2C3D40051444455556666 /* CorroboratedStoriesTests.swift in Sources */,
+				A1B2C3D40061444455556666 /* CalendarStripTests.swift in Sources */,
 				A1B2C3D40033444455556666 /* StoredBriefingLookupTests.swift in Sources */,
 				E75405F450744A038B656053 /* DigestDecodingTests.swift in Sources */,
 				15513F96A27C48A09DCBEC91 /* BinarySearchTests.swift in Sources */,

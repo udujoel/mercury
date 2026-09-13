@@ -67,20 +67,27 @@ struct RegenerateButton: View {
         }
         .accessibilityLabel("Rebuild from my latest mail")
         .accessibilityHint(
-            isRunning ? "A rebuild is already running" : "Asks before starting")
+            isRunning
+                ? "A rebuild was requested and is being made"
+                : "Asks before starting")
     }
 
-    /// Spins while a rebuild is outstanding, so the toolbar form still says
-    /// something is happening without room for the word "Rebuilding".
-    @ViewBuilder
+    /// **No spinner.** This used to render a `ProgressView` for as long as a
+    /// rebuild was outstanding — which is `rebuildWindow`, twenty minutes —
+    /// so the toolbar appeared to hang. Reported as "it spins endlessly
+    /// probably waiting for a response".
+    ///
+    /// It was not waiting for anything. The request is a `workflow_dispatch`
+    /// that the Worker acknowledges in under a second; the generation then
+    /// runs on a machine this app has no channel to. A spinner claims "still
+    /// talking to the server", and the honest statement is "sent, and the
+    /// result will arrive later" — which is a sentence, not an animation.
+    ///
+    /// So the glyph stays itself and the button simply disables. What
+    /// happened is said in words below the card, and the arrival is
+    /// announced by the card changing colour rather than by anything here.
     private var glyph: some View {
-        if isRunning {
-            ProgressView()
-                .controlSize(.small)
-                .tint(MercuryColor.inkMuted.color)
-        } else {
-            Image(systemName: "arrow.clockwise")
-        }
+        Image(systemName: isRunning ? "clock.arrow.circlepath" : "arrow.clockwise")
     }
 
     /// Names the cost, the wait and what is left — in that order, because

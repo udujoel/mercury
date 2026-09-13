@@ -24,6 +24,13 @@ struct TodaysBriefingCard: View {
     let state: LoadState
     let summary: String?
     let isPlaying: Bool
+    /// A rebuild landed and has not been looked at yet.
+    ///
+    /// Drawn as a ring in the day's accent plus a line naming what changed,
+    /// rather than a dot or a badge. A badge says "something"; the point of
+    /// the rebuild is that THIS briefing is not the one you already heard,
+    /// and the card itself is the thing that changed.
+    var isFresh: Bool = false
     let onPlay: () -> Void
     let onRetry: () -> Void
 
@@ -38,6 +45,22 @@ struct TodaysBriefingCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(MercurySpace.comfortable)
         .mercuryCard(.raised)
+        .overlay {
+            // A ring rather than a fill: ADR-012's register is ink on paper
+            // and the accent appears twice on this page by design. Tinting
+            // the whole card would make the freshest thing on screen the
+            // loudest, which is a different claim from "this is new".
+            if isFresh {
+                RoundedRectangle(cornerRadius: MercuryColor.cardCornerRadius,
+                                 style: .continuous)
+                    .strokeBorder(MercuryColor.accent.color, lineWidth: 2)
+            }
+        }
+        .animation(.easeOut(duration: 0.35), value: isFresh)
+        .accessibilityElement(children: .contain)
+        // VoiceOver gets the fact in words. A ring is invisible to it, and
+        // "your briefing was rebuilt" is the whole message.
+        .accessibilityHint(isFresh ? "Rebuilt since you last listened" : "")
     }
 
     // MARK: - Ready / loading
@@ -53,6 +76,11 @@ struct TodaysBriefingCard: View {
                     Text(subtitle)
                         .font(MercuryType.figureCaption)
                         .foregroundStyle(MercuryColor.inkMuted.color)
+                    if isFresh {
+                        Text("Rebuilt from your latest mail")
+                            .font(MercuryType.figureCaption)
+                            .foregroundStyle(MercuryColor.accent.color)
+                    }
                 }
                 Spacer(minLength: 0)
             }

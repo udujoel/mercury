@@ -213,7 +213,20 @@ enum BriefingDigest {
     /// `generatedAt` is still what names the day, because the weekday it
     /// wants is only in a `Date` — and for anything but today the two agree.
     static func title(briefingId: String?, generatedAt: Date?, now: Date = .now) -> String {
-        guard let briefingId, briefingId != dayId.string(from: now),
+        // Same-DAY, not equal. This compared a briefing id against a bare
+        // `yyyy-MM-dd` string, which was the same question until 2026-09-07
+        // and has been a different one since: today's briefing is
+        // `2026-09-13-0535`, the day is `2026-09-13`, they are never equal,
+        // and so today's own briefing was titled "Sunday's briefing" every
+        // single day.
+        //
+        // Found on the simulator, not by a test — the fourth site of this
+        // bug, after the prefetch, the rebuild match and the offline
+        // fallback. Each one compiled, each returned a valid string, and
+        // each was quietly answering a question nobody had asked since the
+        // id changed shape.
+        guard let briefingId,
+              !BriefingID.sameDay(briefingId, dayId.string(from: now)),
               let generatedAt
         else { return "Today's briefing" }
         return "\(generatedAt.formatted(.dateTime.weekday(.wide)))'s briefing"

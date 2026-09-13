@@ -639,7 +639,8 @@ something in this project:
       - **Budget.** The 2026-09-05 run took 423 seconds. Research is N more
         calls on top, so N and a wall-clock cap are part of the task, not a
         later optimisation.
-- [ ] 19. **The calendar strip.** One line at the top of Home, a week at a
+- [x] 19. **The calendar strip.** DONE — verified on the simulator, where
+      the first cut auto-played instead of browsing. Original text: One line at the top of Home, a week at a
       time, today emphasised. Tapping a day loads that day's briefing and
       desk — the archive's job, moved to where people will actually use it.
       Days with no briefing are visibly empty rather than tappable-and-dead.
