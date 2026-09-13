@@ -37,14 +37,18 @@ Gmail plus Calendar in, briefing out. No news, no clustering, no automation,
 no voice. Resist every temptation to add.
 
 Backend
-- [~] FastAPI skeleton: health and generate done; auth callback not yet
+- [x] CLOSED — FastAPI skeleton. The auth callback was never built and is
+      not wanted: ADR-008 replaced the HTTP surface with the cron plus the
+      Worker, and onboarding says in as many words that the Google account
+      is connected on the server. The app survives as a local dev harness
 - [x] Gmail ingestion producing `Item`
 - [x] Calendar ingestion producing `CalendarEvent`
 - [x] Heuristic priority scoring (no embeddings yet)
 - [x] Two-pass script chain: outline then draft
 - [x] Parallel TTS with pacing and loudness rules
 - [x] Timing manifest generation
-- [~] Object storage for audio — local filesystem for now, R2 not yet
+- [x] Object storage for audio — R2, live. `briefing.yml` sets
+      `STORAGE_BACKEND: r2` on both jobs and has since ADR-008
 
 iOS
 - [x] Onboarding: welcome, Google connect, wake time, length
@@ -323,7 +327,9 @@ Control:
 
 Added 2026-09-04, after the ElevenLabs go-ahead:
 
-- [~] 12. **Voice chosen in the app, not in the environment.** Half done:
+- [x] 12. **Voice chosen in the app, not in the environment.** CLOSED —
+      superseded by 12b, which built the picker this said was missing.
+      Original text:
       11a landed, so the provider and both voice ids are now settings the
       app writes and the job reads. What is NOT done is the picker — listing
       real voices needs `GET /v1/voices`, which needs the ElevenLabs key,
@@ -437,7 +443,9 @@ The evidence, all from the live system on 2026-09-11/12:
 
 ### Tasks
 
-- [ ] 20. **The ids that predict the wrong briefing.** #33 changed the id
+- [x] 20. **The ids that predict the wrong briefing.** DONE (#35, #37) —
+      and a FOURTH site turned up on the simulator afterwards
+      (`BriefingDigest.title`, #45). Original text: #33 changed the id
       shape and two places that PREDICT ids were not updated — neither
       appears in that diff, which is the "newly reachable, not newly
       written" lesson in its purest form.
@@ -463,7 +471,13 @@ The evidence, all from the live system on 2026-09-11/12:
       digest and settings artifacts both carry one; task 2's "schema version
       bump" was never done.
 
-- [ ] 22. **Decide ElevenLabs, then make the failover audible.** The code is
+- [~] 22. **DECIDED 2026-09-13: ElevenLabs stays.** No paid plan, and none
+      is needed — the failover is per-run instance state, so the next run
+      after the quota resets uses ElevenLabs again with no action.
+      WHAT REMAINS is the second half, still worth doing: `degraded_sources`
+      is computed and written on every run and the iOS client does not
+      decode it, so the one field that could say "this morning is not the
+      voice you configured" is dropped on the floor. Original text: The code is
       right and the account is out of credits. Either buy Starter or set
       `TTS_PROVIDER=google` and stop the roadmap claiming a voice that does
       not ship. Either way the daily silent narrator-swap must stop being a
@@ -473,7 +487,7 @@ The evidence, all from the live system on 2026-09-11/12:
       Note `elevenlabs_tts.py:232` special-cases the 402 that cost a day in
       September and not the 401 that fires every morning now.
 
-- [ ] 26. **The briefing has to END.** Asked for 2026-09-12 after listening
+- [x] 26. **The briefing has to END.** DONE (#37). Original text: Asked for 2026-09-12 after listening
       to one all the way through. When the narration finishes, the podcast
       does not stop: the lock screen keeps the card with a play button and
       the app stays on the player screen. Three separate defects on one path,
@@ -657,17 +671,30 @@ navigation.
 
 - [ ] Week 16 — DeepCast with web-grounded research and chapter navigation
 - [ ] Week 17 — story detail, summary styles (ELI5, 5Ws, translate), ask
-- [ ] Week 18 — Reddit, Bluesky, Slack follow-ups segment
+- [ ] Week 18 — Reddit, Bluesky, Slack follow-ups segment. Genuinely
+      unbuilt: `backend/app/ingestion/` holds calendar, drops, gmail,
+      images, rss and weather, and nothing else. The README used to
+      advertise Reddit and Slack as live sources and no longer does (#37);
+      the PRD still does, and is the spec rather than a claim about today
 - [ ] Week 19 — endless mode, better scrubbing, podcast and newsletter
       subscriptions. These are the six things Huxe users asked for and never got.
 
 ## Phase 5 — Polish and release (weeks 20 to 23)
 
-- [ ] Briefing history with transcript search
+- [~] Briefing history with transcript search — HISTORY is done (the
+      archive, plus the calendar strip on Home). SEARCH is not: there is
+      no `.searchable` anywhere in the app. Transcripts are already in
+      SwiftData, so searching the CACHED briefings is small; searching
+      all 30 retained days needs a Worker route
 - [ ] CarPlay and StandBy widgets
 - [ ] Home and Lock Screen widgets
-- [ ] Shortcuts and Siri intents
-- [ ] Voice and host name customisation
+- [ ] Shortcuts and Siri intents — unbuilt, and NOT blocked: App
+      Intents need no paid membership
+- [~] Voice and host name customisation — VOICE is done (12b's picker).
+      HOST NAMES are not: nothing in the app writes `host_a_name`, and
+      it is not a cosmetic field — `quality.py:190` builds the
+      speakable-name allow-list from it, so renaming a host changes
+      what the critique pass accepts
 - [ ] Reliability: token refresh, backoff, partial-failure degradation
 - [ ] Cost instrumentation
 - [ ] TestFlight
