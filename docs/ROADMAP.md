@@ -510,7 +510,9 @@ The evidence, all from the live system on 2026-09-11/12:
       a reply" IS this segment, and it should be built before 16 rather than
       beside it.
 
-- [ ] 25. **Render what already arrives.** The backend has shipped
+- [x] 25. **Render what already arrives.** DONE — the newsletters half.
+      `DigestStory.topics` stays unrendered on purpose; see the revision
+      note on task 17 and docs/LOG.md. Original text: The backend has shipped
       `digest.newsletters` since PR #17 and `DigestStory.topics` since the
       enrichment pass; iOS decodes both (`Digest.swift:27`, `:101`) and no
       view reads either. A large part of task 17 is rendering data already
