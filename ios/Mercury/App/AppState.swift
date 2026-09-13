@@ -356,6 +356,27 @@ final class AppState {
     }
 
     private(set) var rebuild: PendingRebuild?
+
+    /// A rebuild landed and the listener has not looked at it yet.
+    ///
+    /// The point of the rebuild is that the briefing changed; the app knowing
+    /// that and saying nothing is the same as not rebuilding. Home draws the
+    /// card in the day's accent while this is true, and `markRebuildSeen()`
+    /// clears it — so the highlight is an invitation, not a badge that has to
+    /// be dismissed.
+    private(set) var hasUnseenRebuild = false
+
+    /// Roughly how long a rebuild takes, for the sentence the user reads
+    /// after pressing the button.
+    ///
+    /// Measured, not guessed: of the last ten successful production runs,
+    /// seven took four minutes, two took three and one took seven. Five is
+    /// the honest round number — slightly generous, which is the right
+    /// direction for a promise about waiting.
+    static let rebuildEstimateMinutes = 5
+
+    @MainActor
+    func markRebuildSeen() { hasUnseenRebuild = false }
     /// Clears `rebuild` when the window runs out.
     ///
     /// Not a comparison against the clock alone. `isRegenerating` reads
@@ -584,6 +605,12 @@ final class AppState {
         // rebuild regardless of when it was made.
         let floor = rebuild.supersedes ?? rebuild.requestedAt
         if manifest.generatedAt <= floor { return }
+
+        // Past the guards: this manifest IS the rebuild that was asked for.
+        // Flag it as unseen BEFORE clearing the pending state, so the card
+        // can go from "coming" straight to "here, and different" with no
+        // frame in between where it looks like nothing happened.
+        hasUnseenRebuild = true
         endRebuild()
     }
 
@@ -657,7 +684,23 @@ final class AppState {
     /// on screen (`isPlaybackCurrent`). Fetching the manifest alone would
     /// leave the whole player inert with no explanation.
     @MainActor
-    func openBriefing(id: String) async {
+    /// Load a briefing. `andPlay: false` puts it on screen without starting
+    /// it — which is what the calendar strip wants.
+    ///
+    /// Selecting a date is BROWSING: "pull up the day's digest and news as
+    /// if going back in time". The archive sheet is choosing something to
+    /// listen to, and auto-playing there is right. The first cut of the
+    /// strip reused that path and jumped straight into the player, which
+    /// the simulator showed immediately — and no unit test would have,
+    /// because both paths load the same manifest and differ only in what
+    /// happens next.
+    ///
+    /// The persistence wiring happens either way. Skipping it would leave
+    /// `onPositionPersist` and `onFinished` pointing at whichever briefing
+    /// was loaded before, so pressing play on the browsed one would save
+    /// progress against the previous morning and could mark it complete —
+    /// the exact bug `startPlayback`'s own comment warns about.
+    func openBriefing(id: String, andPlay: Bool = true) async {
         guard loadState != .loading else { return }
         loadState = .loading
         do {
@@ -679,7 +722,11 @@ final class AppState {
             // without it, pausing or finishing the archive briefing saved
             // progress against whichever one was played before, and could
             // mark that earlier briefing complete.
-            await startPlayback(of: manifest)
+            if andPlay {
+                await startPlayback(of: manifest)
+            } else {
+                wirePersistence(for: manifest.briefingId)
+            }
             await loadDigest()
         } catch {
             // `localizedDescription`, matching `playBriefing`. The other

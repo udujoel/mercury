@@ -26,9 +26,21 @@ struct HomeView: View {
     /// minutes. A spinner that finishes while the briefing is still being
     /// made would read as "done" and send the user to a player holding the
     /// old audio.
-    private static let startedNote =
-        "Rebuilding from your latest mail. It takes a few minutes; the new "
-        + "briefing appears the next time you press play."
+    /// What the user reads after pressing Rebuild.
+    ///
+    /// Says SUBMITTED and gives a number, because the previous version said
+    /// "it takes a few minutes" while a spinner ran for twenty — and between
+    /// a vague sentence and a spinning control, people believe the control.
+    /// The estimate is measured: of the last ten production runs, seven took
+    /// four minutes, two took three, one took seven.
+    ///
+    /// It also promises the arrival will announce itself, so nobody has to
+    /// sit and poll the screen to find out.
+    static var startedNote: String {
+        "Request sent. Your new briefing usually takes about "
+        + "\(AppState.rebuildEstimateMinutes) minutes — you can close the "
+        + "app. It will be highlighted here when it arrives."
+    }
 
     /// Ask for a rebuild, and say what happened.
     ///
@@ -92,6 +104,19 @@ struct HomeView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     Masthead(date: .now)
 
+                    // Task 19, asked for twice. The archive has held this
+                    // since task 10; it lived behind a button at the BOTTOM
+                    // of the page labelled "Earlier briefings", which is a
+                    // place people reach by deciding to look for something.
+                    if !calendarDays.isEmpty {
+                        CalendarStripView(
+                            days: calendarDays,
+                            selectedDay: appState.manifest
+                                .map { BriefingID.day(of: $0.briefingId) },
+                            onSelect: openDay)
+                            .padding(.top, MercurySpace.snug)
+                    }
+
                     Text("Good morning")
                         .font(MercuryType.greeting)
                         .foregroundStyle(MercuryColor.ink.color)
@@ -115,6 +140,11 @@ struct HomeView: View {
                         state: appState.loadState,
                         summary: BriefingDigest.summary(for: appState.manifest),
                         isPlaying: appState.playback.isPlaying,
+                        // Drawn in the day's accent until it has been
+                        // looked at. The rebuild's whole point is that the
+                        // briefing changed, so arriving silently would be
+                        // the same as not rebuilding.
+                        isFresh: appState.hasUnseenRebuild,
                         onPlay: play,
                         // NOT `play`. Retry follows a failed fetch, and
                         // `togglePlayback` would pause or resume whatever
@@ -131,7 +161,14 @@ struct HomeView: View {
                     // cards must belong to the briefing on screen, or their
                     // turn offsets address a manifest that is not loaded.
                     if !deskStories.isEmpty {
-                        SectionLabel("Today's desk")
+                        // Follows the briefing on screen, not the clock.
+                        // The card above already says "Friday's briefing"
+                        // via `BriefingDigest.title`; a desk headed "TODAY'S"
+                        // under it is the same confident wrongness that
+                        // rule about the card exists to prevent — and the
+                        // calendar strip makes it reachable in one tap
+                        // rather than only on a stale restore.
+                        SectionLabel(deskLabel)
                             .padding(.top, MercurySpace.section)
                             .padding(.bottom, MercurySpace.snug)
 
@@ -286,6 +323,18 @@ struct HomeView: View {
             // here rather than on the play path — pressing play must never
             // wait on a screen you may not open.
             .task(id: appState.manifest?.briefingId) { await appState.loadDigest() }
+            // The calendar strip needs the archive, and until now the only
+            // thing that loaded it was the archive SHEET's own `.task` — so
+            // a strip on Home would have stayed empty until someone opened
+            // the screen it was meant to replace.
+            //
+            // Guarded rather than unconditional: `loadArchive` is a network
+            // round trip, this fires on every appearance of Home, and the
+            // list changes at most four times a day.
+            .task {
+                guard appState.archive.isEmpty, !appState.archiveLoading else { return }
+                await appState.loadArchive()
+            }
             // Covers playback started outside a direct tap on the card — the
             // wake notification's "Play" action or tapping the notification
             // itself (PRD F-17), which drive `AppState.playPrefetched`
@@ -321,6 +370,10 @@ struct HomeView: View {
     /// the player, pausing stays on Home, and the notification path gets the
     /// same treatment without a second rule.
     private func play() {
+        // Seen. Not on appear, and not on a timer: the highlight says "this
+        // is not the briefing you already heard", and the moment that stops
+        // being news is the moment the listener acts on it.
+        appState.markRebuildSeen()
         Task {
             await appState.togglePlayback()
             // Only when something is actually playing. `loadState` stays
@@ -357,6 +410,43 @@ struct HomeView: View {
         // its lead — capping here picked the most-covered story of the first
         // twelve rather than of the morning.
         return digest.covered + digest.uncovered
+    }
+
+    /// "Today's desk", or "Friday's desk" when browsing another day.
+    ///
+    /// Derived from the same `briefingTitle` the card uses, so the two
+    /// cannot disagree: it is "Today's briefing" or "Friday's briefing", and
+    /// this swaps the noun.
+    private var deskLabel: String {
+        briefingTitle.replacingOccurrences(of: "briefing", with: "desk")
+    }
+
+    /// The last seven days, with whichever briefing each one has.
+    ///
+    /// Built from `appState.archive`, which `.task` below loads once. Empty
+    /// until it arrives, and the strip simply does not render — better than
+    /// seven dead cells that become live a moment later.
+    private var calendarDays: [CalendarStrip.Day] {
+        guard !appState.archive.isEmpty else { return [] }
+        return CalendarStrip.days(archive: appState.archive, today: .now)
+    }
+
+    /// Open that day's briefing, and its desk with it.
+    ///
+    /// `openBriefing` already replaces the manifest AND the digest, so the
+    /// stories, the newsletters and the outlet section all follow the date
+    /// without this having to say so — they are all derived from whichever
+    /// briefing is loaded, and guarded on its id.
+    private func openDay(_ day: CalendarStrip.Day) {
+        guard let id = day.briefingId else { return }
+        // Selecting a day is looking at a briefing, so any rebuild highlight
+        // has served its purpose.
+        appState.markRebuildSeen()
+        // NOT auto-played. Tapping a date is looking at a morning, not
+        // choosing something to listen to — the play button is right there
+        // if that is what was meant. The archive SHEET still auto-plays,
+        // because picking from a list of briefings is choosing one.
+        Task { await appState.openBriefing(id: id, andPlay: false) }
     }
 
     /// Stories two or more distinct outlets carried.
