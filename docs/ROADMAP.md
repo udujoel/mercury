@@ -494,7 +494,9 @@ The evidence, all from the live system on 2026-09-11/12:
       — `finish()` deliberately keeps the file, and clearing Now Playing must
       not become unloading the audio.
 
-- [ ] 23. **CI that runs the suites nobody runs.** There is no iOS job and no
+- [x] 23. **CI that runs the suites nobody runs.** DONE — `ios.yml` and
+      `worker.yml`. Note the cost: macOS runners bill at 10x, so the iOS
+      job is path-filtered to `ios/**`. Original text: There is no iOS job and no
       Worker job. `backend.yml` filters on `backend/**`, which `worker/**`
       does not match, and 18 Swift test files run only when someone
       remembers. The worker test written specifically to stop the next

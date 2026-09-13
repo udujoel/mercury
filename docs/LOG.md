@@ -18,6 +18,65 @@ what is *planned*; this is what *happened*.
 
 ---
 
+## 2026-09-13 — The first CI run found three things no test could
+
+Task 23 added `ios.yml` and `worker.yml`. The iOS job failed fourteen seconds
+into its first execution, and what it found is worth more than the workflow
+that found it.
+
+**1. The iOS app had not built from a clean checkout since task 4.**
+
+    error: lstat(.../ios/Mercury/Resources/waiting-bed.mp3):
+           No such file or directory (in target 'Mercury')
+
+The waiting room's audio bed was never committed. `.gitignore` carries a
+blanket `*.mp3`, and the exception below it names `assets/music/` — not the
+iOS target's own Resources. `WaitingRoom` lists the file in the app target's
+resources build phase, so a fresh clone could not build the app at all.
+Invisible to everyone, because every machine that had ever run the app had
+the file on disk.
+
+**Second time for the same rule.** The `.gitignore` comment already narrates
+it swallowing the nine music tracks on their first commit, with the PR
+claiming they shipped while the repository held only a README. The fix then
+added an exception for `assets/music/` and left the rule that caused it — so
+it caught the very next audio file to arrive. A fix that special-cases the
+victim does not stop the mechanism.
+
+**2. The test written to prevent exactly this cannot.**
+`WaitingRoomTests.testTheBedIsInTheBundle` was added as "the app-icon lesson
+as an assertion". It asks the BUILT BUNDLE for the file — and locally the
+bundle has it, because the build copies it from a working tree that has it.
+**A test of the artefact cannot see a gap in the source.** Only a clean
+checkout can.
+
+**3. `DawnPalette.swift:153` did not compile on Xcode 16.4.**
+`base - hueBand + 2 * hueBand * Double(i) / Double(steps - 1)` — five
+literals, two conversions, four operators, inferred closure return type. The
+type checker gave up. Xcode 26 solves it locally, so the code was never
+correct-by-construction, only lucky with a toolchain.
+
+### The class these share
+
+The developer's machine was carrying the project: a file that existed only
+locally, a test that could only observe local state, and a compiler more
+generous than the one anyone else would use.
+
+That is a different failure class from the two this project already knows.
+The audit finds "nothing calls this". A live probe finds "production
+disagrees with the code". **Neither can find "this only works here" — that
+needs a machine that is not here.**
+
+### Also, a mistake worth keeping
+
+Fixing the worker job, the script was changed to `node --test test/` and
+reported as working on the strength of the output's TAIL — duration, skipped,
+todo. It does not work: node treats the path as a module and fails with
+MODULE_NOT_FOUND. `# pass 0 # fail 1` was in the part not read. Read the
+pass/fail line, not the line that always prints.
+
+---
+
 ## 2026-09-13 — `source_count` counted emails, not publications
 
 Found while testing whether task 17 could be built on clusters instead of on

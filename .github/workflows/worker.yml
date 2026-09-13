@@ -1,0 +1,47 @@
+name: worker
+
+# The guard against the next `music_set` bug, which was itself unguarded.
+#
+# `worker/test/scheduled.test.mjs` was written specifically to stop a repeat
+# of the bug where `music_set` was stripped by the Worker's SETTINGS_FIELDS
+# whitelist — so the picker encoded it, the pipeline read it, and the Worker
+# deleted it on every save. The music setting had never once applied in
+# production.
+#
+# That test ran only when a human typed `npm test` in `worker/`. backend.yml
+# filters on `backend/**`, which `worker/**` does not match, and there was no
+# worker workflow. So the guard against the failure class was itself an
+# instance of it: complete, correct, and reached by nothing.
+on:
+  push:
+    # Both triggers, for the reason backend.yml documents: a filter added to
+    # `pull_request` alone lets a direct push to the default branch through
+    # without the suite ever running.
+    paths: ["worker/**", ".github/workflows/worker.yml"]
+  pull_request:
+    paths: ["worker/**", ".github/workflows/worker.yml"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # 22, matching the version this is developed against.
+          #
+          # The first CI run pinned 20 and failed with
+          # `Could not find 'test/*.test.mjs'`: the glob is QUOTED in
+          # package.json, so node must expand it itself, and node only
+          # learned to do that in 21. The script now uses bare `node --test`,
+          # which discovers `**/*.test.mjs` from the working directory and
+          # has worked since 18 — so this pin matches local behaviour rather
+          # than propping the script up.
+          node-version: "22"
+      # No `npm ci`: worker/ has no dependencies and no lockfile. The suite
+      # imports the source directly and runs on the standard library alone,
+      # which is why it takes under a second.
+      - run: npm test

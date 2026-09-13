@@ -1,0 +1,72 @@
+name: ios
+
+# CLAUDE.md step 2 requires `xcodebuild build` and `test` before every merge.
+# Nothing enforced it: 20 Swift test files in ios/Mercury/MercuryTests ran
+# only when someone remembered, and this project's stated failure mode is a
+# green suite certifying code the product never ran. The inverse — a suite
+# nothing runs at all — had no line in the roadmap until task 23.
+#
+# COST, stated plainly because it is not free. macOS runners bill at 10x the
+# Linux rate, and a private repo gets 2000 minutes a month. A ~5 minute run
+# is therefore ~50 charged minutes, against a budget the briefing cron
+# already spends ~60 of. The path filter below is what keeps that
+# affordable: this runs only when iOS or this file changes, not on every
+# backend commit. If the budget becomes a problem, narrow it further or move
+# to a self-hosted runner — do not silently delete it and go back to hoping
+# someone remembers.
+on:
+  push:
+    # Both triggers, for the reason backend.yml documents: a filter on
+    # `pull_request` alone lets a direct push to the default branch through
+    # with the suite never running.
+    paths: ["ios/**", ".github/workflows/ios.yml"]
+  pull_request:
+    paths: ["ios/**", ".github/workflows/ios.yml"]
+
+jobs:
+  test:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: ios/Mercury
+    steps:
+      - uses: actions/checkout@v4
+
+      # The project's `baseConfigurationReference` points at
+      # Secrets.xcconfig, which is gitignored — so a fresh checkout cannot
+      # configure, let alone build. The example file carries placeholder
+      # values, which is all the unit suite needs: it exercises pure
+      # functions, decoders and in-memory SwiftData, and reaches no network.
+      #
+      # Copied rather than committed. A real token in CI would be a
+      # credential in a build log for a suite that never makes a request.
+      - name: Provide placeholder secrets
+        run: |
+          test -f Secrets.xcconfig || cp Secrets.example.xcconfig Secrets.xcconfig
+
+      - name: Show the toolchain
+        run: xcodebuild -version && xcrun simctl list runtimes | tail -5
+
+      # `-destination` names a device FAMILY rather than a specific model:
+      # GitHub's images change which simulators are installed, and pinning
+      # "iPhone 17 Pro" would turn an image update into a red build for a
+      # reason that has nothing to do with the code.
+      # No `| xcbeautify`. The first draft piped through it with a `||`
+      # fallback to a bare run, which would have executed the ENTIRE suite a
+      # second time on any machine where xcbeautify was missing — paying
+      # twice, at the 10x rate, to pretty-print nothing.
+      - name: Test
+        run: |
+          xcodebuild test \
+            -project Mercury.xcodeproj \
+            -scheme Mercury \
+            -destination 'platform=iOS Simulator,OS=latest,name=iPhone 16' \
+            -resultBundlePath TestResults.xcresult \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Keep the result bundle on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcresult
+          path: ios/Mercury/TestResults.xcresult
