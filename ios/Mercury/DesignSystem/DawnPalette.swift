@@ -150,8 +150,22 @@ enum DawnPalette {
         // because it is either infinite or NaN". A negative `steps` traps too,
         // on `0..<steps` itself. Both are answered here.
         guard steps > 1 else { return steps == 1 ? [base] : [] }
-        return (0..<steps).map { i in
-            base - hueBand + 2 * hueBand * Double(i) / Double(steps - 1)
+        // Broken into named steps, not for readability but because the
+        // single-expression form defeated the type checker. Xcode 26 solved
+        // it locally; Xcode 16.4 on CI gave up with "unable to type-check
+        // this expression in reasonable time" — five literals, two Double
+        // conversions and four operators is enough for the inference
+        // problem to blow up, and which side of the budget it lands on
+        // depends on the toolchain.
+        //
+        // The first CI run in this project's history found it. Nothing was
+        // wrong with the code and nothing would ever have been, on this
+        // machine.
+        let span = 2 * hueBand
+        let last = Double(steps - 1)
+        return (0..<steps).map { i -> Double in
+            let progress: Double = Double(i) / last
+            return base - hueBand + span * progress
         }
     }
 }
