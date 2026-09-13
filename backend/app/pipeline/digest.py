@@ -420,6 +420,36 @@ def _story_id(cluster_id: str) -> str:
     return f"st_{cluster_id}"
 
 
+def _distinct_source_count(members: list[Item]) -> int:
+    """How many PUBLICATIONS covered this story, not how many items arrived.
+
+    This was `len(members)`, and the difference is the difference between a
+    real signal and a fabricated one. In the live 2026-09-11 digest the
+    highest-scoring story was "Earn $60 for Vodafone App Feedback" with
+    `source_count: 4` — one survey company that had emailed four times.
+    "Houthi Advance Threatens Global Trade" claimed 4 and listed the BBC
+    twice; "US Holds 9/11 25th Anniversary Memorials" claimed 3 and listed
+    Al Jazeera twice.
+
+    That number is not decoration. `DeskFeed.leadStory` picks the desk's
+    lead with `max(sourceCount)`, and the whole editorial promise of the
+    clustering — "one story three newsletters and two wires all covered
+    reaches you once, with all five attributed" — is a claim about distinct
+    outlets. A daily that sends three editions is one outlet with three
+    editions, and counting it as three corroborating sources is exactly the
+    "concatenated, not edited" failure ADR-003 exists to prevent, inverted.
+
+    The iOS client already solved this for its own counting:
+    `BriefingDigest.key(for:)` keys on the item id, falling back to
+    title-and-sender, "since two newsletters can share a subject line". Same
+    question, same answer — the backend simply never asked it.
+
+    Deliberately NOT deduplicated by title: the same story under two
+    publications' own headlines is exactly what this number is FOR.
+    """
+    return len({member.source_name for member in members})
+
+
 def _newsletter_id(item: Item) -> str:
     # `Item.id` is a content hash of source_name + url-or-title + timestamp,
     # so this is stable across a regeneration of the same day — which matters,
@@ -534,7 +564,7 @@ def build_digest(
                 why_it_matters=card.why_it_matters if card else None,
                 image_url=_lead_image(story, members),
                 topics=list(card.topics) if card else [],
-                source_count=len(members),
+                source_count=_distinct_source_count(members),
                 sources=[
                     DigestSource(
                         source_name=member.source_name,
