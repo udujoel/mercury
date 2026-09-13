@@ -31,6 +31,22 @@ credentials/
 # other files and said nothing about them, and the PR claimed they were
 # committed when the repository held only a README describing them.
 !assets/music/**/*.mp3
+
+# And the waiting room's bed, which is the SAME case and was swallowed the
+# same way — the exception above names `assets/music/` and this file lives
+# in the iOS target's own Resources. Added 2026-09-13, after the first CI
+# run in this project's history failed on its first attempt with
+# `lstat(.../waiting-bed.mp3): No such file or directory`.
+#
+# It had been missing from the repository since task 4 merged. `WaitingRoom`
+# lists it in the app target's resources build phase, so **the iOS app has
+# not been buildable from a clean checkout since** — invisible to everyone,
+# because every machine that had ever run the app had the file on disk.
+#
+# `WaitingRoomTests.testTheBedIsInTheBundle` exists precisely to stop this
+# and could not: it asks the BUILT BUNDLE for the file, and locally the
+# bundle has it. A test of the artefact cannot see a gap in the source.
+!ios/Mercury/Resources/*.mp3
 out/
 tmp/
 

@@ -31,10 +31,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          # The runtime the Worker actually runs on is Cloudflare's, not
-          # Node's — but `node --test` is what the suite is written against,
-          # and 20 is the lowest version with a stable test runner.
-          node-version: "20"
+          # 22, matching the version this is developed against.
+          #
+          # The first CI run pinned 20 and failed with
+          # `Could not find 'test/*.test.mjs'`: the glob is QUOTED in
+          # package.json, so node must expand it itself, and node only
+          # learned to do that in 21. The script now uses bare `node --test`,
+          # which discovers `**/*.test.mjs` from the working directory and
+          # has worked since 18 — so this pin matches local behaviour rather
+          # than propping the script up.
+          node-version: "22"
       # No `npm ci`: worker/ has no dependencies and no lockfile. The suite
       # imports the source directly and runs on the standard library alone,
       # which is why it takes under a second.
