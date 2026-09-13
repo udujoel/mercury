@@ -138,6 +138,21 @@ struct HomeView: View {
                         DeskFeed(stories: deskStories) { selectedStory = $0 }
                     }
 
+                    // What arrived, under what was made of it. The
+                    // backend has shipped this list since PR #17 and no
+                    // view has ever read it.
+                    if !newsletterSenders.isEmpty {
+                        SectionLabel("The newsletters")
+                            .padding(.top, MercurySpace.section)
+                            .padding(.bottom, MercurySpace.snug)
+
+                        NewsletterSection(
+                            senders: newsletterSenders,
+                            summary: NewsletterDesk.summary(
+                                for: appState.digest?.newsletters ?? []),
+                            onOpen: openStory(id:))
+                    }
+
                     if !rows.isEmpty {
                         SectionLabel("In \(briefingTitle.lowercased())")
                             .padding(.top, MercurySpace.section)
@@ -328,6 +343,29 @@ struct HomeView: View {
         // its lead — capping here picked the most-covered story of the first
         // twelve rather than of the morning.
         return digest.covered + digest.uncovered
+    }
+
+    /// The senders whose newsletters arrived for the briefing on screen.
+    ///
+    /// Guarded on the same `briefingId` match as `deskStories`: a digest
+    /// from a different morning would list newsletters that have nothing to
+    /// do with the briefing loaded, and the story ids it joins on would
+    /// address cards that are not there.
+    private var newsletterSenders: [NewsletterDesk.Sender] {
+        guard let digest = appState.digest,
+              digest.briefingId == appState.manifest?.briefingId
+        else { return [] }
+        return NewsletterDesk.senders(from: digest.newsletters)
+    }
+
+    /// Opens the story a newsletter contributed to, when the desk has it.
+    ///
+    /// Silently does nothing when the id names a story this digest does not
+    /// carry — an `is_digest_story` decision can keep a cluster off the
+    /// browse surface while a newsletter still records having fed it, and
+    /// presenting an empty detail sheet would be worse than not opening one.
+    private func openStory(id: String) {
+        selectedStory = deskStories.first { $0.id == id }
     }
 
     /// Opens the player at the turn where this story was discussed.
