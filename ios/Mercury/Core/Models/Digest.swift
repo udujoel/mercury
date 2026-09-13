@@ -98,6 +98,13 @@ struct DigestStory: Codable, Equatable, Hashable, Identifiable {
     /// newsletter-only story has none at all, because rule 5 discards the
     /// body its images live in.
     let imageURL: URL?
+    /// The specific thing this story is about — "Houthi forces advancing on
+    /// Red Sea shipping lanes" — shared verbatim across stories about the
+    /// same thing, which is what lets them group.
+    ///
+    /// Distinct from `topics`, which are categories. Nil for every digest
+    /// written before 2026-09-13, and the archive can open any of those.
+    let subject: String?
     let topics: [String]
     let sourceCount: Int
     let sources: [DigestSource]
@@ -107,7 +114,7 @@ struct DigestStory: Codable, Equatable, Hashable, Identifiable {
     let segment: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, headline, summary, points, topics, sources, segment
+        case id, headline, summary, points, subject, topics, sources, segment
         case whyItMatters = "why_it_matters"
         case imageURL = "image_url"
         case sourceCount = "source_count"
@@ -126,6 +133,7 @@ struct DigestStory: Codable, Equatable, Hashable, Identifiable {
         // returning nil is the same outcome as the field being absent.
         imageURL = (try c.decodeIfPresent(String.self, forKey: .imageURL))
             .flatMap(URL.init(string:))
+        subject = try c.decodeIfPresent(String.self, forKey: .subject)
         topics = try c.decodeIfPresent([String].self, forKey: .topics) ?? []
         sources = try c.decodeIfPresent([DigestSource].self, forKey: .sources) ?? []
         // Denormalised on the backend, but derived here when absent so the
@@ -137,7 +145,8 @@ struct DigestStory: Codable, Equatable, Hashable, Identifiable {
     }
 
     init(id: String, headline: String, summary: String? = nil, points: [String] = [],
-         whyItMatters: String? = nil, imageURL: URL? = nil, topics: [String] = [],
+         whyItMatters: String? = nil, imageURL: URL? = nil,
+         subject: String? = nil, topics: [String] = [],
          sourceCount: Int? = nil, sources: [DigestSource] = [],
          coveredInAudio: Bool = false, turnIndex: Int? = nil, segment: String? = nil) {
         self.id = id
@@ -146,6 +155,7 @@ struct DigestStory: Codable, Equatable, Hashable, Identifiable {
         self.points = points
         self.whyItMatters = whyItMatters
         self.imageURL = imageURL
+        self.subject = subject
         self.topics = topics
         self.sourceCount = sourceCount ?? sources.count
         self.sources = sources

@@ -259,6 +259,7 @@ given so the cards can be matched back:
 
 [{{"id": "c3", "headline": "...", "summary": "...",
    "points": ["...", "..."], "why_it_matters": null,
+   "subject": "OpenAI's Agents API entering public beta",
    "topics": ["ai", "regulation"]}}]
 
 `points` is two to four short lines — the same reporting as `summary`, cut
@@ -270,8 +271,36 @@ the concrete thing: a figure, a name, a date. Do not repeat the headline.
 `why_it_matters` is a string or null; the example shows null because rule 6
 says that is the common answer.
 
-`topics` is one to three lowercase single words. Use the same word for the
-same subject across cards so they group.
+`subject` is the specific thing this story is ABOUT, as a short noun phrase
+of three to eight words. It is not the headline reworded and not a category.
+
+    good: "OpenAI's Agents API entering public beta"
+    good: "Houthi forces advancing on Red Sea shipping lanes"
+    good: "Apple's CEO handoff from Cook to Ternus"
+     bad: "ai"                      — a category, not a subject
+     bad: "artificial intelligence" — still a category
+     bad: "OpenAI Agents API Now in Public Beta" — that is the headline
+
+Two tests it must pass. Someone who has not read the story should be able to
+tell from the subject alone what it concerns. And it should be searchable:
+if you typed it into a search engine you would find OTHER coverage of the
+same thing, which is exactly what Mercury does with it.
+
+**Use the identical phrase on every card about the same thing.** Two stories
+that both concern the Houthi advance share one subject, character for
+character, even when their headlines differ — that shared string is what
+groups them. Prefer the phrasing you already used on an earlier card in this
+batch over inventing a near-duplicate.
+
+Name the actors. "A company's new model" is not a subject; "Anthropic's
+Claude 5 release" is. Where a story genuinely has no specific subject — a
+weekly roundup, a digest of unrelated items — return null rather than
+inventing one.
+
+`topics` is one to three lowercase single words, and they are CATEGORIES,
+not subjects: `ai`, `finance`, `security`. They are for filtering a long
+list, and several unrelated stories sharing one is expected. Use the same
+word for the same category across cards.
 
 Return a card for EVERY story listed, in the same order, and nothing else.
 

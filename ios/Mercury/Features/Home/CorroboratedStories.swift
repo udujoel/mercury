@@ -41,8 +41,8 @@ enum CorroboratedStories {
     static let minimumOutlets = 2
 
     static func items(from stories: [DigestStory]) -> [Item] {
-        stories
-            .map { Item(story: $0, outlets: distinctOutlets(of: $0)) }
+        merged(stories)
+            .map { Item(story: $0.story, outlets: $0.outlets) }
             .filter { $0.outletCount >= minimumOutlets }
             .sorted {
                 // Most-corroborated first; ties broken by what reached the
@@ -53,6 +53,55 @@ enum CorroboratedStories {
                 }
                 return $0.story.coveredInAudio && !$1.story.coveredInAudio
             }
+    }
+
+    /// Stories that share a `subject` are ONE subject, with their outlets
+    /// pooled.
+    ///
+    /// The live digest had "Houthi Advance Threatens Global Trade" (CNBC,
+    /// the BBC, the New York Times) and "Houthi Advance Consolidates Red Sea
+    /// Power" (Al Jazeera, the BBC) as separate clusters. They are the same
+    /// story, and listing them twice makes the section a list of headlines
+    /// again — which is what it exists to stop being. Pooled, that is one
+    /// subject carried by four outlets.
+    ///
+    /// Clustering could not do this: those are genuinely different articles
+    /// about different developments. The SUBJECT is what says they concern
+    /// the same thing, which is why it had to come from the extraction
+    /// rather than from similarity.
+    ///
+    /// Stories with no subject — every digest written before 2026-09-13,
+    /// and roundups since — stand alone rather than being merged into one
+    /// giant nil group.
+    private static func merged(
+        _ stories: [DigestStory]
+    ) -> [(story: DigestStory, outlets: [String])] {
+        var order: [String] = []
+        var groups: [String: (DigestStory, [String])] = [:]
+
+        for story in stories {
+            let outlets = distinctOutlets(of: story)
+            // Nil and empty subjects get a key of their own, so they never
+            // pool with each other.
+            guard let subject = story.subject, !subject.isEmpty else {
+                order.append(story.id)
+                groups[story.id] = (story, outlets)
+                continue
+            }
+            if var existing = groups[subject] {
+                // Keep the story with the widest coverage as the one shown;
+                // its headline is the better-corroborated telling.
+                if outlets.count > existing.1.count { existing.0 = story }
+                for outlet in outlets where !existing.1.contains(outlet) {
+                    existing.1.append(outlet)
+                }
+                groups[subject] = existing
+            } else {
+                order.append(subject)
+                groups[subject] = (story, outlets)
+            }
+        }
+        return order.compactMap { groups[$0] }
     }
 
     /// Distinct names, first-seen order preserved.

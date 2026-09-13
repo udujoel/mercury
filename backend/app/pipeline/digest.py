@@ -99,6 +99,12 @@ _ENRICHMENT_SCHEMA: dict[str, Any] = {
             "summary": {"type": "string"},
             "points": {"type": "array", "items": {"type": "string"}},
             "why_it_matters": {"type": "string", "nullable": True},
+            # The specific thing a story is about, shared verbatim across
+            # cards about the same thing. See DIGEST_PROMPT — `topics` stays
+            # as coarse categories, because the two answer different
+            # questions and collapsing them into one field is what made
+            # `ai` span sixteen stories.
+            "subject": {"type": "string", "nullable": True},
             "topics": {"type": "array", "items": {"type": "string"}},
         },
         "required": ["id", "headline", "summary"],
@@ -274,6 +280,16 @@ class StoryCard(BaseModel):
     summary: str | None = None
     points: list[str] = Field(default_factory=list)
     why_it_matters: str | None = None
+    """The specific thing the story is about, as a short noun phrase.
+
+    Distinct from `topics`, which are categories. A live digest showed why
+    that distinction has to exist in the schema rather than in a prompt's
+    good intentions: asked for "one to three lowercase single words",
+    the model returned `ai` for sixteen different stories, and a section
+    headed "AI — 11 senders" answers nothing. Nor can research act on it —
+    "go and find out more about `ai`" is not a question.
+    """
+    subject: str | None = None
     topics: list[str] = Field(default_factory=list)
 
     @field_validator("points", mode="after")
@@ -563,6 +579,7 @@ def build_digest(
                 points=list(card.points) if card else [],
                 why_it_matters=card.why_it_matters if card else None,
                 image_url=_lead_image(story, members),
+                subject=card.subject if card else None,
                 topics=list(card.topics) if card else [],
                 source_count=_distinct_source_count(members),
                 sources=[

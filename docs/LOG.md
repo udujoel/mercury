@@ -129,11 +129,13 @@ What is left is what a corroborated-news section should look like:
     [2] Lawyer Punished for AI Fake Testimony    Ars Technica, The Verge
     [2] Social Security COLA Projected to Rise   CNBC, MarketWatch
 
-One nuance to decide alongside it: TLDR, TLDR AI and TLDR DevOps count as
-three outlets. They are three newsletters with separate editorial, so that
-is defensible — but they are one publisher, and a corroboration claim from
-one house is weaker than one from three. There is no publisher field today
-to settle it.
+**DECIDED 2026-09-13: outlets, not publishers.** TLDR, TLDR AI and TLDR
+DevOps count as three, in the owner's words because "the newsletters are
+obviously different". They have separate editorial and separate audiences,
+and a reader who sees all three named learns something true — that three
+newsletters they subscribe to each thought this worth carrying. The
+publisher-level view would have required a field that does not exist and
+would have collapsed a real signal to make a theoretical one.
 
 So the fork for task 17, with honest numbers:
 

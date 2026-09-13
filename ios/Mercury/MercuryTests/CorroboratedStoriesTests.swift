@@ -128,3 +128,83 @@ final class CorroboratedStoriesTests: XCTestCase {
         ]).isEmpty)
     }
 }
+
+/// Subjects pool separate clusters into one line.
+///
+/// The live digest carried "Houthi Advance Threatens Global Trade" (CNBC,
+/// the BBC, the NYT) and "Houthi Advance Consolidates Red Sea Power"
+/// (Al Jazeera, the BBC) as different clusters. They are the same story, and
+/// listing both makes this a list of headlines again — which is what it
+/// exists to stop being.
+final class SubjectGroupingTests: XCTestCase {
+
+    private func story(
+        _ headline: String, subject: String?, outlets: [String], id: String
+    ) -> DigestStory {
+        let sources = outlets.map {
+            "{\"source_name\":\"\($0)\",\"title\":\"t\",\"source_type\":\"rss\"}"
+        }.joined(separator: ",")
+        let subjectField = subject.map { "\"subject\":\"\($0)\"," } ?? ""
+        let json = """
+        {"id":"\(id)","headline":"\(headline)",\(subjectField)
+         "source_count":\(outlets.count),"sources":[\(sources)]}
+        """
+        return try! JSONDecoder.mercury().decode(
+            DigestStory.self, from: Data(json.utf8))
+    }
+
+    private let houthi = "Houthi forces advancing on Red Sea shipping lanes"
+
+    func testTwoClustersOneSubjectBecomeOneRowWithPooledOutlets() {
+        let items = CorroboratedStories.items(from: [
+            story("Houthi Advance Threatens Global Trade", subject: houthi,
+                  outlets: ["CNBC", "the BBC", "the New York Times"], id: "a"),
+            story("Houthi Advance Consolidates Red Sea Power", subject: houthi,
+                  outlets: ["Al Jazeera", "the BBC"], id: "b"),
+        ])
+        XCTAssertEqual(items.count, 1, "one subject, one row")
+        XCTAssertEqual(items.first?.outletCount, 4,
+                       "CNBC, the BBC, the NYT, Al Jazeera — the BBC once")
+    }
+
+    /// The better-corroborated telling is the one shown.
+    func testTheWidestCoveredHeadlineRepresentsTheSubject() {
+        let items = CorroboratedStories.items(from: [
+            story("Narrow telling", subject: houthi,
+                  outlets: ["Al Jazeera", "the BBC"], id: "a"),
+            story("Wide telling", subject: houthi,
+                  outlets: ["CNBC", "the BBC", "the New York Times"], id: "b"),
+        ])
+        XCTAssertEqual(items.first?.story.headline, "Wide telling")
+    }
+
+    /// Every digest written before 2026-09-13 has no subjects at all, and
+    /// the archive can open any of them. They must not pool into one giant
+    /// nil group.
+    func testStoriesWithoutASubjectStandAlone() {
+        let items = CorroboratedStories.items(from: [
+            story("One", subject: nil, outlets: ["A", "B"], id: "a"),
+            story("Two", subject: nil, outlets: ["C", "D"], id: "b"),
+        ])
+        XCTAssertEqual(items.count, 2)
+    }
+
+    func testDifferentSubjectsStayDifferentRows() {
+        let items = CorroboratedStories.items(from: [
+            story("Houthi", subject: houthi, outlets: ["A", "B"], id: "a"),
+            story("OpenAI", subject: "OpenAI's Agents API entering public beta",
+                  outlets: ["C", "D"], id: "b"),
+        ])
+        XCTAssertEqual(items.count, 2)
+    }
+
+    /// Pooling must not manufacture corroboration: one outlet writing twice
+    /// about one subject is still one outlet.
+    func testPoolingDoesNotInventOutlets() {
+        let items = CorroboratedStories.items(from: [
+            story("First", subject: houthi, outlets: ["the BBC"], id: "a"),
+            story("Second", subject: houthi, outlets: ["the BBC"], id: "b"),
+        ])
+        XCTAssertTrue(items.isEmpty, "still one outlet, so still not corroborated")
+    }
+}
