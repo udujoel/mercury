@@ -323,8 +323,18 @@ class DigestStory(BaseModel):
     # Null is ordinary: newsletters have none at all.
     image_url: str | None = None
     topics: list[str] = Field(default_factory=list)
-    # == len(sources). Denormalised so a list row can render "5 sources"
-    # without the client walking the array for every row it scrolls past.
+    # Distinct PUBLICATIONS, which is not `len(sources)` and used to be.
+    #
+    # `sources` is per-article attribution: one entry per cluster member,
+    # each with its own title and url, so the BBC covering a story twice
+    # gives two openable rows. `source_count` answers a different question —
+    # how many outlets corroborated this — and the BBC twice is one outlet.
+    # Deduplicating `sources` to match would throw away a link the reader
+    # can open, so the two deliberately differ.
+    #
+    # It was `len(members)`, which made a survey company that emailed four
+    # times the highest-scoring story in the 2026-09-11 digest. Denormalised
+    # so a row can render "5 sources" without walking the array.
     source_count: int
     sources: list[DigestSource]
 

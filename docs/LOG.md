@@ -18,6 +18,74 @@ what is *planned*; this is what *happened*.
 
 ---
 
+## 2026-09-13 — `source_count` counted emails, not publications
+
+Found while testing whether task 17 could be built on clusters instead of on
+the `topics` tag. It can — and the check turned up a bug in the number that
+makes clusters worth showing.
+
+`source_count` was `len(members)`: the raw cluster size. The live
+2026-09-11 digest shows what that buys. The highest-scoring story in the
+entire digest was **"Earn $60 for Vodafone App Feedback", `source_count: 4`**
+— one survey company that had emailed four times. "Houthi Advance Threatens
+Global Trade" claimed 4 and listed the BBC twice; "US Holds 9/11 25th
+Anniversary Memorials" claimed 3 and listed Al Jazeera twice.
+
+**The number is not decoration.** `DeskFeed.leadStory` picks the desk's lead
+with `max(sourceCount)`, and the clustering's whole promise — one story that
+three newsletters and two wires covered reaching you once, with all five
+attributed — is a claim about distinct OUTLETS. A daily that sends three
+editions is one outlet with three editions.
+
+**The client had already solved it.** `BriefingDigest.key(for:)` keys on the
+item id, falling back to title-and-sender, "since two newsletters can share a
+subject line". Same question, same answer; the backend never asked it. Second
+time this session that the correct idiom was already in the codebase and the
+new code did not use it (the first being `scoring.py`'s timestamp sort).
+
+**Not deduplicated by title**, deliberately: two publications writing their
+own headline for one event is exactly what the number is FOR.
+
+### And the finding that prompted it
+
+A cluster already IS a subject, with its own coverage attached. "OpenAI
+Agents API Now in Public Beta" ← TLDR, TLDR DevOps, TLDR AI. That is
+task 17's "what subjects arrived, and which senders covered each", available
+today from `DigestStory.headline` + `sources`, with no prompt change and no
+schema change.
+
+So task 17 has two possible shapes, and the cluster-based one is far cheaper:
+- the `topics` tag needs the extraction rewritten to emit subjects
+- the CLUSTER needs nothing; it needs rendering
+
+The catch is coverage, and the number moves once `source_count` is fixed.
+**15 of 209** stories have two or more distinct OUTLETS — not the 24 the
+broken count reported, because the survey company that emailed four times
+drops out along with every other single-sender cluster.
+
+What is left is what a corroborated-news section should look like:
+
+    [3] OpenAI Agents API Now in Public Beta     TLDR, TLDR AI, TLDR DevOps
+    [3] Houthi Advance Threatens Global Trade    CNBC, the BBC, the NYT
+    [2] Lawyer Punished for AI Fake Testimony    Ars Technica, The Verge
+    [2] Social Security COLA Projected to Rise   CNBC, MarketWatch
+
+One nuance to decide alongside it: TLDR, TLDR AI and TLDR DevOps count as
+three outlets. They are three newsletters with separate editorial, so that
+is defensible — but they are one publisher, and a corroboration claim from
+one house is weaker than one from three. There is no publisher field today
+to settle it.
+
+So the fork for task 17, with honest numbers:
+
+- **Cluster-led, buildable now.** ~15 rows, roughly 7% of the digest. Short,
+  true, reads well. No prompt change, no schema change, no re-run.
+- **Subject extraction rewritten first.** Covers far more of the digest and
+  gives task 18 something specific to research — at the cost of a prompt
+  change, a schema change, and every existing digest keeping the old shape.
+
+---
+
 ## 2026-09-12 — `topics` is a category tag, not a subject
 
 Scoping task 25 ("render what already arrives") against the live 2026-09-11
