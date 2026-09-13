@@ -577,7 +577,13 @@ something in this project:
       the buckets; the audio names the first two and the count of the rest.
       The bar: after listening you can decide whether to open Gmail before
       lunch, and be right.
-- [ ] 17. **Topics extracted from the whole inbox, not just newsletters.**
+- [~] 17. **Topics extracted from the whole inbox, not just newsletters.**
+      HALF DONE. The cluster-led half shipped: "More than one outlet"
+      on Home names the stories several outlets independently carried,
+      which is "what subjects arrived and who covered each" answered
+      from data that already exists. What remains is the SUBJECT
+      extraction — the half that needs a prompt and schema change, and
+      the half task 18 depends on. See docs/LOG.md.
       Widened 2026-09-12: newsletters AND any other news the mail carries —
       a press release, a forwarded article, a product announcement. The desk
       gets a topic-led section rather than a sender-led one: what subjects
