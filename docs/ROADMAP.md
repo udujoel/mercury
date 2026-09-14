@@ -474,10 +474,9 @@ The evidence, all from the live system on 2026-09-11/12:
 - [~] 22. **DECIDED 2026-09-13: ElevenLabs stays.** No paid plan, and none
       is needed — the failover is per-run instance state, so the next run
       after the quota resets uses ElevenLabs again with no action.
-      WHAT REMAINS is the second half, still worth doing: `degraded_sources`
-      is computed and written on every run and the iOS client does not
-      decode it, so the one field that could say "this morning is not the
-      voice you configured" is dropped on the floor. Original text: The code is
+      WHAT REMAINS is the second half, still worth doing: the iOS client
+      does not decode `degraded_sources`, so nothing on the phone can say
+      the voice is not the one you configured. Original text: The code is
       right and the account is out of credits. Either buy Starter or set
       `TTS_PROVIDER=google` and stop the roadmap claiming a voice that does
       not ship. Either way the daily silent narrator-swap must stop being a
