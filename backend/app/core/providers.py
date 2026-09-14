@@ -78,6 +78,61 @@ class EmbeddingProvider(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class ResearchSource:
+    """One source a research answer drew on.
+
+    `title` is the publisher as the provider reports it, usually a bare
+    domain. It is shown to the user, so it must stay human-readable — a row
+    reading "reuters.com" is a source; a row reading a UUID is not.
+    """
+
+    title: str
+    url: str
+
+
+@dataclass(frozen=True)
+class Findings:
+    """What research turned up about one subject.
+
+    Empty is a legitimate, common answer: the subject may be too local, too
+    recent, or simply not covered anywhere else. Rule 7 — the briefing ships
+    either way.
+    """
+
+    subject: str
+    summary: str = ""
+    sources: list[ResearchSource] = field(default_factory=list)
+
+    @property
+    def is_usable(self) -> bool:
+        """Both halves or neither.
+
+        A summary with no sources is exactly what rule 3 forbids, and it is
+        WORSE on a page than in audio because it looks authoritative. So an
+        ungrounded answer is discarded rather than shown unattributed.
+        """
+        return bool(self.summary) and bool(self.sources)
+
+
+@runtime_checkable
+class ResearchProvider(Protocol):
+    async def research(self, subject: str, *, timeout: float = 30.0) -> Findings:
+        """What is independently established about this subject.
+
+        Takes a SUBJECT — a short noun phrase the enrichment pass extracted —
+        and never an email body, so rule 5 holds structurally: no
+        implementation of this protocol can be handed one.
+
+        Must never raise. Every failure returns empty `Findings`, because a
+        briefing that dies because the research step died is a worse product
+        than a briefing without research (rule 7), and putting that
+        guarantee in the protocol means callers need one path rather than
+        two.
+        """
+        ...
+
+
 @runtime_checkable
 class TTSProvider(Protocol):
     async def synthesize(self, text: str, voice_id: str) -> Speech:

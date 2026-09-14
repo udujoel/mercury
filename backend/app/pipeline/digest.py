@@ -38,6 +38,7 @@ and `build_digest` itself never touches `Item.body` at all.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections import Counter
 from datetime import UTC, datetime
@@ -45,7 +46,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.core.providers import LLMProvider
+from app.core.providers import LLMProvider, ResearchProvider
 from app.core.schemas import (
     BriefingDigest,
     BriefingManifest,
@@ -53,6 +54,8 @@ from app.core.schemas import (
     DigestSource,
     DigestStory,
     Item,
+    Research,
+    ResearchSourceRef,
     SourceType,
     Story,
 )
@@ -434,6 +437,121 @@ def _timestamp(value: datetime) -> datetime:
 
 def _story_id(cluster_id: str) -> str:
     return f"st_{cluster_id}"
+
+
+# How many subjects get researched, and how long the whole stage may take.
+#
+# Six and ninety seconds, against a generation that already runs four to
+# seven minutes. Research is N more network round trips on top of a job with
+# a 06:00 deadline, so it is capped by BOTH count and wall clock — a cap on
+# count alone still lets one hanging request eat the morning.
+RESEARCH_MAX_SUBJECTS = 6
+RESEARCH_BUDGET_SECONDS = 90.0
+
+
+async def research_subjects(
+    stories: list[DigestStory],
+    provider: ResearchProvider | None,
+    *,
+    max_subjects: int = RESEARCH_MAX_SUBJECTS,
+    budget_seconds: float = RESEARCH_BUDGET_SECONDS,
+) -> dict[str, Research]:
+    """Research the most-corroborated subjects. Returns subject -> Research.
+
+    Keyed by SUBJECT rather than by story id, because subjects group: the
+    live digest carried "Houthi Advance Threatens Global Trade" and "Houthi
+    Advance Consolidates Red Sea Power" as separate clusters sharing one
+    subject, and researching it twice would spend two of six slots on one
+    question and show the reader the same paragraph under two headlines.
+
+    Ordered by distinct outlets, most first. A subject several outlets
+    carried is both more likely to have something findable and more likely to
+    be worth the reader's attention — and when the budget cuts the list, it
+    should cut the tail rather than an arbitrary slice.
+
+    Never raises. Rule 7: the briefing ships without research rather than
+    not at all, so a total failure here is an empty dict and a log line.
+    """
+    if provider is None:
+        return {}
+
+    ranked: dict[str, int] = {}
+    for story in stories:
+        subject = (story.subject or "").strip()
+        if not subject:
+            continue
+        outlets = len({source.source_name for source in story.sources})
+        ranked[subject] = max(ranked.get(subject, 0), outlets)
+    if not ranked:
+        return {}
+
+    chosen = [
+        subject for subject, _ in
+        sorted(ranked.items(), key=lambda kv: (-kv[1], kv[0]))
+    ][:max_subjects]
+
+    found: dict[str, Research] = {}
+
+    # One task each, then a deadline on the SET rather than a timeout around
+    # a single gather. The difference only shows on a slow morning, and it
+    # is the whole point: `asyncio.gather` under `asyncio.timeout` is
+    # cancelled as a unit, so five subjects that finished inside the budget
+    # are discarded along with the one that hung. Here the budget cancels
+    # only what is still running, and whatever landed still ships.
+    tasks = [asyncio.create_task(provider.research(subject)) for subject in chosen]
+    _, pending = await asyncio.wait(tasks, timeout=budget_seconds)
+    if pending:
+        for task in pending:
+            task.cancel()
+        # Counted, not silent. A stage that quietly stops doing its job is
+        # how `music_set` never applied for weeks.
+        log.warning(
+            "research: budget of %.0fs exhausted with %d of %d subject(s) "
+            "still running; the briefing ships with the rest",
+            budget_seconds, len(pending), len(chosen),
+        )
+        # Let the cancellations settle before returning, so no task is still
+        # touching the network after this function has handed back its
+        # answer.
+        await asyncio.gather(*pending, return_exceptions=True)
+
+    for subject, task in zip(chosen, tasks, strict=True):
+        if task.cancelled():
+            continue
+        error = task.exception()
+        if error is not None:
+            log.warning("research: %r raised %s", subject[:60], type(error).__name__)
+            continue
+        result = task.result()
+        if not result.is_usable:
+            continue
+        found[subject] = Research(
+            summary=result.summary,
+            sources=[
+                ResearchSourceRef(title=source.title, url=source.url)
+                for source in result.sources
+            ],
+        )
+
+    log.info(
+        "research: %d subject(s) offered, %d attempted, %d usable",
+        len(ranked), len(chosen), len(found),
+    )
+    return found
+
+
+def attach_research(
+    stories: list[DigestStory], found: dict[str, Research]
+) -> list[DigestStory]:
+    """Put each finding on every story that shares its subject."""
+    if not found:
+        return stories
+    return [
+        story.model_copy(update={"research": found[story.subject]})
+        if story.subject and story.subject in found
+        else story
+        for story in stories
+    ]
 
 
 def _distinct_source_count(members: list[Item]) -> int:

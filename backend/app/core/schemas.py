@@ -291,6 +291,41 @@ DIGEST_SCHEMA_VERSION = 1
 
 
 
+class ResearchSourceRef(BaseModel):
+    """One source a research finding drew on.
+
+    Separate from `DigestSource`, which is a cluster member — something that
+    arrived in the inbox or a feed. This is something Mercury went and found,
+    and conflating them would let researched claims borrow the authority of
+    material the user actually subscribed to.
+    """
+
+    title: str
+    url: str
+
+
+class Research(BaseModel):
+    """What Mercury found out about a story's subject, beyond the sources
+    that carried it.
+
+    Task 18, and the point of the feature in the owner's words: "make sure
+    the story is rich and informed, not just what's in the email."
+
+    Rule 3 is enforced by construction rather than by hope: a `Research` with
+    no sources is discarded before it reaches here, so anything the client
+    renders is attributable. A researched paragraph without a citation looks
+    MORE authoritative on a page than in audio, which is why this is the one
+    place the rule is worth enforcing twice.
+
+    Rule 5 shapes what goes in: research runs from an extracted SUBJECT, a
+    short noun phrase, and never from an email body. Nothing stored here can
+    be traced back to the contents of a message.
+    """
+
+    summary: str
+    sources: list[ResearchSourceRef] = Field(default_factory=list)
+
+
 class DigestSource(BaseModel):
     """One publication's coverage of a story.
 
@@ -334,6 +369,10 @@ class DigestStory(BaseModel):
     # unrelated stories sharing one is expected and fine. Not a subject:
     # see `subject` above and docs/LOG.md, 2026-09-12.
     topics: list[str] = Field(default_factory=list)
+    # What Mercury found out about `subject` beyond the sources that carried
+    # the story. Null when research did not run, found nothing, or returned
+    # an answer it could not attribute — all of which are ordinary.
+    research: Research | None = None
     # Distinct PUBLICATIONS, which is not `len(sources)` and used to be.
     #
     # `sources` is per-article attribution: one entry per cluster member,
