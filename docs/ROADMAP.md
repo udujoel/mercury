@@ -666,6 +666,113 @@ open Gmail to find out what actually arrived, write down why in one sentence
 before doing anything else — and categorise it as triage, research, or
 navigation.
 
+## Next — What the product review found (2026-09-14)
+
+Eight independent reviews of Mercury as a thing used at 7am rather than as a
+codebase. Full evidence in `docs/REVIEW-2026-09-14.md`; these are the tasks it
+produced, ranked by what they buy per hour spent.
+
+- [ ] 27. **Split the newsletter flag.** `detect_newsletter`
+      (`gmail.py:184`) fires on `List-Unsubscribe`, which every bank, payment
+      app and password-reset mailer sets. Five of the eight reviews traced
+      their worst finding to this one predicate: bank balances rendered as
+      journalism on the browse desk for 30 days, LLM write-ups spent on PR
+      bots, security warnings pinned to LOW forever, all six inbox slots won
+      by machines. `is_newsletter` keeps deciding editorial treatment; a new
+      `is_transactional` decides desk eligibility and excludes an item from
+      `digest_members`, `stories_to_enrich` and `research_subjects`. Pair it
+      with an escalation list — restricted, suspended, unauthorised, verify,
+      failed payment, unusual sign-in — that can lift an account notice to
+      HIGH. This is the single highest-value change on the board.
+
+- [ ] 28. **Two briefings a day, and count what they cost.** Four a day put
+      Google TTS at ~88% of its million free characters and Actions at ~82%
+      heading to the 2,000 cap, quadrupled publisher blocking, and multiplied
+      the repetition — with the digest carrying 209 stories and the audio
+      covering four, a midday regeneration re-narrates the same items under a
+      different headline. Both exhaustions are silent: TTS drops turns and
+      exits 0, and when Actions minutes run out the WATCHDOG stops too,
+      because it is itself an Actions workflow. Cut the crons to two, sum
+      `len(turn.text)` per run and log it, guard the push trigger on
+      `ios.yml` and `backend.yml` so a branch with an open PR is not tested
+      twice, and correct the two cost comments that still price the old
+      cadence.
+
+- [ ] 29. **Stop reaching for a tier that cannot carry one briefing.** Every
+      run calls ElevenLabs and gets a 401; the free tier is 10,000 credits a
+      month against ~6,300 characters per briefing. What "resets with no
+      action" produces in practice is one morning a month where the voice
+      changes partway through and the rest of the turns lose word timings.
+      Set `TTS_PROVIDER: google` in `briefing.yml`'s env block. The provider
+      stays behind the protocol, exactly as rule 6 wants — the cron simply
+      stops calling it. NOTE: this is a WORKFLOW-level change only. The
+      default in `config.py` stays ElevenLabs, per the owner's decision of
+      2026-09-13 (task 22), so a local run with credits still uses it.
+
+- [ ] 30. **Connect the ranker to the reader.** `score_stories` accepts
+      `topic_centroid` and `followed_entities` and no caller passes either
+      (`generate.py:579`), so `interest` is the constant 0.5, its 0.20 weight
+      cancels, and with 153 of 160 stories single-outlet the cluster term is
+      constant too. The world segment is `0.12 x cluster + 0.08 x recency` —
+      a recency sort. On 2026-09-13 the two stories that reached the audio
+      were the two most recently published of 209, and "Ask HN: how can I
+      browse HN in dark mode?" beat a Russian strike on a Ukrainian train by
+      six minutes. `topic_centroid()` exists and is tested. Call it.
+
+- [ ] 31. **A freshness floor, and a watchdog for all four slots.** The
+      `00:12` cron generates a briefing named for the NEW day, so all five of
+      the Worker's morning checkpoints see "this date has a playable
+      briefing" and stand down, the 05:40 alarm included. Masked today only
+      by GitHub running that cron four hours late; the 25 October DST change
+      unmasks it. `dayState` should take a freshness floor and count a
+      briefing as covering the morning only if its `-HHMM` is at or after
+      ~03:00 local. Separately, three of the four daily slots have no retry
+      and no check — the 2026-09-13 evening run died with a segfault and
+      nothing reported it. Add `--max-age-hours` to `app.cli check`.
+
+- [ ] 32. **The hosts must not relay a security instruction.** The fence
+      stops the model OBEYING an email; it does nothing about it faithfully
+      RELAYING one, and relaying is the more dangerous half because the
+      hosts strip the sender address, the headers and the link. Live
+      2026-09-13-1835: "It advises changing your password... This is a
+      critical security step to protect your account." The selection is
+      attacker-controlled — `classify_priority` gives HIGH plus
+      `requires_response` to anything addressed to the user containing a "?"
+      — and `check_grounding` makes it WORSE, scoring a phishing claim as
+      more grounded, not less. Add a `RELAYED_INSTRUCTION` critique category
+      and a gate in the shape of the existing four, and change the segment
+      contract so the hosts name the sender's domain and stop.
+
+- [ ] 33. **Decode `degraded_sources` on the phone.** The manifest has
+      carried it since the schema was written and `BriefingManifest.swift`
+      does not declare it, although its doc comment claims the mirror is
+      exact. On 2026-09-01, 09-02 and 09-03 the OAuth refresh token was
+      expired and all three briefings shipped with no inbox and no calendar
+      — "which is most of the point" per the run log — and the app presented
+      them as normal mornings. This is the second half of task 22.
+
+- [ ] 34. **Continuity between briefings.** No briefing knows what the last
+      one said. Mercury went from one a day to four without acquiring the
+      concept of "what have I already told you", which is upstream of the
+      repetition, the 86%-identical consecutive decks, the wasted characters
+      and the reason a second briefing feels like a worse version of the
+      first rather than an update to it. "Since we last spoke at midday, two
+      things moved." The most upside of anything on this list, and the
+      cheapest way to find out whether four a day is worth its cost.
+
+DROP, with reasons, from the review:
+
+- Task 21's word-timings half — no briefing has ever shipped word timings,
+  and the only provider that produces them 401s every morning.
+- `StoryCards.swift` — 158 lines nothing renders, including a second copy of
+  a count bug already fixed once.
+- Phase 4's new sources and Phase 5's transcript search — the problem is the
+  denominator, not the numerator: 209 stories in, four out.
+- Attention on cross-source dedup — it fires 8 times in 5,590 stories. The
+  code is correct; the premise that sources overlap is not.
+- Storage cost work — R2 is at 4% of tier. The cost table belongs on
+  characters and charged minutes, which is where both real cliffs are.
+
 ## Phase 4 — Depth (weeks 16 to 19)
 
 - [ ] Week 16 — DeepCast with web-grounded research and chapter navigation
