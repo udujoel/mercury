@@ -12,17 +12,18 @@ degradation.
 """
 
 import asyncio
+import inspect
 from datetime import UTC, datetime
 
 import pytest
 
+from app.core.providers import Findings, ResearchProvider, ResearchSource
 from app.core.schemas import DigestSource, DigestStory, SourceType
 from app.pipeline.digest import (
     RESEARCH_MAX_SUBJECTS,
     attach_research,
     research_subjects,
 )
-from app.providers.gemini_research import Findings, ResearchSource
 
 
 def _story(sid: str, subject: str | None, outlets: list[str]) -> DigestStory:
@@ -39,7 +40,15 @@ def _story(sid: str, subject: str | None, outlets: list[str]) -> DigestStory:
 
 
 class _Fake:
-    """Records what it was asked, so the ranking can be asserted."""
+    """Records what it was asked, so the ranking can be asserted.
+
+    The signature matches `ResearchProvider` EXACTLY rather than absorbing
+    extras with `**kwargs`. A fake that accepts anything cannot fail when
+    the real provider's signature changes, which is how a suite goes green
+    against an interface that no longer exists — this project's most
+    expensive recurring bug. `test_the_fake_satisfies_the_protocol` below
+    makes the claim checkable rather than aspirational.
+    """
 
     def __init__(self, answer=None, *, delay: float = 0.0, raises: bool = False):
         self.asked: list[str] = []
@@ -47,7 +56,7 @@ class _Fake:
         self._delay = delay
         self._raises = raises
 
-    async def research(self, subject: str, **_):
+    async def research(self, subject: str, *, timeout: float = 30.0) -> Findings:
         self.asked.append(subject)
         if self._delay:
             await asyncio.sleep(self._delay)
@@ -130,6 +139,54 @@ async def test_the_wall_clock_budget_is_enforced():
         [_story("a", "s", ["A"])], fake, budget_seconds=0.05
     )
     assert found == {}
+
+
+async def test_what_finished_inside_the_budget_still_ships():
+    """The budget cancels what is still running, not what already landed.
+
+    Review found the first cut discarding every completed subject when one
+    of them hung: `asyncio.gather` under `asyncio.timeout` is cancelled as a
+    unit. Five findings thrown away to punish a sixth is exactly the
+    opposite of rule 7.
+    """
+
+    class _OneHangs(_Fake):
+        async def research(self, subject: str, *, timeout: float = 30.0) -> Findings:
+            self.asked.append(subject)
+            if subject == "slow":
+                await asyncio.sleep(5.0)
+            return Findings(
+                subject=subject, summary=f"about {subject}",
+                sources=[ResearchSource(title="reuters.com", url="https://r.com/a")],
+            )
+
+    found = await research_subjects(
+        [_story("a", "slow", ["A", "B"]), _story("b", "quick", ["C"])],
+        _OneHangs(), budget_seconds=0.2,
+    )
+    assert "quick" in found
+    assert "slow" not in found
+
+
+def test_the_fake_satisfies_the_protocol():
+    """Rule 6. If this fails, every test using `_Fake` is testing a shape
+    the pipeline does not actually accept.
+
+    The signature comparison is the load-bearing half. `runtime_checkable`
+    only makes `isinstance` check that the METHOD NAMES exist — it does not
+    look at parameters at all, so the `**kwargs` fake this test was written
+    to prevent would sail straight through an isinstance check. Comparing
+    `inspect.signature` is what actually pins the shape.
+    """
+    assert isinstance(_Fake(), ResearchProvider)
+    # `eval_str` because `core.providers` uses `from __future__ import
+    # annotations`, so ITS annotations are the strings "str" and "Findings"
+    # while this module's are the objects. Without it the comparison fails
+    # on two signatures that are in fact identical.
+    assert (
+        inspect.signature(_Fake.research, eval_str=True)
+        == inspect.signature(ResearchProvider.research, eval_str=True)
+    )
 
 
 # ── Rule 3: nothing unattributed reaches the page ─────────────────────

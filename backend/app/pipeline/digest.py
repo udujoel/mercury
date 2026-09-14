@@ -46,7 +46,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.core.providers import LLMProvider
+from app.core.providers import LLMProvider, ResearchProvider
 from app.core.schemas import (
     BriefingDigest,
     BriefingManifest,
@@ -451,7 +451,7 @@ RESEARCH_BUDGET_SECONDS = 90.0
 
 async def research_subjects(
     stories: list[DigestStory],
-    provider,
+    provider: ResearchProvider | None,
     *,
     max_subjects: int = RESEARCH_MAX_SUBJECTS,
     budget_seconds: float = RESEARCH_BUDGET_SECONDS,
@@ -491,26 +491,38 @@ async def research_subjects(
     ][:max_subjects]
 
     found: dict[str, Research] = {}
-    try:
-        async with asyncio.timeout(budget_seconds):
-            results = await asyncio.gather(
-                *(provider.research(subject) for subject in chosen),
-                return_exceptions=True,
-            )
-    except TimeoutError:
+
+    # One task each, then a deadline on the SET rather than a timeout around
+    # a single gather. The difference only shows on a slow morning, and it
+    # is the whole point: `asyncio.gather` under `asyncio.timeout` is
+    # cancelled as a unit, so five subjects that finished inside the budget
+    # are discarded along with the one that hung. Here the budget cancels
+    # only what is still running, and whatever landed still ships.
+    tasks = [asyncio.create_task(provider.research(subject)) for subject in chosen]
+    _, pending = await asyncio.wait(tasks, timeout=budget_seconds)
+    if pending:
+        for task in pending:
+            task.cancel()
         # Counted, not silent. A stage that quietly stops doing its job is
         # how `music_set` never applied for weeks.
         log.warning(
-            "research: budget of %.0fs exhausted for %d subject(s); the "
-            "briefing ships without it",
-            budget_seconds, len(chosen),
+            "research: budget of %.0fs exhausted with %d of %d subject(s) "
+            "still running; the briefing ships with the rest",
+            budget_seconds, len(pending), len(chosen),
         )
-        return {}
+        # Let the cancellations settle before returning, so no task is still
+        # touching the network after this function has handed back its
+        # answer.
+        await asyncio.gather(*pending, return_exceptions=True)
 
-    for subject, result in zip(chosen, results, strict=True):
-        if isinstance(result, BaseException):
-            log.warning("research: %r raised %s", subject[:60], type(result).__name__)
+    for subject, task in zip(chosen, tasks, strict=True):
+        if task.cancelled():
             continue
+        error = task.exception()
+        if error is not None:
+            log.warning("research: %r raised %s", subject[:60], type(error).__name__)
+            continue
+        result = task.result()
         if not result.is_usable:
             continue
         found[subject] = Research(

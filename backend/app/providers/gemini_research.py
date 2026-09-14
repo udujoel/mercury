@@ -26,11 +26,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
 
 import httpx
 
 from app.core.config import get_settings
+from app.core.providers import Findings, ResearchSource
 
 log = logging.getLogger(__name__)
 
@@ -48,42 +48,8 @@ _ENDPOINT = (
 _REDIRECT_HOST = "vertexaisearch.cloud.google.com"
 
 
-@dataclass(frozen=True)
-class ResearchSource:
-    """One source the answer drew on."""
-
-    # The publisher, as grounding reports it — usually a bare domain like
-    # "reuters.com". Shown to the user, so it must stay human-readable.
-    title: str
-    url: str
-
-
-@dataclass(frozen=True)
-class Findings:
-    """What research turned up about one subject.
-
-    Empty is a legitimate, common answer: the subject may be too local, too
-    recent, or simply not covered anywhere else. Rule 7 — the briefing ships
-    either way.
-    """
-
-    subject: str
-    summary: str = ""
-    sources: list[ResearchSource] = field(default_factory=list)
-
-    @property
-    def is_usable(self) -> bool:
-        """Both halves or neither.
-
-        A summary with no sources is exactly what rule 3 forbids, and it is
-        WORSE on a page than in audio because it looks authoritative. So an
-        ungrounded answer is discarded rather than shown unattributed.
-        """
-        return bool(self.summary) and bool(self.sources)
-
-
 class GeminiResearchProvider:
-    """Grounded search, one subject at a time."""
+    """Grounded search, one subject at a time. A `ResearchProvider`."""
 
     def __init__(
         self,
@@ -154,7 +120,15 @@ class GeminiResearchProvider:
         )
         response = await client.post(
             _ENDPOINT.format(model=self._model),
-            params={"key": self._key},
+            # Per REQUEST, not on the client, and deliberately not in the
+            # query string. `?key=` puts the credential in every proxy and
+            # access log that records URLs; a header does not. And the
+            # client-level alternative is worse than it looks — `_resolved`
+            # drives this same client at arbitrary publisher URLs, so a key
+            # set on the client would be posted to whoever grounding
+            # happened to cite. Verified against the live API: the
+            # `google_search` tool answers 200 to header auth.
+            headers={"x-goog-api-key": self._key},
             json={
                 "contents": [{"parts": [{"text": prompt}]}],
                 "tools": [{"google_search": {}}],
