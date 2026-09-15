@@ -371,6 +371,60 @@ puts correspondence into a screen built for published journalism. The triage
 block has to be a sibling of `stories`, the way `newsletters` already is — not
 new story cards.
 
+## 2026-09-14 — Eight lenses, three answers
+
+Ran the project past eight independent reviews framed as *a thing someone uses
+at 7am*, not as a codebase: the morning ritual, the content, the desk, what
+breaks unattended, cost, the data model, trust, and the gap against what it is
+for. 49 findings, in `docs/REVIEW-2026-09-14.md`, tasks 27-34 in the roadmap.
+
+**The finding is the convergence, not the count.** Five lenses that could not
+see each other's work — content, desk, data, trust, gap — traced their single
+worst problem back to the same ten-line function. `detect_newsletter` fires on
+`List-Unsubscribe`, which every bank and payment app sets, so the flag meant to
+keep private correspondence off a journalism screen is the flag that puts bank
+balances on it. Reviewing by SUBSYSTEM would never have produced that;
+subsystem reviews produce subsystem findings. Reviewing by what the user
+experiences produced five symptoms with one cause.
+
+**The second is a repeat of this project's signature bug, and it went
+unnoticed through a green suite and an 8-agent audit.** `score_stories` takes
+`topic_centroid` and `followed_entities`; nobody passes either. So `interest` is
+a constant, its weight cancels, and the world segment is a recency sort with
+extra steps. `topic_centroid()` is written, correct and tested. This is
+`n_stories=0` and `music_set` a third time — and the lesson in CLAUDE.md,
+"check what CALLS the new code", was already written down from the first two.
+What actually caught it was asking why a dark-mode Ask HN thread beat a Russian
+strike on a Ukrainian train, then reading backwards. **Start from the bad
+output, not from the code.**
+
+**The third is that both real cost cliffs are invisible by construction.**
+Google TTS is at ~88% of its free million characters a month and Actions at
+~82% of 2,000 minutes, and neither has a counter anywhere. Worse, both fail
+*quietly and green*: TTS exhaustion drops a turn and exits 0, and when Actions
+minutes run out the watchdog stops too, because the alarm is itself an Actions
+workflow. A monitor that shares a failure domain with the thing it monitors is
+not a monitor. Meanwhile the documented cost table tracks R2 storage, which is
+at 4% of tier and will not be reached in a decade.
+
+Also worth recording: the six-hourly change of 2026-09-07 is upstream of most
+of this. It quadrupled the TTS burn, pushed Actions to the cap, quadrupled
+publisher blocking, multiplied the repetition, and disarmed the Worker's
+morning ladder (the `00:12` cron produces a briefing dated for the new day, so
+every checkpoint sees "ok"). It is currently masked only by GitHub running that
+cron four hours late; the October DST change unmasks it. No single diff
+contained the collision — the same shape as the tunnel-serving-a-real-inbox
+bug, which is the second time a defect has lived between two individually
+sensible changes.
+
+**On reviewing the reviewer.** The review's own suggested patch for the
+research timeout would have crashed — it initialised `results = []` before the
+`try`, and `zip(chosen, results, strict=True)` raises ValueError on six
+subjects against zero results. The finding was right and the fix was wrong. A
+second finding asserted a header was not an option for Gemini auth; one live
+call showed `x-goog-api-key` works with the `google_search` tool. Both were
+worth acting on and neither was worth applying.
+
 ---
 
 ## Standing facts worth not rediscovering
