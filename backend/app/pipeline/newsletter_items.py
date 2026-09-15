@@ -76,6 +76,11 @@ class MergedStory:
 
     subject: str
     items: list[NewsletterItem] = field(default_factory=list)
+    # What task 18 turned up about this subject, where it turned up
+    # anything. None is the common case and stays cheap: most subjects are
+    # below the research cap, and rule 3 discards an ungrounded answer
+    # before it reaches here.
+    research: Research | None = None
 
     @property
     def outlets(self) -> list[str]:
@@ -273,6 +278,43 @@ async def research(
         {s.subject: len(s.outlets) for s in stories},
         provider, max_subjects=max_subjects,
     )
+
+
+# How many merged subjects the hosts actually discuss.
+#
+# Found by listening, which is the only way it could have been found. A live
+# run put all 60-odd subjects from 25 newsletters into the prompt, and the
+# model dutifully mentioned nearly every one: twelve consecutive turns of
+# "PC-ALM offers a local alternative to backpropagation. Tau is a coding
+# agent. Telus warned customers." That is a list being read aloud, which is
+# the "concatenated, not edited" failure ADR-003 exists to prevent — and
+# `rank` ordering them was never going to stop it, because ordering a
+# firehose still gives you a firehose.
+#
+# Six OFFERED, and the prompt asks for at most four DISCUSSED. The gap is
+# deliberate editorial headroom: the ranking knows which subjects the most
+# outlets carried, but not which of them will turn out to have anything to
+# argue about, and the model can see that once it has the gists. The two it
+# does not choose fall into the rapid-fire tail rather than being wasted.
+#
+# Six against a world segment that covers four stories out of 209. The tail
+# is COUNTED rather than listed, the way the desk's "plus eleven others"
+# already works: a cap that hides what it dropped is how the tail became a
+# segment in the first place.
+MAX_SPOKEN_SUBJECTS = 6
+
+
+def take_spoken(
+    stories: list[MergedStory], *, limit: int = MAX_SPOKEN_SUBJECTS
+) -> tuple[list[MergedStory], int]:
+    """The subjects worth a conversation, and how many were left out.
+
+    Returns `(spoken, remainder)`. Callers must say the remainder out loud —
+    "and about twenty other items across your newsletters" is honest and
+    costs one clause; silently dropping fifty-four is how a briefing starts
+    quietly omitting things.
+    """
+    return stories[:limit], max(0, len(stories) - limit)
 
 
 def rank(stories: list[MergedStory]) -> list[MergedStory]:

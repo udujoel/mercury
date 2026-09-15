@@ -477,6 +477,56 @@ the news, then without the inbox as well — each DISABLING its segments rather
 than emptying them, and each recorded in `degraded_sources` so the manifest
 says the briefing is not the one that was configured.
 
+## 2026-09-15 — The dedup premise was right; the unit was wrong
+
+The 2026-09-14 review found cross-source dedup firing 8 times in 5,590
+stories and concluded the premise was false — that Joel's sources simply do
+not overlap, and the shared `Item` schema was built for an overlap that is
+not there. That conclusion was wrong, and the owner's triage request is what
+exposed it.
+
+Clustering embeds a WHOLE newsletter. Morning Brew's Tuesday edition covers
+the Fed, a chip ruling and two earnings calls; The Information's covers the
+Fed and three different things. Both are "about" the Fed, and neither
+embedding is: each is dominated by its own four-way mixture. **The unit being
+compared was a bundle, not a story.**
+
+Extract the items first and the same morning looks completely different. 49
+newsletters produced 117 items across 96 subjects, ten of them carried by
+more than one outlet — and the top subject, the AI development slowdown
+debate, was carried by NINE. One morning's newsletters contain more
+cross-source agreement than the clusterer found in 5,590 stories.
+
+Worth generalising: a measurement can be correct and its interpretation
+still be exactly backwards. "Dedup almost never fires" was true. "Therefore
+these sources do not overlap" did not follow, and the cost of believing it
+would have been deleting the feature that was about to start working.
+
+**The cap was found by listening, and could not have been found any other
+way.** The first live run put all ~60 merged subjects into the prompt. The
+model dutifully mentioned nearly every one: twelve consecutive turns of
+"PC-ALM offers a local alternative to backpropagation. Tau is a coding
+agent. Telus warned customers." A list read aloud — the "concatenated, not
+edited" failure ADR-003 exists to prevent. `rank()` had ordered them
+correctly, which is exactly why ordering was not the fix: ordering a
+firehose still gives you a firehose. Six subjects offered, at most four
+discussed, the remainder counted out loud.
+
+With the cap, the same inbox produced four stories with real disagreement —
+one host asking whether a slowdown call is safety or positioning, another
+pointing out the slowdown is already visible in the benchmarks. That
+exchange was assembled from nine newsletters that each mentioned one piece
+of it. Under the old shape it was "Mindstream covered several topics".
+
+**Urgency had to be narrow, and running it proved why twice.** A first cut
+matched "account restricted" and missed "your account HAS BEEN restricted" —
+real subject lines put words in the middle. The same cut flagged a digest
+whose body read "Cloudflare users saw unusual sign-in alerts": someone
+else's incident, reported as news. Newsletters are now never urgent whatever
+they say, which is the single biggest source of false positives here, and
+false positives are the expensive direction — the segment's whole value is
+that when it says something needs attention, it does.
+
 ---
 
 ## Standing facts worth not rediscovering

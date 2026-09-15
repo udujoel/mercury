@@ -17,6 +17,7 @@ from app.core.providers import ContentBlocked, LLMProvider
 from app.core.schemas import Item, SourceType
 from app.pipeline.newsletter_items import (
     MAX_ITEMS_PER_NEWSLETTER,
+    MergedStory,
     NewsletterItem,
     extract_items,
     merge_by_subject,
@@ -220,3 +221,74 @@ def test_the_headline_shown_is_the_most_specific_one_offered():
         _item("Fed", "B", headline="Fed holds rates, signals two cuts in 2027"),
     ])
     assert merged[0].headline == "Fed holds rates, signals two cuts in 2027"
+
+
+# ── The cap, which was found by listening ─────────────────────────────
+
+
+def test_the_tail_is_counted_not_silently_dropped():
+    """A live run put all ~60 subjects into the prompt and produced twelve
+    consecutive turns of one-sentence items — a list read aloud, which is the
+    "concatenated, not edited" failure ADR-003 exists to prevent.
+
+    Ordering a firehose still gives you a firehose, so `rank` alone could
+    never have fixed it.
+    """
+    from app.pipeline.newsletter_items import MAX_SPOKEN_SUBJECTS, take_spoken
+
+    stories = [
+        MergedStory(subject=f"S{i}", items=[_item(f"S{i}", "A")])
+        for i in range(MAX_SPOKEN_SUBJECTS + 20)
+    ]
+    spoken, remainder = take_spoken(stories)
+    assert len(spoken) == MAX_SPOKEN_SUBJECTS
+    assert remainder == 20
+    # The head is kept, so the cap cuts the tail rather than an arbitrary
+    # slice — which is only meaningful because `rank` ran first.
+    assert [s.subject for s in spoken] == [f"S{i}" for i in range(MAX_SPOKEN_SUBJECTS)]
+
+
+def test_a_short_morning_has_no_remainder_to_confess():
+    from app.pipeline.newsletter_items import take_spoken
+
+    spoken, remainder = take_spoken(
+        [MergedStory(subject="S", items=[_item("S", "A")])]
+    )
+    assert len(spoken) == 1 and remainder == 0
+
+
+async def test_the_remainder_reaches_the_prompt():
+    """"And about twenty other items" is one clause and it is the difference
+    between a cap and a silent omission."""
+    from datetime import UTC, datetime
+
+    from app.core.schemas import BriefingLength
+    from app.pipeline.script_chain import generate_script
+
+    captured: list[str] = []
+
+    class _Capture:
+        async def complete(
+            self, system: str, prompt: str, *, temperature: float = 0.85,
+            json_mode: bool = False, response_schema: dict | None = None,
+        ) -> str:
+            captured.append(prompt)
+            return (
+                '[{"speaker":"A","segment":"cold_open","text":"Morning."},'
+                '{"speaker":"B","segment":"cold_open","text":"Indeed."}]'
+                if "ECHO" in prompt
+                else '{"segments":[{"segment":"cold_open","beats":["ECHO"]}]}'
+            )
+
+        async def stream(
+            self, system: str, prompt: str, *, temperature: float = 0.85
+        ):  # pragma: no cover
+            raise NotImplementedError
+
+    await generate_script(
+        llm=_Capture(), emails=[], events=[], weather=None,
+        length=BriefingLength.STANDARD, date=datetime(2026, 9, 15, tzinfo=UTC),
+        newsletter_stories=[MergedStory(subject="S", items=[_item("S", "A")])],
+        newsletter_remainder=44,
+    )
+    assert "44 further items not shown" in captured[0]

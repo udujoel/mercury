@@ -334,6 +334,42 @@ def _format_emails(emails: list[Item]) -> str:
     return "\n".join(lines)
 
 
+def _format_newsletter_stories(stories: list) -> str:
+    """The merged newsletter stories, most-corroborated first.
+
+    The outlet list is the editorial claim and it goes FIRST on every block,
+    because "nine of your newsletters led with this" is the single most
+    useful fact the segment has and the one the old shape could not express
+    at all. Each newsletter's own gist is kept separately rather than
+    averaged into one line — where two outlets disagree, the hosts need both
+    to disagree about (rule 2), and a merged paraphrase destroys exactly
+    that.
+
+    `research` is appended where task 18 found something. It is labelled as
+    coming from elsewhere, so the hosts can say "and independently" rather
+    than passing it off as something a newsletter said (rule 3).
+    """
+    if not stories:
+        return "(no newsletters this morning)"
+    blocks = []
+    for story in stories:
+        outlets = ", ".join(story.outlets)
+        lines = [
+            f"SUBJECT: {story.subject}",
+            f"CARRIED BY {len(story.outlets)} of your newsletters: {outlets}",
+            f"HEADLINE: {story.headline}",
+        ]
+        for item in story.items:
+            lines.append(f"  - {item.source_name} says: {item.gist}")
+        research = story.research
+        if research is not None:
+            cites = ", ".join(source.title for source in research.sources)
+            lines.append(f"  INDEPENDENTLY FOUND: {research.summary}")
+            lines.append(f"  (sources: {cites})")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
+
+
 def _format_follow_ups(emails: list[Item], *, limit: int) -> str:
     """The emails the listener owes a reply to.
 
@@ -495,6 +531,7 @@ def _flatten_source_text(
     weather: Weather | None,
     aggregated_count: int = 0,
     stories: list[Story] | None = None,
+    newsletter_stories: list | None = None,
 ) -> str:
     """Flatten the day's material into the prompt's source block.
 
@@ -514,6 +551,20 @@ def _flatten_source_text(
         for ev in events
     )
     parts.extend(f"{em.title} {em.author} {em.body}" for em in emails)
+    # The merged newsletter stories, as text the grounding gate can match
+    # against. `check_grounding` flags any claim in the script that is absent
+    # from this block, so a segment written from newsletter stories that were
+    # never flattened here would have every one of its facts reported as an
+    # invention — and then "fixed" out by the revise pass. That is exactly
+    # how the aggregated-email count became an ungrounded number.
+    for story in newsletter_stories or []:
+        outlets = ", ".join(story.outlets)
+        parts.append(f"{story.subject} {story.headline} {outlets}")
+        parts.extend(item.gist for item in story.items)
+        research = story.research
+        if research is not None:
+            parts.append(research.summary)
+            parts.extend(source.title for source in research.sources)
     if aggregated_count > 0:
         # The count belongs in the SOURCE block, not only in the outline.
         # check_grounding flags any number in the script that is absent from
@@ -1354,6 +1405,8 @@ async def generate_script(
     aggregated_email_count: int = 0,
     follow_up_candidates: list[Item] | None = None,
     stories: list[Story] | None = None,
+    newsletter_stories: list | None = None,
+    newsletter_remainder: int = 0,
     passes: int = 2,
     disabled_segments: Iterable[str] | None = None,
     degraded: list[str] | None = None,
@@ -1398,6 +1451,7 @@ async def generate_script(
     common = dict(
         llm=llm, events=events, background_events=background_events,
         weather=weather, length=length, date=date, passes=passes,
+        newsletter_remainder=newsletter_remainder,
     )
 
     def _give_up(segments: tuple[Segment, ...]) -> None:
@@ -1435,6 +1489,11 @@ async def generate_script(
                 ),
                 follow_up_candidates=(
                     [] if gave_up_inbox else follow_up_candidates
+                ),
+                # Dropped with the inbox rung: these ARE the inbox, and the
+                # segment they feed is turned off on that rung.
+                newsletter_stories=(
+                    [] if gave_up_inbox else newsletter_stories
                 ),
                 stories=[] if gave_up_news else stories,
                 # Turned OFF, not merely emptied. Passing `stories=[]` alone
@@ -1501,6 +1560,8 @@ async def _generate_script_once(
     aggregated_email_count: int = 0,
     follow_up_candidates: list[Item] | None = None,
     stories: list[Story] | None = None,
+    newsletter_stories: list | None = None,
+    newsletter_remainder: int = 0,
     passes: int = 2,
     disabled_segments: Iterable[str] | None = None,
 ) -> tuple[list[Turn], list[SourceRef]]:
@@ -1535,7 +1596,8 @@ async def _generate_script_once(
     budget = scale_budget(LENGTH_BUDGETS[length]["words"], segments)
     stories = stories or []
     source_data = _flatten_source_text(
-        emails, events, weather, aggregated_email_count, stories
+        emails, events, weather, aggregated_email_count, stories,
+        newsletter_stories,
     )
 
     # Whose owed replies the follow-ups segment draws on.
@@ -1591,6 +1653,21 @@ async def _generate_script_once(
         calendar=(
             _fence_untrusted(_format_calendar(events, background_events))
             + _calendar_policy(background_events)
+        ),
+        n_newsletter_stories=len(newsletter_stories or []),
+        # Counted out loud, never silently dropped. The desk's "plus eleven
+        # others" exists for the same reason: a cap that hides what it cut
+        # is indistinguishable from a quiet morning.
+        newsletter_remainder=(
+            f"; {newsletter_remainder} further items not shown"
+            if newsletter_remainder else ""
+        ),
+        # Fenced like everything else a third party wrote. The extractor
+        # already read these bodies once behind the same fence; the gists it
+        # produced are a model's paraphrase of untrusted prose, which is not
+        # the same thing as trusted prose.
+        newsletter_stories=_fence_untrusted(
+            _format_newsletter_stories(newsletter_stories or [])
         ),
         n_emails=len(emails),
         emails=(

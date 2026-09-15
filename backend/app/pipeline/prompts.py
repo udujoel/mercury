@@ -89,9 +89,31 @@ SEGMENT_DEFINITIONS: dict[str, str] = {
         "               where a genuine link exists."
     ),
     "inbox": (
-        "- inbox      — Top emails by priority. Anything needing a response is\n"
-        "               called out explicitly. Newsletters are summarised as a\n"
-        "               group with the two most interesting items pulled out."
+        "- inbox      — WHAT YOUR NEWSLETTERS SAID, organised by STORY and not by\n"
+        "               newsletter. Each block in NEWSLETTER STORIES is one thing\n"
+        "               that happened; several of your newsletters may have\n"
+        "               carried it. Lead with the ones the most outlets carried\n"
+        "               and say so out loud — 'three of your newsletters led with\n"
+        "               this' is the most useful sentence in the segment. Name the\n"
+        "               outlets. Where two of them framed it differently, give\n"
+        "               both framings and let the hosts take opposite sides.\n"
+        "               Where INDEPENDENTLY FOUND is present, use it and attribute\n"
+        "               it as something Mercury checked, not as something the\n"
+        "               newsletter said.\n"
+        "               DISCUSS AT MOST FOUR of these, properly. This segment is a\n"
+        "               conversation, not an index: four stories with real back\n"
+        "               and forth beats twenty mentioned in passing. A live run\n"
+        "               that listed everything produced twelve consecutive turns\n"
+        "               of one-sentence items and was unlistenable.\n"
+        "               Never read one newsletter's contents as a list, and never\n"
+        "               say a newsletter 'covered several topics' — name the\n"
+        "               topic or drop it.\n"
+        "               END with a rapid-fire tail: ONE OR TWO SENTENCES, no more,\n"
+        "               covering OTHER MAIL by sender and subject only. If a\n"
+        "               remainder is given, say the NUMBER rather than listing\n"
+        "               them — 'and about twenty other items across your\n"
+        "               newsletters'. Anything genuinely needing action belongs in\n"
+        "               follow_ups, not here."
     ),
     "world": (
         "- world      — Two to four clustered stories from the user's interests, with\n"
@@ -115,7 +137,10 @@ WEATHER: {weather}
 CALENDAR ({n_events} events):
 {calendar}
 
-INBOX ({n_emails} items):
+NEWSLETTER STORIES ({n_newsletter_stories} subjects{newsletter_remainder}):
+{newsletter_stories}
+
+OTHER MAIL ({n_emails} items):
 {emails}
 
 WORLD ({n_stories} clustered stories):
