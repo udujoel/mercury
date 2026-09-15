@@ -35,7 +35,7 @@ from collections.abc import Iterable
 from datetime import datetime
 from typing import Any
 
-from app.core.providers import LLMProvider
+from app.core.providers import ContentBlocked, LLMProvider
 from app.core.schemas import (
     LENGTH_BUDGETS,
     BriefingLength,
@@ -1348,6 +1348,70 @@ async def _run_critique_and_revise(
 
 
 async def generate_script(
+    *,
+    llm: LLMProvider,
+    emails: list[Item],
+    events: list[CalendarEvent],
+    background_events: list[CalendarEvent] | None = None,
+    weather: Weather | None = None,
+    length: BriefingLength,
+    date: datetime,
+    aggregated_email_count: int = 0,
+    follow_up_candidates: list[Item] | None = None,
+    stories: list[Story] | None = None,
+    passes: int = 2,
+    disabled_segments: Iterable[str] | None = None,
+) -> tuple[list[Turn], list[SourceRef]]:
+    """The script chain, and one retry without the news if it is refused.
+
+    Rule 7, applied to the model's own safety filter. On 2026-09-15 Gemini
+    refused a draft prompt outright (`PROHIBITED_CONTENT`) and the morning
+    was lost — not because a source failed, but because the day's news was
+    something the filter would not read aloud.
+
+    The retry drops `stories` rather than bisecting them. Bisecting would
+    find the exact offending article, at log-n extra LLM calls against a
+    free tier and a 06:00 deadline, to save a segment that is four stories
+    out of a 200-story pool. Dropping the segment is what rule 7 already
+    promises, and it costs one call.
+
+    Emails, calendar and weather are kept on the retry: they are the half of
+    the briefing that is actually his, and a filter that objects to a wire
+    report about a strike has no quarrel with a meeting at ten. If the
+    reduced prompt is refused too, that is raised — a briefing generated
+    from nothing is the `n_stories=0` failure with a nicer log line.
+    """
+    try:
+        return await _generate_script_once(
+            llm=llm, emails=emails, events=events,
+            background_events=background_events, weather=weather,
+            length=length, date=date,
+            aggregated_email_count=aggregated_email_count,
+            follow_up_candidates=follow_up_candidates, stories=stories,
+            passes=passes, disabled_segments=disabled_segments,
+        )
+    except ContentBlocked as blocked:
+        if not stories:
+            # Nothing left to give up. Raising beats shipping an empty
+            # script that every downstream stage would treat as a quiet day.
+            raise
+        logger.warning(
+            "the model refused the script (%s, %s); retrying without the "
+            "%d news stor%s — the briefing ships without the world segment",
+            blocked.reason, blocked.stage, len(stories),
+            "y" if len(stories) == 1 else "ies",
+        )
+        return await _generate_script_once(
+            llm=llm, emails=emails, events=events,
+            background_events=background_events, weather=weather,
+            length=length, date=date,
+            aggregated_email_count=aggregated_email_count,
+            follow_up_candidates=follow_up_candidates, stories=[],
+            passes=passes, disabled_segments=disabled_segments,
+        )
+
+
+async def _generate_script_once(
     *,
     llm: LLMProvider,
     emails: list[Item],

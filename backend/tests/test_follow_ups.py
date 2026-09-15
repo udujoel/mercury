@@ -78,7 +78,11 @@ def test_mercurys_own_statements_sit_outside_the_untrusted_fence():
     assert "do not invent" not in body, (
         "Mercury's instruction to the model has leaked inside the fenced block")
 
-    call = inspect.getsource(script_chain.generate_script)
+    # `_generate_script_once`, not `generate_script`: the latter is now the
+    # thin retry wrapper that ships the briefing when the model refuses the
+    # news (2026-09-15), and the prompt is assembled one level down. The
+    # invariant is unchanged — only where it lives.
+    call = inspect.getsource(script_chain._generate_script_once)
     fenced = call.split("follow_ups=(", 1)[1].split("),", 1)[0]
     assert "_fence_untrusted(" in fenced
     assert fenced.index("_follow_up_policy(") > fenced.index("_fence_untrusted(")
@@ -158,7 +162,7 @@ def test_the_prompt_no_longer_receives_the_literal_none():
 
     from app.pipeline import script_chain
 
-    source = inspect.getsource(script_chain.generate_script)
+    source = inspect.getsource(script_chain._generate_script_once)
     assert 'follow_ups="(none)"' not in source, (
         "the follow-ups segment is back to being written from nothing"
     )
