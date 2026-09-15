@@ -85,3 +85,41 @@ def test_an_ordinary_newsletter_is_still_low():
     )
     assert priority is Priority.LOW
     assert requires_response is False
+
+
+def test_an_urgent_alert_actually_reaches_the_follow_ups_segment():
+    """The "what CALLS this" check, which this project keeps needing.
+
+    `classify_priority` returning requires_response=True is only useful if
+    `_owed_replies` then selects it. Phase 2's news half was complete at
+    every layer except the one connecting them, and `topic_centroid` is
+    correct, tested, and called by nobody — so a flag being set is not
+    evidence that anything reads it.
+    """
+    from datetime import UTC, datetime
+
+    from app.core.schemas import Item, SourceType
+    from app.pipeline.script_chain import _owed_replies
+
+    alert = Item(
+        source_type=SourceType.EMAIL,
+        source_name="GTBank",
+        title="Your account has been restricted",
+        body="Log in to resolve.",
+        author="noreply@gtbank.example",
+        timestamp=datetime(2026, 9, 15, 5, 0, tzinfo=UTC),
+        requires_response=True,
+        priority=Priority.HIGH,
+        raw={"is_newsletter": True, "is_urgent": True},
+    )
+    quiet = Item(
+        source_type=SourceType.EMAIL,
+        source_name="Morning Brew",
+        title="The Fed held rates",
+        body="Markets shrugged.",
+        author="crew@morningbrew.example",
+        timestamp=datetime(2026, 9, 15, 5, 30, tzinfo=UTC),
+        raw={"is_newsletter": True},
+    )
+    owed = _owed_replies([quiet, alert])
+    assert [item.title for item in owed] == ["Your account has been restricted"]
