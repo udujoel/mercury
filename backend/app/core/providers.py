@@ -43,6 +43,61 @@ class Speech:
     words: tuple[WordTiming, ...] = field(default_factory=tuple)
 
 
+class ContentBlocked(RuntimeError):
+    """The model refused on content grounds, and asking again will not help.
+
+    Distinct from a transport error on purpose. A 429 or a 503 says *try
+    later*; this says *not this text*, and the filter is deterministic on
+    content — so the only recovery that can work is to change the input.
+    Retrying an identical blocked prompt burns quota to receive the identical
+    refusal, which is what a generic `except Exception: retry` would do.
+
+    Named here rather than in `gemini.py` because it is a fact about the
+    LLMProvider CONTRACT, not about one vendor: every hosted model has a
+    filter, and a caller that degrades gracefully must be able to catch this
+    without importing a provider.
+
+    2026-09-15 is why it exists. Gemini refused a draft prompt with
+    `block_reason: PROHIBITED_CONTENT`, the SDK's `.text` accessor raised a
+    bare `ValueError` about a "quick accessor", nothing recognised it, and
+    the morning's briefing was lost to a news story.
+    """
+
+    # The reasons that are a POLICY decision about the text itself. Asking
+    # again with the same input gets the same answer, so these skip the
+    # backoff and go straight to the caller's degradation.
+    #
+    # Everything else that yields no text — STOP with an empty part list,
+    # MAX_TOKENS, RECITATION, a bare OTHER — is a bad roll rather than a
+    # verdict. RECITATION in particular means the model was echoing source
+    # wording, which a re-draft at a different temperature routinely clears.
+    # Treating those as final would spend a whole news segment to avoid one
+    # cheap retry.
+    DETERMINISTIC = frozenset(
+        {"SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII"}
+    )
+
+    def __init__(self, reason: str, *, stage: str) -> None:
+        # `stage` says WHICH half was refused — "prompt" means the filter
+        # rejected the source material before generating, "response" means it
+        # stopped partway through its own output. The recovery differs: the
+        # first is fixed by sending less, the second sometimes by asking
+        # again.
+        super().__init__(f"model refused the {stage}: {reason}")
+        self.reason = reason
+        self.stage = stage
+
+    @property
+    def worth_retrying(self) -> bool:
+        """Whether an identical second attempt could plausibly succeed.
+
+        A blocked PROMPT is always final — the filter read the input and
+        said no. An empty RESPONSE may not be: the model simply produced
+        nothing this time.
+        """
+        return self.stage != "prompt" and self.reason not in self.DETERMINISTIC
+
+
 @runtime_checkable
 class LLMProvider(Protocol):
     async def complete(

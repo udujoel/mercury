@@ -255,6 +255,11 @@ async def generate_briefing(
         )
     turns, sources = await generate_script(
         llm=llm,
+        # THIS run's degradation list, handed in so the script chain can add
+        # to it. A model that refuses the news drops the world segment, and
+        # that has to reach the manifest rather than only the log — it is
+        # what `cli.py` reads to decide whether to regenerate.
+        degraded=degraded,
         emails=selection["emails"],
         events=selection["events"],
         background_events=selection.get("background_events", []),

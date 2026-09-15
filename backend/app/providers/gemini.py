@@ -21,6 +21,7 @@ import logging
 import random
 
 from app.core.config import get_settings
+from app.core.providers import ContentBlocked
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,86 @@ logger = logging.getLogger(__name__)
 # failing the whole generation run over a transient blip.
 MAX_ATTEMPTS = 5
 BASE_DELAY_S = 1.5
+
+# The four adjustable harm categories, turned down as far as the API allows.
+#
+# Mercury reads the news to an adult who asked for it. A wire report of a
+# strike on a train is DANGEROUS_CONTENT to a filter tuned for a general
+# audience, and a briefing that silently omits the day's largest story
+# because of it is not the product. So the categories that CAN be turned
+# down are turned down.
+#
+# What this does not do — and the reason it is not the fix on its own — is
+# stop `PROHIBITED_CONTENT`. That is a separate `BlockReason` with no
+# corresponding `HarmCategory`, so no threshold here reaches it; verified
+# against the installed SDK, whose `BlockReason` enum lists SAFETY, OTHER,
+# BLOCKLIST and PROHIBITED_CONTENT while `HarmCategory` lists only the four
+# below. The 2026-09-15 failure was PROHIBITED_CONTENT. This narrows the
+# opening; `ContentBlocked` plus the caller's degradation is what survives
+# what gets through it.
+_SAFETY_SETTINGS = {
+    "HARM_CATEGORY_HARASSMENT": "BLOCK_NONE",
+    "HARM_CATEGORY_HATE_SPEECH": "BLOCK_NONE",
+    "HARM_CATEGORY_SEXUALLY_EXPLICIT": "BLOCK_NONE",
+    "HARM_CATEGORY_DANGEROUS_CONTENT": "BLOCK_NONE",
+}
+
+
+def _name_of(value) -> str:
+    """The enum's name, or its repr for a plain int the SDK did not map."""
+    return getattr(value, "name", None) or str(value)
+
+
+def _text_of(response) -> str:
+    """`response.text`, but with a legible error when there is no text.
+
+    The SDK's accessor raises `ValueError: Invalid operation: The
+    `response.text` quick accessor requires the response to contain a valid
+    `Part`...` — a message about an accessor, for a condition that has
+    nothing to do with accessors. It cost a morning partly because nothing
+    about it reads as "the model returned nothing".
+
+    The check is on PARTS, not on `finish_reason`. That distinction is the
+    whole correctness of this function and the first cut got it wrong: it
+    allowlisted STOP/MAX_TOKENS/UNSPECIFIED and let those through to
+    `.text`. Reading the SDK settles it — `.text` raises whenever `parts` is
+    empty, and its own branch list *begins* with those three names. A
+    candidate can finish with STOP and carry no parts at all, and that shape
+    walked straight past the first version of this guard into the same bare
+    ValueError the function exists to prevent. Verified by constructing that
+    response against the real SDK.
+
+    So: ask the question the SDK actually asks. Empty parts means no text,
+    whatever reason is attached, and the reason is reported rather than
+    interpreted.
+    """
+    feedback = getattr(response, "prompt_feedback", None)
+    block_reason = getattr(feedback, "block_reason", None)
+    # 0 is BLOCK_REASON_UNSPECIFIED — "no block", not a falsy accident.
+    if block_reason:
+        raise ContentBlocked(_name_of(block_reason), stage="prompt")
+
+    candidates = getattr(response, "candidates", None) or []
+    if not candidates:
+        # No candidates and no stated reason. Rare, and still a refusal from
+        # the caller's point of view: there is no text, and asking again with
+        # the same input is not indicated.
+        raise ContentBlocked("no candidates returned", stage="prompt")
+
+    # Read through the candidate rather than `response.parts`, which raises
+    # its own ValueError when the candidate list is not exactly one long.
+    # We never request more than one, so that path is unreachable — but
+    # reaching for it here would mean this guard could raise the very error
+    # it exists to translate.
+    content = getattr(candidates[0], "content", None)
+    if not (getattr(content, "parts", None) or []):
+        finish = getattr(candidates[0], "finish_reason", None)
+        raise ContentBlocked(
+            _name_of(finish) if finish is not None else "no content returned",
+            stage="response",
+        )
+
+    return response.text
 
 
 def _generation_config(
@@ -88,6 +169,7 @@ class GeminiProvider:
             model_name=self._model_name,
             system_instruction=system,
             generation_config=generation_config,
+            safety_settings=_SAFETY_SETTINGS,
         )
 
     def _log_usage(self, response) -> None:
@@ -111,7 +193,7 @@ class GeminiProvider:
         )
         response = model.generate_content(prompt)
         self._log_usage(response)
-        return response.text
+        return _text_of(response)
 
     async def complete(
         self,
@@ -132,6 +214,27 @@ class GeminiProvider:
                     self._sync_complete, system, prompt, temperature,
                     json_mode, response_schema,
                 )
+            except ContentBlocked as blocked:
+                # Explicit, and above the broad clause on purpose — a
+                # ContentBlocked must never be reclassified as a transport
+                # error by a future edit to `_status_code`.
+                #
+                # A refused PROMPT is final: the filter read the input and
+                # said no, so the backoff below would spend five attempts
+                # and ~7s to be refused five times. An empty RESPONSE is
+                # often just a bad roll, and one cheap retry is far better
+                # than the caller giving up a whole segment for it.
+                if not blocked.worth_retrying or attempt == MAX_ATTEMPTS:
+                    raise
+                last_error = blocked
+                delay = BASE_DELAY_S * (2 ** (attempt - 1)) + random.uniform(0, 0.5)
+                logger.warning(
+                    "gemini returned no text (%s); retrying in %.1fs "
+                    "(attempt %d/%d)",
+                    blocked.reason, delay, attempt, MAX_ATTEMPTS,
+                )
+                await asyncio.sleep(delay)
+                continue
             except Exception as exc:  # noqa: BLE001 - broad: SDK raises varied types
                 last_error = exc
                 status = _status_code(exc)

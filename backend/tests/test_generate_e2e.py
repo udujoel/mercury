@@ -110,6 +110,7 @@ async def _fake_generate_script(
     # starts passing shows up here as a TypeError rather than silently
     # taking a different path in tests than in production.
     disabled_segments: list[str] | None = None,
+    degraded: list[str] | None = None,
 ) -> tuple[list[Turn], list[SourceRef]]:
     # Exercise the injected LLM (as the real script chain would) without
     # depending on its exact prompt-dispatch behaviour.

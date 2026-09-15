@@ -425,6 +425,58 @@ second finding asserted a header was not an option for Gemini auth; one live
 call showed `x-goog-api-key` works with the `google_search` tool. Both were
 worth acting on and neither was worth applying.
 
+## 2026-09-15 — The model refused to read the news, and the morning died
+
+Run 35024541910 failed with `block_reason: PROHIBITED_CONTENT` on the draft
+prompt. Not a source failing, not a transport error: Gemini declined to write
+a script from that day's news. The exception that escaped was
+`ValueError: Invalid operation: The `response.parts` quick accessor requires
+a single candidate` — a message about an accessor, for a policy decision.
+
+**The fix nobody would have written first.** The obvious response is
+`safety_settings`, and it is insufficient in a way that only reading the SDK
+reveals: `BlockReason` has four values (SAFETY, OTHER, BLOCKLIST,
+PROHIBITED_CONTENT) and `HarmCategory` has four *different* ones. There is no
+threshold that reaches PROHIBITED_CONTENT. Turning every adjustable category
+to BLOCK_NONE is still worth doing — a wire report of a strike on a train
+reads as DANGEROUS_CONTENT to a filter tuned for a general audience — but it
+would have shipped looking like a fix and failed again on the next unlucky
+news day.
+
+**The first cut of the fix had the same bug it was fixing.** It allowlisted
+`finish_reason` in (STOP, MAX_TOKENS, FINISH_REASON_UNSPECIFIED) and passed
+those to `.text`. Reading the SDK settles it: `.text` raises whenever `parts`
+is empty, and its own branch list *begins* with those three names. A
+candidate can finish STOP with zero parts — Gemini 2.5 Flash does it when
+thinking tokens eat the output budget — and that walked straight past the
+guard into the identical ValueError. The allowlist was also a NARROWING in
+the other direction: RECITATION and OTHER arrive with partial text often
+enough to matter, and the old `.text` returned it for `_complete_json`'s
+repair loop to fix.
+
+The lesson is small and general: **ask the question the failing code
+actually asks.** The SDK raises on empty parts. Checking parts is both
+simpler than enumerating eleven finish reasons and complete; checking
+finish_reason is a guess at what implies empty parts, and it was wrong in
+both directions at once.
+
+**A monitor inside its own failure domain is not a monitor.** Related, found
+while pricing this: when Actions minutes run out, `briefing-watchdog.yml`
+stops too, because the alarm that exists to report a missing briefing is
+itself an Actions workflow.
+
+**The degradation ladder, and why one rung was not enough.** The first cut
+dropped `stories` and retried. Two problems. It left `world` in the resolved
+segment list — so the model was still instructed to write "two to four
+clustered stories" from zero items, which is `n_stories=0` rebuilt by hand
+and ungroundable under rule 3. And it dropped the wrong half first: Mercury's
+news arrives largely AS EMAIL, and `_flatten_source_text` puts newsletter
+bodies in the same prompt as the articles, so an offending paragraph is at
+least as likely to be in a newsletter. The ladder now has two rungs — without
+the news, then without the inbox as well — each DISABLING its segments rather
+than emptying them, and each recorded in `degraded_sources` so the manifest
+says the briefing is not the one that was configured.
+
 ---
 
 ## Standing facts worth not rediscovering

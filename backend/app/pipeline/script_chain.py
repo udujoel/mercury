@@ -35,7 +35,7 @@ from collections.abc import Iterable
 from datetime import datetime
 from typing import Any
 
-from app.core.providers import LLMProvider
+from app.core.providers import ContentBlocked, LLMProvider
 from app.core.schemas import (
     LENGTH_BUDGETS,
     BriefingLength,
@@ -1287,6 +1287,19 @@ async def _run_critique_and_revise(
             response_schema=_CRITIQUE_SCHEMA, what="critique",
             validate=_validate_critique,
         )
+    except ContentBlocked as blocked:
+        # Named separately from the broad clause below, which would swallow
+        # it into "critique pass failed: <repr>" — indistinguishable from a
+        # transport blip in a log nobody reads closely. Keeping the draft is
+        # still the right OUTCOME (rule 7, and a valid draft already
+        # exists); what changes is that the operator can tell a refusal from
+        # an outage, which is the whole point of having the type.
+        logger.warning(
+            "critique pass refused (%s, %s), keeping draft — the quality "
+            "gates did not run on this briefing",
+            blocked.reason, blocked.stage,
+        )
+        return draft_turns
     except Exception as exc:
         # Deliberately broad. Catching only JSONParseError let a provider
         # timeout, an exhausted retry budget or any other transport error
@@ -1313,6 +1326,12 @@ async def _run_critique_and_revise(
         ), what="revise",
             validate=_parse_draft_turns,
         )
+    except ContentBlocked as blocked:
+        logger.warning(
+            "revise pass refused (%s, %s), keeping draft",
+            blocked.reason, blocked.stage,
+        )
+        return draft_turns
     except Exception as exc:
         logger.warning("revise pass failed, keeping draft: %r", exc)
         return draft_turns
@@ -1348,6 +1367,153 @@ async def _run_critique_and_revise(
 
 
 async def generate_script(
+    *,
+    llm: LLMProvider,
+    emails: list[Item],
+    events: list[CalendarEvent],
+    background_events: list[CalendarEvent] | None = None,
+    weather: Weather | None = None,
+    length: BriefingLength,
+    date: datetime,
+    aggregated_email_count: int = 0,
+    follow_up_candidates: list[Item] | None = None,
+    stories: list[Story] | None = None,
+    passes: int = 2,
+    disabled_segments: Iterable[str] | None = None,
+    degraded: list[str] | None = None,
+) -> tuple[list[Turn], list[SourceRef]]:
+    """The script chain, and a ladder down if the model refuses to write it.
+
+    Rule 7, applied to the model's own safety filter. On 2026-09-15 Gemini
+    refused a draft prompt outright (`PROHIBITED_CONTENT`) and the morning
+    was lost — not because a source failed, but because the day's news was
+    something the filter would not read aloud.
+
+    Two rungs, in order of what costs least to lose:
+
+      1. without the news stories  (drops `world`)
+      2. without the inbox as well (drops `inbox` and `follow_ups`)
+
+    The second rung is not hypothetical. Mercury's news arrives largely AS
+    EMAIL — `generate.py` says so where it collapses newsletter-only
+    clusters — and `_flatten_source_text` puts newsletter bodies into the
+    same prompt as the articles, so an offending paragraph is at least as
+    likely to be in a newsletter as in a wire report. A ladder that gave up
+    only `stories` would pay for a second refusal and learn nothing.
+
+    Each rung DISABLES its segments rather than merely emptying them, and
+    records them in `degraded` so the manifest says the briefing is not the
+    one that was configured.
+
+    Dropping a whole rung rather than bisecting to the offending item is
+    deliberate: bisecting costs log-n extra chains against a free tier and
+    an 06:00 deadline, to save four stories out of a 200-story pool.
+
+    A rung is not free — it re-enters the chain from the top, so with
+    `passes=4` it is another outline, draft, critique and revise. That is
+    the price of a briefing existing at all, and it is only paid on a
+    morning that would otherwise produce none.
+
+    If even calendar, weather and the greeting are refused, that is raised:
+    a script written from nothing is the `n_stories=0` failure with a nicer
+    log line.
+    """
+    # Everything that does not change as the ladder descends.
+    common = dict(
+        llm=llm, events=events, background_events=background_events,
+        weather=weather, length=length, date=date, passes=passes,
+    )
+
+    def _give_up(segments: tuple[Segment, ...]) -> None:
+        """Record a rung, on the manifest as well as in the log.
+
+        `degraded_sources` is the manifest's own channel for "this briefing
+        is not what you configured", and it is what `cli.py` reads to decide
+        whether to regenerate. A briefing that silently lost its news and
+        reported `degraded_sources=[]` would be filed as healthy.
+        """
+        if degraded is None:
+            return
+        for segment in segments:
+            if segment.value not in degraded:
+                degraded.append(segment.value)
+
+    gave_up_news = False
+    gave_up_inbox = False
+
+    while True:
+        off = list(disabled_segments or [])
+        if gave_up_news:
+            off.append(Segment.WORLD.value)
+        if gave_up_inbox:
+            off += [Segment.INBOX.value, Segment.FOLLOW_UPS.value]
+        try:
+            return await _generate_script_once(
+                **common,
+                emails=[] if gave_up_inbox else emails,
+                # Zeroed with the emails. "Plus eleven others" over an empty
+                # inbox is an ungrounded number, which is the one thing
+                # check_grounding is there to catch.
+                aggregated_email_count=(
+                    0 if gave_up_inbox else aggregated_email_count
+                ),
+                follow_up_candidates=(
+                    [] if gave_up_inbox else follow_up_candidates
+                ),
+                stories=[] if gave_up_news else stories,
+                # Turned OFF, not merely emptied. Passing `stories=[]` alone
+                # leaves `world` in the resolved segment list, in both
+                # response schemas, in the budget and in the coverage check
+                # — so the model is still told to write "two to four
+                # clustered stories" from zero items. That is `n_stories=0`
+                # rebuilt by hand, and rule 3 makes it worse than a missing
+                # segment: a world segment with no items cannot be grounded.
+                disabled_segments=off,
+            )
+        except ContentBlocked as blocked:
+            if not gave_up_news and stories:
+                logger.warning(
+                    "the model refused the script (%s, %s); retrying without "
+                    "the %d news stor%s: %s",
+                    blocked.reason, blocked.stage, len(stories),
+                    "y" if len(stories) == 1 else "ies",
+                    # Named, because "6 stories" is not a debuggable record.
+                    # The filter objected to something in this set and there
+                    # is no second chance to find out which — the next run
+                    # has different news. Titles and sources only: rule 5
+                    # keeps bodies out of anything that persists, and a log
+                    # line outlives the run.
+                    ", ".join(
+                        f"{s.canonical.source_name}: {s.canonical.title[:60]}"
+                        for s in stories[:8]
+                    ),
+                )
+                gave_up_news = True
+                _give_up((Segment.WORLD,))
+                continue
+            if not gave_up_inbox and emails:
+                # The rung the first cut of this fix did not have. Mercury's
+                # news arrives largely AS EMAIL — generate.py:607 says a
+                # story only your own newsletters covered is inbox material
+                # — so `_flatten_source_text` puts newsletter bodies in the
+                # same prompt as the articles. Dropping only `stories` left
+                # the likelier culprit in place and paid for a second
+                # refusal to learn nothing.
+                logger.warning(
+                    "the model refused the script again (%s, %s); retrying "
+                    "without the %d email(s) as well",
+                    blocked.reason, blocked.stage, len(emails),
+                )
+                gave_up_inbox = True
+                _give_up((Segment.INBOX, Segment.FOLLOW_UPS))
+                continue
+            # Calendar, weather, greeting and close are all that is left,
+            # and they were refused too. Raising beats shipping a script
+            # written from nothing.
+            raise
+
+
+async def _generate_script_once(
     *,
     llm: LLMProvider,
     emails: list[Item],
