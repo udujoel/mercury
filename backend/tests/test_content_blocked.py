@@ -383,3 +383,33 @@ def test_a_refused_prompt_is_final_but_an_empty_response_is_not():
     assert ContentBlocked("RECITATION", stage="response").worth_retrying
     assert ContentBlocked("STOP", stage="response").worth_retrying
     assert ContentBlocked("MAX_TOKENS", stage="response").worth_retrying
+
+
+def test_an_unset_block_reason_is_falsy_on_the_real_enum():
+    """Pins the one assumption `if block_reason:` rests on.
+
+    Review argued a protobuf enum of value 0 would be truthy and so an unset
+    reason would raise. It is not: `BlockReason` derives from `IntEnum`, so
+    BLOCK_REASON_UNSPECIFIED is `int` 0 and falsy, and the four real reasons
+    are 1-4 and truthy.
+
+    Deliberately against the REAL SDK enum rather than a stub. A stub would
+    only restate the assumption; this fails if a future SDK changes the base
+    class, which is the only way the argument could ever become correct.
+    """
+    import google.generativeai.protos as protos
+
+    from app.providers.gemini import _text_of
+
+    reasons = protos.GenerateContentResponse.PromptFeedback.BlockReason
+    assert not reasons.BLOCK_REASON_UNSPECIFIED
+    assert all(
+        getattr(reasons, name)
+        for name in ("SAFETY", "OTHER", "BLOCKLIST", "PROHIBITED_CONTENT")
+    )
+    # And the guard behaves accordingly: unset falls through to the text.
+    assert _text_of(
+        _Response(block_reason=reasons.BLOCK_REASON_UNSPECIFIED, text="hello")
+    ) == "hello"
+    with pytest.raises(ContentBlocked):
+        _text_of(_Response(block_reason=reasons.PROHIBITED_CONTENT))

@@ -1474,9 +1474,19 @@ async def generate_script(
             if not gave_up_news and stories:
                 logger.warning(
                     "the model refused the script (%s, %s); retrying without "
-                    "the %d news stor%s",
+                    "the %d news stor%s: %s",
                     blocked.reason, blocked.stage, len(stories),
                     "y" if len(stories) == 1 else "ies",
+                    # Named, because "6 stories" is not a debuggable record.
+                    # The filter objected to something in this set and there
+                    # is no second chance to find out which — the next run
+                    # has different news. Titles and sources only: rule 5
+                    # keeps bodies out of anything that persists, and a log
+                    # line outlives the run.
+                    ", ".join(
+                        f"{s.canonical.source_name}: {s.canonical.title[:60]}"
+                        for s in stories[:8]
+                    ),
                 )
                 gave_up_news = True
                 _give_up((Segment.WORLD,))
