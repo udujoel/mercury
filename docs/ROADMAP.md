@@ -672,7 +672,21 @@ Eight independent reviews of Mercury as a thing used at 7am rather than as a
 codebase. Full evidence in `docs/REVIEW-2026-09-14.md`; these are the tasks it
 produced, ranked by what they buy per hour spent.
 
-- [ ] 27. **Split the newsletter flag.** `detect_newsletter`
+- [~] 27. **Split the newsletter flag.** HALF DONE (#51). The AUDIO half
+      landed: a bank alert is no longer pinned LOW and barred from the
+      actionable segment — `detect_urgent` lifts money/account/security mail
+      to HIGH with `requires_response`, and it is deliberately narrow because
+      the wider rule (`requires_response`: addressed to you, contains a "?")
+      is what a phishing mail satisfies by construction.
+      WHAT REMAINS is the DESK half: bank balances still reach the browse
+      surface and are still summarised by an LLM and kept for thirty days.
+      The plumbing for it — a per-member gate covering `digest_members`, the
+      newsletters shelf and `is_digest_story` — is on the branch
+      `feat/transactional-mail-off-the-desk`, needing only a detector.
+      Reuse `gmail.detect_urgent`'s shape rather than its list: PATTERNS not
+      fixed phrases (the first cut matched "account restricted" and missed
+      "your account HAS BEEN restricted"), and remember that a newsletter
+      reporting someone else's breach is not your emergency. Original text: `detect_newsletter`
       (`gmail.py:184`) fires on `List-Unsubscribe`, which every bank, payment
       app and password-reset mailer sets. Five of the eight reviews traced
       their worst finding to this one predicate: bank balances rendered as
@@ -751,7 +765,10 @@ produced, ranked by what they buy per hour spent.
       — "which is most of the point" per the run log — and the app presented
       them as normal mornings. This is the second half of task 22.
 
-- [ ] 34. **Continuity between briefings.** No briefing knows what the last
+- [ ] 34. **Continuity between briefings.** Cheaper now than when this was
+      written: #51 gives every newsletter story a stable `subject`, which is
+      the join key a "since we last spoke" pass needs and did not have.
+      Original text: No briefing knows what the last
       one said. Mercury went from one a day to four without acquiring the
       concept of "what have I already told you", which is upstream of the
       repetition, the 86%-identical consecutive decks, the wasted characters
@@ -772,6 +789,30 @@ DROP, with reasons, from the review:
   code is correct; the premise that sources overlap is not.
 - Storage cost work — R2 is at 4% of tier. The cost table belongs on
   characters and charged minutes, which is where both real cliffs are.
+
+- [x] 35. **Newsletters are bundles, so take them apart.** DONE (#51). The
+      owner's 2026-09-15 spec: extract the news inside each newsletter,
+      research it, and build one narrative across them, with a rapid-fire
+      tail for other mail and urgent items escalated.
+
+      This also settles a question the 2026-09-14 review got backwards. It
+      found cross-source dedup firing 8 times in 5,590 stories and concluded
+      the sources do not overlap. They overlap enormously — clustering was
+      embedding a WHOLE newsletter, so two editions that both lead with the
+      Fed never match because each embedding is dominated by its own
+      mixture. Live: 49 newsletters produced 117 items across 96 subjects,
+      ten multi-outlet, the top one carried by nine. **Do not delete
+      cross-source dedup.** Reconsider it once items, not bundles, are what
+      cluster.
+
+      Two things worth not rediscovering. The CAP was found by listening,
+      not by reading: all ~60 subjects in the prompt produced twelve
+      consecutive turns of one-sentence items, and `rank()` had ordered them
+      correctly — ordering a firehose still gives you a firehose. And the
+      injection fence does not stop a body IMPERSONATING A STRUCTURE: a
+      newsletter whose body contained the block delimiter forged a second
+      outlet, which mattered because outlet count is both the ranking signal
+      and the sentence the hosts are told to say.
 
 ## Phase 4 — Depth (weeks 16 to 19)
 
