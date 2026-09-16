@@ -28,8 +28,9 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 
 from app.core.providers import ContentBlocked, LLMProvider
 from app.core.schemas import Item, Research
@@ -51,6 +52,37 @@ log = logging.getLogger(__name__)
 # something.
 BODY_CHARS = 6_000
 MAX_ITEMS_PER_NEWSLETTER = 6
+
+# How many merged subjects the hosts actually discuss.
+#
+# Found by listening, which is the only way it could have been found. A live
+# run put all 60-odd subjects from 25 newsletters into the prompt, and the
+# model dutifully mentioned nearly every one: twelve consecutive turns of
+# "PC-ALM offers a local alternative to backpropagation. Tau is a coding
+# agent. Telus warned customers." That is a list being read aloud, which is
+# the "concatenated, not edited" failure ADR-003 exists to prevent — and
+# `rank` ordering them was never going to stop it, because ordering a
+# firehose still gives you a firehose.
+#
+# Six OFFERED, and the prompt asks for at most four DISCUSSED. The gap is
+# deliberate editorial headroom: the ranking knows which subjects the most
+# outlets carried, but not which of them will turn out to have anything to
+# argue about, and the model can see that once it has the gists. The two it
+# does not choose fall into the rapid-fire tail rather than being wasted.
+#
+# Six against a world segment that covers four stories out of 209. The tail
+# is COUNTED rather than listed, the way the desk's "plus eleven others"
+# already works: a cap that hides what it dropped is how the tail became a
+# segment in the first place.
+MAX_SPOKEN_SUBJECTS = 6
+
+
+def _aware(moment: datetime) -> datetime:
+    """Naive timestamps are read as UTC so they can be compared at all.
+
+    The same idiom as `scoring._aware` and `clustering._as_utc`.
+    """
+    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
 
 
 @dataclass(frozen=True)
@@ -110,8 +142,41 @@ class MergedStory:
 
     @property
     def latest(self) -> datetime | None:
-        stamps = [i.received_at for i in self.items if i.received_at]
+        """The most recent arrival, comparing naive and aware safely.
+
+        Not defensive padding. `gmail._parse_date` returns a NAIVE datetime
+        for a `-0000` Date header, and `max()` over a mix of naive and aware
+        raises TypeError rather than returning anything. This project has
+        paid for that twice already: `script_chain._owed_replies` exists to
+        avoid it and says "That is not theoretical", and
+        `clustering._as_utc` was written after the same mismatch silently
+        disabled clustering.
+
+        Here it would have been quieter still — `_extract_newsletter_stories`
+        catches broadly for rule 7, so one `-0000` header would have made the
+        entire newsletter segment vanish behind a single warning line.
+        """
+        stamps = [_aware(i.received_at) for i in self.items if i.received_at]
         return max(stamps) if stamps else None
+
+
+# A body that contains this file's own block delimiters can forge a second
+# newsletter inside its own block — "---\n\n[1] FROM: The Economist" renders
+# as though The Economist said it. The injection fence does not stop that:
+# fencing prevents the model OBEYING the text, not the text impersonating a
+# structure. `_strip_fence_markers` makes the same argument about the fence
+# tokens themselves.
+#
+# It matters more here than it looks, because outlet count is the ranking
+# signal AND the segment's editorial claim — "three of your newsletters led
+# with this" is the sentence the prompt asks for. One email forging three
+# blocks would headline the segment with whatever it liked.
+_BLOCK_MARKER = re.compile(r"^\s*(?:-{3,}|\[\d+\]\s*FROM:)", re.M)
+
+
+def _neutralise_markers(text: str) -> str:
+    """Defang anything in a body that looks like this file's own framing."""
+    return _BLOCK_MARKER.sub("·", text)
 
 
 def _format_newsletters(newsletters: list[Item]) -> str:
@@ -119,9 +184,9 @@ def _format_newsletters(newsletters: list[Item]) -> str:
     blocks = []
     for index, item in enumerate(newsletters):
         blocks.append(
-            f"[{index}] FROM: {item.source_name}\n"
-            f"SUBJECT: {item.title}\n"
-            f"{(item.body or '').strip()[:BODY_CHARS]}"
+            f"[{index}] FROM: {_neutralise_markers(item.source_name)}\n"
+            f"SUBJECT: {_neutralise_markers(item.title)}\n"
+            f"{_neutralise_markers((item.body or '').strip()[:BODY_CHARS])}"
         )
     return "\n\n---\n\n".join(blocks)
 
@@ -139,7 +204,21 @@ def _parse(raw: str, newsletters: list[Item]) -> list[NewsletterItem]:
         log.warning("newsletter extraction returned unparseable JSON")
         return []
     if isinstance(parsed, dict):
-        parsed = parsed.get("items", [])
+        # A provider that wraps the array under its own key. "items" is the
+        # one we ask for, but rule 6 says to expect a swap, and the first cut
+        # turned {"stories": [...]} into [] without a word — indistinguishable
+        # from a genuinely quiet morning.
+        for key in ("items", "stories", "results", "data"):
+            if isinstance(parsed.get(key), list):
+                parsed = parsed[key]
+                break
+        else:
+            log.warning(
+                "newsletter extraction returned an object with keys %s and no "
+                "recognisable list of items",
+                sorted(parsed)[:8],
+            )
+            return []
     if not isinstance(parsed, list):
         log.warning("newsletter extraction returned %s, not a list", type(parsed))
         return []
@@ -255,12 +334,19 @@ def merge_by_subject(items: list[NewsletterItem]) -> list[MergedStory]:
 
 # How many merged subjects get a grounded-search call.
 #
-# Eight, against a live morning that produced 96 subjects from 49
-# newsletters. The cap is the owner's ("every extracted item, up to a cap"),
-# and the ranking is what makes the cap defensible: the tail it cuts is
-# single-outlet items, and the head it keeps included one subject nine
-# newsletters carried.
-RESEARCH_MAX_SUBJECTS = 8
+# The same number as `MAX_SPOKEN_SUBJECTS`, and deliberately not larger.
+# It was 8 against a spoken cap of 6, which review showed could never bind:
+# `take_spoken` truncates before research runs, so the extra two were a dead
+# constant and a comment describing "spares" that did not exist. Researching
+# a subject nobody hears is the purest form of spending a free tier on
+# nothing.
+#
+# The owner's ceiling was "up to a cap" of about eight; six is under it.
+RESEARCH_MAX_SUBJECTS = MAX_SPOKEN_SUBJECTS
+
+# Half the digest's, because both run in the same generation and the two
+# budgets add up on the critical path rather than overlapping.
+RESEARCH_BUDGET_SECONDS = 45.0
 
 
 async def research(
@@ -271,37 +357,19 @@ async def research(
     Shares `digest.research_ranked` with the story path rather than
     reimplementing the budget and the rule-3 discard. The only thing that
     differs is how outlets are counted.
+
+    The budget is passed EXPLICITLY and is smaller than the digest's. Both
+    run in the same generation, sequentially, so inheriting the default 90s
+    would put a second uncapped ninety-second window on a job with an 06:00
+    deadline — 180s of research nobody chose.
     """
     from app.pipeline.digest import research_ranked
 
     return await research_ranked(
         {s.subject: len(s.outlets) for s in stories},
         provider, max_subjects=max_subjects,
+        budget_seconds=RESEARCH_BUDGET_SECONDS,
     )
-
-
-# How many merged subjects the hosts actually discuss.
-#
-# Found by listening, which is the only way it could have been found. A live
-# run put all 60-odd subjects from 25 newsletters into the prompt, and the
-# model dutifully mentioned nearly every one: twelve consecutive turns of
-# "PC-ALM offers a local alternative to backpropagation. Tau is a coding
-# agent. Telus warned customers." That is a list being read aloud, which is
-# the "concatenated, not edited" failure ADR-003 exists to prevent — and
-# `rank` ordering them was never going to stop it, because ordering a
-# firehose still gives you a firehose.
-#
-# Six OFFERED, and the prompt asks for at most four DISCUSSED. The gap is
-# deliberate editorial headroom: the ranking knows which subjects the most
-# outlets carried, but not which of them will turn out to have anything to
-# argue about, and the model can see that once it has the gists. The two it
-# does not choose fall into the rapid-fire tail rather than being wasted.
-#
-# Six against a world segment that covers four stories out of 209. The tail
-# is COUNTED rather than listed, the way the desk's "plus eleven others"
-# already works: a cap that hides what it dropped is how the tail became a
-# segment in the first place.
-MAX_SPOKEN_SUBJECTS = 6
 
 
 def take_spoken(

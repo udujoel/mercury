@@ -252,9 +252,20 @@ async def generate_briefing(
     # On the emails the SELECTION kept, not the whole inbox: those are the
     # ones the segment can actually talk about, and extracting from forty
     # issues to discuss six is paying for thirty-four answers nobody hears.
+    spoken_newsletters = [
+        e for e in selection["emails"] if e.raw.get("is_newsletter")
+    ]
     newsletter_stories, newsletter_remainder = await _extract_newsletter_stories(
-        llm, [e for e in selection["emails"] if e.raw.get("is_newsletter")]
+        llm, spoken_newsletters
     )
+    # OTHER MAIL means OTHER. Without this the newsletters arrive in the
+    # prompt TWICE — once taken apart into stories, and once whole with
+    # their bodies, under a header telling the hosts to cover them "by
+    # sender and subject only". The bundle the whole feature exists to
+    # dismantle would be sitting in the same prompt, intact.
+    other_mail = [
+        e for e in selection["emails"] if not e.raw.get("is_newsletter")
+    ]
 
     if generate_script is None:
         raise RuntimeError(
@@ -271,7 +282,7 @@ async def generate_briefing(
         degraded=degraded,
         newsletter_stories=newsletter_stories,
         newsletter_remainder=newsletter_remainder,
-        emails=selection["emails"],
+        emails=other_mail,
         events=selection["events"],
         background_events=selection.get("background_events", []),
         # PRD F-05 caps how many emails are read out individually; this is

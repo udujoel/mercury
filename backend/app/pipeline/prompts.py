@@ -113,7 +113,12 @@ SEGMENT_DEFINITIONS: dict[str, str] = {
         "               remainder is given, say the NUMBER rather than listing\n"
         "               them — 'and about twenty other items across your\n"
         "               newsletters'. Anything genuinely needing action belongs in\n"
-        "               follow_ups, not here."
+        "               If follow_ups is NOT in the segment list, call out\n"
+        "               anything needing a response HERE instead — explicitly,\n"
+        "               by sender. That guarantee used to live in this segment\n"
+        "               and must not fall through a gap when the listener turns\n"
+        "               follow_ups off, which they can: it is optional and this\n"
+        "               segment is not."
     ),
     "world": (
         "- world      — Two to four clustered stories from the user's interests, with\n"

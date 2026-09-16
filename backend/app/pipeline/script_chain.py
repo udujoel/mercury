@@ -532,6 +532,7 @@ def _flatten_source_text(
     aggregated_count: int = 0,
     stories: list[Story] | None = None,
     newsletter_stories: list | None = None,
+    newsletter_remainder: int = 0,
 ) -> str:
     """Flatten the day's material into the prompt's source block.
 
@@ -557,6 +558,18 @@ def _flatten_source_text(
     # never flattened here would have every one of its facts reported as an
     # invention — and then "fixed" out by the revise pass. That is exactly
     # how the aggregated-email count became an ungrounded number.
+    if newsletter_remainder > 0:
+        # The same treatment `aggregated_count` gets twelve lines above, and
+        # for the same reason: the inbox definition ORDERS the hosts to say
+        # this number, and `check_grounding` flags any number absent from
+        # this block as an invention. Without it the critique pass reports
+        # the honest "and 54 other items" as fabricated and the revise pass
+        # strips it — so the one clause that keeps `take_spoken` from being
+        # a silent omission is the clause the gates delete.
+        parts.append(
+            f"{newsletter_remainder} further newsletter items, "
+            "not individually listed."
+        )
     for story in newsletter_stories or []:
         outlets = ", ".join(story.outlets)
         parts.append(f"{story.subject} {story.headline} {outlets}")
@@ -1451,7 +1464,6 @@ async def generate_script(
     common = dict(
         llm=llm, events=events, background_events=background_events,
         weather=weather, length=length, date=date, passes=passes,
-        newsletter_remainder=newsletter_remainder,
     )
 
     def _give_up(segments: tuple[Segment, ...]) -> None:
@@ -1494,6 +1506,12 @@ async def generate_script(
                 # segment they feed is turned off on that rung.
                 newsletter_stories=(
                     [] if gave_up_inbox else newsletter_stories
+                ),
+                # Zeroed with them, for the same reason the email count is:
+                # "54 further items not shown" over zero shown subjects is
+                # an ungrounded number describing nothing.
+                newsletter_remainder=(
+                    0 if gave_up_inbox else newsletter_remainder
                 ),
                 stories=[] if gave_up_news else stories,
                 # Turned OFF, not merely emptied. Passing `stories=[]` alone
@@ -1597,7 +1615,7 @@ async def _generate_script_once(
     stories = stories or []
     source_data = _flatten_source_text(
         emails, events, weather, aggregated_email_count, stories,
-        newsletter_stories,
+        newsletter_stories, newsletter_remainder,
     )
 
     # Whose owed replies the follow-ups segment draws on.
