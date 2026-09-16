@@ -247,6 +247,26 @@ async def generate_briefing(
         scored_emails, events, length, date=briefing_date
     )
 
+    # Take the newsletters apart before writing anything.
+    #
+    # On the emails the SELECTION kept, not the whole inbox: those are the
+    # ones the segment can actually talk about, and extracting from forty
+    # issues to discuss six is paying for thirty-four answers nobody hears.
+    spoken_newsletters = [
+        e for e in selection["emails"] if e.raw.get("is_newsletter")
+    ]
+    newsletter_stories, newsletter_remainder = await _extract_newsletter_stories(
+        llm, spoken_newsletters
+    )
+    # OTHER MAIL means OTHER. Without this the newsletters arrive in the
+    # prompt TWICE — once taken apart into stories, and once whole with
+    # their bodies, under a header telling the hosts to cover them "by
+    # sender and subject only". The bundle the whole feature exists to
+    # dismantle would be sitting in the same prompt, intact.
+    other_mail = [
+        e for e in selection["emails"] if not e.raw.get("is_newsletter")
+    ]
+
     if generate_script is None:
         raise RuntimeError(
             "generate_script is not available (app.pipeline.script_chain "
@@ -260,7 +280,9 @@ async def generate_briefing(
         # that has to reach the manifest rather than only the log — it is
         # what `cli.py` reads to decide whether to regenerate.
         degraded=degraded,
-        emails=selection["emails"],
+        newsletter_stories=newsletter_stories,
+        newsletter_remainder=newsletter_remainder,
+        emails=other_mail,
         events=selection["events"],
         background_events=selection.get("background_events", []),
         # PRD F-05 caps how many emails are read out individually; this is
@@ -522,6 +544,60 @@ def _is_newsletter(item: Item) -> bool:
     return item.source_type is SourceType.EMAIL and bool(
         item.raw.get("is_newsletter")
     )
+
+
+async def _extract_newsletter_stories(
+    llm, newsletters: list[Item]
+) -> tuple[list, int]:
+    """Newsletters -> discrete items -> merged subjects -> researched.
+
+    Never raises, and returns [] on any failure. Rule 7: the briefing ships
+    without the newsletter segment rather than not at all — which is the
+    same contract every other source here already has.
+
+    Research runs on the merged subjects rather than the raw items, so the
+    eight calls go to eight different questions. Researching items would
+    spend nine of them on the one subject nine newsletters carried.
+    """
+    if not newsletters:
+        return [], 0
+    try:
+        from dataclasses import replace
+
+        from app.pipeline.newsletter_items import (
+            extract_items,
+            merge_by_subject,
+            rank,
+            research,
+            take_spoken,
+        )
+        from app.providers.gemini_research import build_research_provider
+
+        items = await extract_items(llm, newsletters)
+        if not items:
+            return [], 0
+        stories = rank(merge_by_subject(items))
+        # Capped BEFORE research, so the eight grounded-search calls go to
+        # the six subjects that will actually be discussed plus a couple of
+        # spares — rather than to items nobody will hear.
+        stories, remainder = take_spoken(stories)
+        found = await research(stories, build_research_provider())
+        if found:
+            stories = [
+                replace(story, research=found[story.subject])
+                if story.subject in found else story
+                for story in stories
+            ]
+        log.info(
+            "newsletters: %d subject(s) spoken, %d held back, %d researched, "
+            "top subject carried by %d outlet(s)",
+            len(stories), remainder, len(found),
+            len(stories[0].outlets) if stories else 0,
+        )
+        return stories, remainder
+    except Exception:
+        log.warning("newsletter extraction failed", exc_info=True)
+        return [], 0
 
 
 async def _build_world_stories(

@@ -104,6 +104,8 @@ async def _fake_generate_script(
     aggregated_email_count: int = 0,
     follow_up_candidates: list[Item] | None = None,
     stories: list | None = None,
+    newsletter_stories: list | None = None,
+    newsletter_remainder: int = 0,
     passes: int = 2,
     # Accepted and unused, deliberately: this fake stands in for the real
     # chain's SIGNATURE as much as its output, so a new keyword the pipeline

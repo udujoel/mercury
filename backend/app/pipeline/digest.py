@@ -472,9 +472,6 @@ async def research_subjects(
     Never raises. Rule 7: the briefing ships without research rather than
     not at all, so a total failure here is an empty dict and a log line.
     """
-    if provider is None:
-        return {}
-
     ranked: dict[str, int] = {}
     for story in stories:
         subject = (story.subject or "").strip()
@@ -482,7 +479,30 @@ async def research_subjects(
             continue
         outlets = len({source.source_name for source in story.sources})
         ranked[subject] = max(ranked.get(subject, 0), outlets)
-    if not ranked:
+    return await research_ranked(
+        ranked, provider,
+        max_subjects=max_subjects, budget_seconds=budget_seconds,
+    )
+
+
+async def research_ranked(
+    ranked: dict[str, int],
+    provider: ResearchProvider | None,
+    *,
+    max_subjects: int = RESEARCH_MAX_SUBJECTS,
+    budget_seconds: float = RESEARCH_BUDGET_SECONDS,
+) -> dict[str, Research]:
+    """The engine: research these subjects, most-corroborated first.
+
+    Split out from `research_subjects` so the newsletter extractor can use it
+    without a second copy. The two callers disagree only about how outlets
+    are counted — a `DigestStory` counts distinct `sources`, a `MergedStory`
+    counts distinct newsletters — and everything after that, the ordering,
+    the cap, the per-task budget and the rule-3 discard, is identical.
+    `build_tts_provider`'s docstring is the standing warning here: "there
+    were three copies, and the third entrypoint is the one that forgot."
+    """
+    if provider is None or not ranked:
         return {}
 
     chosen = [

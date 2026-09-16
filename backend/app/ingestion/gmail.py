@@ -212,15 +212,85 @@ QUESTION_PHRASES = [
 ]
 
 
+# Mail where not opening Gmail can cost money.
+#
+# Deliberately NARROW — money, accounts and security, nothing else. The
+# obvious wider rule is `requires_response`: addressed to you, contains a
+# question mark or one of eight stock phrases. The 2026-09-14 review found
+# that is exactly what a phishing mail satisfies BY CONSTRUCTION, which buys
+# it the top of the inbox and a guaranteed slot in the one segment the hosts
+# introduce as needing immediate attention. A filter that promotes the
+# attacker is worse than no filter.
+#
+# Patterns rather than fixed phrases, because the first cut missed "your
+# account HAS BEEN restricted" while matching "account restricted" — real
+# subject lines put words in the middle. Found by running it, not by reading
+# it.
+URGENT_PATTERNS: list[str] = [
+    r"unusual (?:sign[- ]?in|login|activity)",
+    r"suspicious (?:activity|sign[- ]?in|login)",
+    r"account (?:has been |was |is |been )?(?:restricted|suspended|locked|disabled)",
+    r"(?:un)?authoriz?ed (?:access|transaction|login)",
+    r"payment (?:has )?(?:failed|declined)",
+    r"(?:card|transaction) (?:was )?declined",
+    r"(?:past due|overdue)",
+    r"(?:expires|expiring) (?:today|tomorrow|soon|in \d+ days?)",
+    r"action required",
+    r"verify your (?:account|identity|email)",
+    r"confirm your identity",
+]
+
+_URGENT_RE = re.compile("|".join(f"({p})" for p in URGENT_PATTERNS), re.I)
+
+# How far into a body an urgent phrase still counts as being ABOUT the
+# reader. Roughly the first screen.
+URGENT_BODY_CHARS = 800
+
+
+def detect_urgent(
+    subject: str, body: str, *, is_newsletter: bool = False
+) -> tuple[bool, str | None]:
+    """Does this mail carry a consequence worth naming out loud?
+
+    Returns `(is_urgent, signal)`, the signal naming what fired, so a wrong
+    answer can be argued with rather than guessed at.
+
+    **Newsletters are never urgent, whatever they say.** The first cut
+    flagged a digest whose body read "Cloudflare users saw unusual sign-in
+    alerts" — someone else's incident, reported as news. That is the single
+    biggest source of false positives here, and false positives are the
+    expensive direction: this segment's whole value is that when it says
+    something needs attention, it does.
+
+    Matched on the subject and the first screen of the body only. A phrase in
+    a fortieth paragraph is reporting, not addressing.
+    """
+    if is_newsletter:
+        return False, None
+    haystack = f"{subject or ''}\n{(body or '')[:URGENT_BODY_CHARS]}"
+    match = _URGENT_RE.search(haystack)
+    if match:
+        return True, match.group(0).lower()
+    return False, None
+
+
 def classify_priority(
     *,
     is_newsletter: bool,
+    is_urgent: bool = False,
     body: str,
     to_addresses: list[str],
     user_email: str,
 ) -> tuple[Priority, bool]:
     """Priority/requires_response heuristic. See spike_02_gmail.py for the
     full reasoning — lifted verbatim."""
+    if is_urgent:
+        # Ahead of the newsletter floor on purpose. The review found that a
+        # bank's account-restriction warning was pinned LOW and barred from
+        # the actionable segment, because `List-Unsubscribe` made it a
+        # newsletter — sorted below a gym mailer by arrival time. This is the
+        # one category where not opening Gmail has a price.
+        return Priority.HIGH, True
     if is_newsletter:
         return Priority.LOW, False
 
@@ -287,8 +357,12 @@ def message_to_item(raw: dict[str, Any], user_email: str) -> Item:
     body = clean_body(body_raw)
 
     is_newsletter, signal = detect_newsletter(headers)
+    is_urgent, urgent_signal = detect_urgent(
+        subject, body, is_newsletter=is_newsletter
+    )
     priority, requires_response = classify_priority(
         is_newsletter=is_newsletter,
+        is_urgent=is_urgent,
         body=body,
         to_addresses=to_addresses,
         user_email=user_email,
@@ -311,6 +385,8 @@ def message_to_item(raw: dict[str, Any], user_email: str) -> Item:
             "thread_id": raw.get("threadId"),
             "is_newsletter": is_newsletter,
             "newsletter_signal": signal,
+            "is_urgent": is_urgent,
+            "urgent_signal": urgent_signal,
             "to": to_addresses,
         },
     )

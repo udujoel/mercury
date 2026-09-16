@@ -393,6 +393,13 @@ async def run_chain(provider, fixture: dict) -> dict:
         weather=json.dumps(fixture["weather"]),
         n_events=len(fixture["calendar"]),
         calendar=format_calendar(fixture),
+        # The spike predates the newsletter-story pass and has no fixture
+        # for it. Empty rather than omitted: OUTLINE_PROMPT.format() raises
+        # KeyError on a missing key, which is how this file announced itself
+        # as a second entry point that had to be updated too.
+        n_newsletter_stories=0,
+        newsletter_stories="(not modelled in this spike)",
+        newsletter_remainder="",
         n_emails=len(fixture["emails"]),
         emails=format_emails(fixture),
         n_stories=0,

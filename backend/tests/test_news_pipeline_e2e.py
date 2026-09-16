@@ -325,7 +325,12 @@ async def test_the_story_is_offered_to_exactly_one_segment_of_the_briefing(
     await _generate(tmp_path, llm)
 
     prompt = llm.outline_prompt
-    inbox_block = prompt.split("INBOX (", 1)[1].split("WORLD (", 1)[0]
+    # Everything between the newsletter header and the world header — which
+    # since 2026-09-15 is TWO blocks, NEWSLETTER STORIES and OTHER MAIL. The
+    # span is deliberately both: a story absorbed into the world segment
+    # must not be offered to either half of the inbox, and checking only one
+    # of them would let it come back through the other.
+    inbox_block = prompt.split("NEWSLETTER STORIES (", 1)[1].split("WORLD (", 1)[0]
     world_block = prompt.split("WORLD (", 1)[1].split("FOLLOW-UPS", 1)[0]
 
     for subject in (
@@ -340,7 +345,10 @@ async def test_the_story_is_offered_to_exactly_one_segment_of_the_briefing(
         assert world_block.count(newsletter) == 1, newsletter
 
     assert "Q3 budget review before Friday" in inbox_block
-    assert inbox_block.startswith("1 items)")
+    # The colleague's email is still offered, as OTHER MAIL rather than as a
+    # newsletter story, which is what stops this passing by way of an empty
+    # briefing.
+    assert "OTHER MAIL (1 items)" in prompt
 
 
 async def test_the_story_text_is_in_the_source_block_the_gates_check(

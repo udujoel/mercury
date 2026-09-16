@@ -40,7 +40,7 @@ from zoneinfo import ZoneInfo
 
 from app.core.config import apply_to_environment, get_settings
 from app.core.providers import build_embedding_provider
-from app.core.schemas import BriefingLength
+from app.core.schemas import BriefingLength, Segment
 
 # How many times a briefing may be generated in a day while it keeps
 # shipping degraded, counting the first one. Three: the original plus two
@@ -383,6 +383,21 @@ def _prune(retention_days: int, today_id: str, *, dry_run: bool) -> int:
     return 0
 
 
+def _only_refusals(degraded: list[str]) -> bool:
+    """Is every entry a SEGMENT the model refused, rather than a SOURCE that
+    failed?
+
+    `_ingest_concurrently` records source labels — email, calendar, weather,
+    news. The refusal ladder in `script_chain.generate_script` records
+    segment names — world, inbox, follow_ups. They do not overlap, which is
+    what makes this separable at all; if a future source is ever named after
+    a segment, this is the line that breaks.
+    """
+    return bool(degraded) and all(
+        name in {segment.value for segment in Segment} for name in degraded
+    )
+
+
 async def _generate(
     briefing_id: str,
     length: BriefingLength,
@@ -429,6 +444,35 @@ async def _generate(
             existing.degraded_attempts,
         )
         return 3
+
+    if (
+        existing is not None
+        and existing.degraded_sources
+        and _only_refusals(existing.degraded_sources)
+    ):
+        # A refusal is not a source failure, and regenerating cannot fix it.
+        #
+        # The ladder in `script_chain.generate_script` records the segments
+        # it gave up when the model declined to write them, and it records
+        # them here so the PHONE can say the briefing is not the one that was
+        # configured. But the retry below exists for credentials and network
+        # — things that come back. A content filter is deterministic on
+        # content, so a regeneration pays a full LLM and TTS bill to be
+        # refused again, three times, against a character allowance already
+        # measured at ~88% and an Actions budget at ~82%. It then exits 3
+        # advising "check the credentials for that source", when no source
+        # failed.
+        #
+        # So: reported, not retried. A briefing minus its news is exactly
+        # what rule 7 promises, and it is already stored.
+        log.warning(
+            "briefing %s shipped without %s because the model refused to "
+            "write %s — reporting rather than regenerating, since a content "
+            "refusal is deterministic and a retry would only spend quota",
+            briefing_id, ", ".join(existing.degraded_sources),
+            "them" if len(existing.degraded_sources) > 1 else "it",
+        )
+        return 0
 
     if existing is not None and existing.degraded_sources:
         # A briefing that shipped without its whole personal half is exactly
