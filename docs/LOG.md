@@ -527,6 +527,22 @@ they say, which is the single biggest source of false positives here, and
 false positives are the expensive direction — the segment's whole value is
 that when it says something needs attention, it does.
 
+- **The injection fence does not stop impersonation.** It stops the model
+  OBEYING untrusted text. A newsletter body containing this pipeline's own
+  block delimiters forged a second outlet inside its own fenced block, and
+  outlet count is both the ranking signal and the sentence the hosts are
+  told to say. `_strip_fence_markers` had already made this argument about
+  the fence's own tokens; every new delimiter needs the same treatment.
+- **Naive vs aware datetimes have now cost this project three times.**
+  `clustering._as_utc`, `script_chain._owed_replies`, and
+  `newsletter_items.latest`. Gmail returns a NAIVE datetime for a `-0000`
+  Date header. Any `max()`, `sorted()` or comparison over timestamps from
+  more than one source needs `_aware()` first.
+- **A cap and an ordering are different things.** `rank()` ordered 60
+  newsletter subjects perfectly and the segment was still unlistenable,
+  because everything ordered still reached the prompt. Ordering a firehose
+  gives you an ordered firehose.
+
 ---
 
 ## Standing facts worth not rediscovering
