@@ -819,6 +819,44 @@ testing caught it: removing the override changed nothing. A test whose
 expected value is also its failure mode cannot tell you which one it saw.
 
 
+## 2026-09-20 — the ranker had no reader to be connected to
+
+Task 30, the third of the four "built and never called" bugs. The roadmap's
+diagnosis was right and incomplete: `score_stories` accepts a
+`topic_centroid` and no caller passes one, so `interest` is the constant
+0.5 and its 0.20 weight cancels. What the entry did not say is WHY nobody
+passed one — there was no setting. Nowhere in `UserSettings`, nothing on
+the phone, no environment variable. The parameter was waiting on a feature
+that had never been built, which is a different failure from a caller that
+forgot, and it explains how it survived two phases.
+
+So the fix is a settings surface plus the wiring, and the honest state is
+that **the setting is still empty in production**. Nothing changes until
+someone fills it in. To stop that becoming the same bug in a new place,
+`_topic_centroid` logs on every run when the term is inactive.
+
+**The test file reproduced the bug it was testing.** Seven tests, all
+green, all calling `_build_world_stories` directly — and deleting
+`interests=interests` from `generate_briefing`'s call to it left every one
+of them passing. The parameter was never wrong; the CALLER never passed
+it, and the tests entered below the caller.
+
+Three sessions running, the same shape: #53's fake returning `{}`, #56's
+hand-built `RunCensus`, now this. It is narrow enough to name.
+
+**When a bug is "nobody called X", a test that calls X cannot detect it.**
+The test has to start where the omission lives, which is one level up from
+the thing that looks broken.
+
+Worth keeping about the ranking itself: with 153 of 160 stories
+single-outlet the cluster term is near-constant too, so the world segment
+really was `0.12 x cluster + 0.08 x recency`. The 09-13 evidence — the two
+stories that reached the audio were the two most recently published of
+209, and "Ask HN: how can I browse HN in dark mode?" beat a Russian strike
+on a Ukrainian train by six minutes — is a recency sort behaving exactly
+as written.
+
+
 ---
 
 ## Standing facts worth not rediscovering

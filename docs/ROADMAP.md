@@ -779,7 +779,7 @@ produced, ranked by what they buy per hour spent.
       default in `config.py` stays ElevenLabs, per the owner's decision of
       2026-09-13 (task 22), so a local run with credits still uses it.
 
-- [ ] 30. **Connect the ranker to the reader.** `score_stories` accepts
+- [x] 30. **Connect the ranker to the reader.** DONE (#58). `score_stories` accepts
       `topic_centroid` and `followed_entities` and no caller passes either
       (`generate.py:579`), so `interest` is the constant 0.5, its 0.20 weight
       cancels, and with 153 of 160 stories single-outlet the cluster term is
@@ -788,6 +788,20 @@ produced, ranked by what they buy per hour spent.
       were the two most recently published of 209, and "Ask HN: how can I
       browse HN in dark mode?" beat a Russian strike on a Ukrainian train by
       six minutes. `topic_centroid()` exists and is tested. Call it.
+
+      There was NOWHERE FOR A PERSON TO SAY what they were interested in,
+      which is why no caller ever passed one — not in `UserSettings`, not
+      on the phone, not in an environment variable. The parameter was
+      waiting on a feature that had never been built, which is a different
+      failure from a caller that forgot.
+
+      `UserSettings` gains `interests` and `followed_entities`;
+      `generate_briefing` embeds the interests and hands `score_stories` a
+      normalised centroid. Empty stays the default and is a deliberate
+      no-op, but the run log now states every morning that the term is
+      inactive — a silent no-op is how this survived two phases. THE
+      SETTING IS STILL EMPTY in production: the wiring is live, the
+      behaviour changes the day someone fills it in.
 
 - [ ] 31. **A freshness floor, and a watchdog for all four slots.** The
       `00:12` cron generates a briefing named for the NEW day, so all five of

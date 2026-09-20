@@ -585,6 +585,10 @@ async def _generate(
             previous_degraded_attempts=previous_degraded_attempts,
             feeds=user_settings.feeds if user_settings else None,
             muted_senders=user_settings.muted_senders if user_settings else None,
+            interests=user_settings.interests if user_settings else None,
+            followed_entities=(
+                user_settings.followed_entities if user_settings else None
+            ),
             music_set=user_settings.music_set if user_settings else None,
             disabled_segments=(
                 user_settings.disabled_segments if user_settings else None

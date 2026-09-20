@@ -55,7 +55,7 @@ from app.pipeline.digest import (
     research_subjects,
     stories_to_enrich,
 )
-from app.pipeline.ranking import score_stories
+from app.pipeline.ranking import score_stories, topic_centroid
 from app.synthesis.music import DEFAULT_SET as DEFAULT_MUSIC_SET
 from app.synthesis.stitch import synthesize_briefing
 from app.synthesis.storage import BriefingStorage, build_storage
@@ -142,6 +142,13 @@ async def generate_briefing(
     feeds: list[str] | None = None,
     # Senders whose mail never reaches the briefing.
     muted_senders: list[str] | None = None,
+    # ROADMAP task 30. Threaded explicitly rather than through
+    # `apply_to_environment`, for the same reason `disabled_segments` is:
+    # these are lists, and flattening one into an environment variable to
+    # parse it back out is a round trip through a format that cannot hold
+    # it.
+    interests: list[str] | None = None,
+    followed_entities: list[str] | None = None,
     # Which music set tops and tails the briefing, or "none" for silence.
     # None means the product default — this is the level that decides what a
     # briefing sounds like, as distinct from `synthesize_briefing`, which
@@ -246,6 +253,8 @@ async def generate_briefing(
             events=events,
             embeddings=embeddings,
             length=length,
+            interests=interests,
+            followed_entities=followed_entities,
         )
 
         scored_emails = _score_emails(score_emails, inbox_emails, events)
@@ -784,6 +793,44 @@ async def _extract_newsletter_stories(
         return [], 0
 
 
+async def _topic_centroid(
+    interests: list[str] | None, embeddings: EmbeddingProvider | None
+):
+    """The listener's interests as one normalised vector, or None.
+
+    None is the ordinary case and means the ranker behaves exactly as it
+    did before — `interest` falls back to its 0.5 constant. That is the
+    safe default for a setting nobody has filled in yet.
+
+    Never raises. The embeddings provider is already allowed to fail the
+    whole clustering step gracefully (rule 7), and a ranking refinement is
+    a far weaker reason to lose a briefing than clustering is.
+    """
+    if not interests or embeddings is None:
+        # Said out loud, every run. A silent no-op here is precisely how
+        # this parameter went unnoticed for two phases.
+        log.info(
+            "ranking: no interest topics configured, so the world segment "
+            "is ranked without the interest term (set `interests` in the "
+            "user settings to change that)"
+        )
+        return None
+    try:
+        vectors = await embeddings.embed([t for t in interests if t.strip()])
+    except Exception:
+        log.warning(
+            "ranking: could not embed interest topics; ranking without "
+            "the interest term", exc_info=True,
+        )
+        return None
+    centroid = topic_centroid(vectors)
+    log.info(
+        "ranking: world segment ranked against %d interest topic(s): %s",
+        len(interests), ", ".join(interests[:6]),
+    )
+    return centroid
+
+
 async def _build_world_stories(
     *,
     emails: list[Item],
@@ -791,6 +838,8 @@ async def _build_world_stories(
     events: list[Any],
     embeddings: EmbeddingProvider | None,
     length: BriefingLength,
+    interests: list[str] | None = None,
+    followed_entities: list[str] | None = None,
 ) -> tuple[list[Story], list[Item], list[Story]]:
     """Cluster the day's news and decide what the world segment gets.
 
@@ -841,7 +890,17 @@ async def _build_world_stories(
     # it here does not protect a today story — that story's score does not
     # move either way — it only stops a Thursday one outranking news you have
     # no connection to at all.
-    stories = score_stories(stories, calendar_events=events)
+    # ROADMAP task 30: the ranker has accepted a topic centroid since
+    # Phase 2 and no caller ever passed one, so `interest` was a constant
+    # and its 0.20 weight cancelled out. Third of the four "built and
+    # never called" bugs in this project's history.
+    centroid = await _topic_centroid(interests, embeddings)
+    stories = score_stories(
+        stories,
+        calendar_events=events,
+        topic_centroid=centroid,
+        followed_entities=set(followed_entities or ()),
+    )
 
     world = [
         story
