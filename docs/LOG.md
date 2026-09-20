@@ -716,6 +716,64 @@ real findings came from running `/code-review` deliberately — which is what
 CLAUDE.md step 4 says and why it says it.
 
 
+## 2026-09-20 — the census caught a starved stage and blamed the wrong thing
+
+Run 35536697033 failed. The census did exactly what it was built to do,
+first time out, and then misled the reader:
+
+```
+run census: newsletters 14->0  articles 154->4  inbox 15->6
+STARVED STAGE: newsletters received 14 item(s) and produced nothing.
+  This is the shape of every 'built but never called' bug in this
+  project's history — check what actually reaches it
+```
+
+The stage was wired correctly. The real cause was four lines up:
+
+```
+google.api_core.exceptions.ResourceExhausted: 429 Your project has
+exceeded its monthly spending cap.
+```
+
+**The Gemini project hit its monthly spend cap.** Nothing in the pipeline
+can degrade around that — the LLM is not one of the sources rule 7 covers,
+it is the thing that writes the script — so the run fails and the phone
+keeps serving yesterday's briefings from R2. Only the owner can raise it,
+in AI Studio. Worth knowing when planning verification: generating a real
+briefing costs real quota, four scheduled runs a day already spend it, and
+this session dispatched two extra verification runs on top.
+
+The lesson worth keeping is about the instrument, not the cap. **An alarm
+that names the wrong cause is only marginally better than no alarm.** It
+spends the reader's afternoon on a bug that is not there, and that
+afternoon is exactly what this module was written to save. A census exists
+to shorten the distance between a symptom and its cause; one that
+confidently points the wrong way lengthens it.
+
+`report()` now takes the exception unwinding the run — `__exit__` already
+had it — and distinguishes three cases:
+
+- **an exception in flight** → "the run is failing with X; probably a
+  consequence rather than a wiring defect"
+- **`degraded` non-empty** → names the sources that failed. Passed by
+  REFERENCE from `generate_briefing`, so later appends are visible.
+- **neither** → the original alarm, and it keeps its full force, because
+  a stage that produced nothing while everything upstream was healthy is
+  still the shape of all four historical bugs.
+
+The run-summary panel is written only in the third case. On a run that is
+already red with a traceback, a second panel saying a stage produced
+nothing invites precisely the wrong diagnosis.
+
+One smaller thing: `google.api_core` prepends its own status code to the
+message it was constructed with, so the error stringified as "429 429 Your
+project...". Cosmetic, but this is a line someone reads in a hurry while
+deciding whether they are looking at a wiring bug, and a stutter in it is
+one more thing to rule out. The dedup is restricted to numeric codes —
+a general "same word twice" rule would rewrite "boom boom baz", and
+silently editing an error message is a worse bug than the stutter.
+
+
 ---
 
 ## Standing facts worth not rediscovering
@@ -740,6 +798,13 @@ CLAUDE.md step 4 says and why it says it.
 - **`follow_ups` is built from the literal string `"(none)"`**
   (`script_chain.py:1347`) — the same shape as `n_stories=0`, still open as
   task 24.
+- **The Gemini project has a monthly SPEND CAP.** When it is reached every
+  call returns `429 ResourceExhausted: Your project has exceeded its
+  monthly spending cap`, and every briefing run fails outright — there is
+  no degrading around the model that writes the script. Only the owner can
+  raise it, at https://ai.studio/spend. Generating a briefing to verify a
+  change costs real quota on top of the four scheduled runs a day, so
+  prefer ONE live verification run.
 - **Two suites run only by hand.** There is no iOS job and no Worker job in
   CI. The Worker test written specifically to stop the next `music_set`-class
   bug is itself run by nothing.

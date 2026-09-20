@@ -231,7 +231,15 @@ async def generate_briefing(
     # synthesis — and those are precisely the runs whose funnel is worth
     # reading. Reporting on the happy path only would have left the worst
     # morning of all as the one with no census line.
-    with RunCensus(on_starved=_when_a_stage_is_starved) as census:
+    with RunCensus(
+        on_starved=_when_a_stage_is_starved,
+        # By reference: ingestion has already filled it and the
+        # script chain appends to it as segments drop, so the
+        # census can tell a starved stage apart from a stage whose
+        # source died upstream.
+        degraded=degraded,
+    ) as census:
+        _LAST_CENSUS_STAGES.clear()
         world_stories, inbox_emails, all_stories = await _build_world_stories(
             emails=emails,
             articles=articles,
@@ -475,6 +483,7 @@ async def generate_briefing(
         # reads by Thursday — which is the failure this whole module exists to
         # avoid, so it must not be the failure this module introduces.
         census.record("desk", took=len(browsable), made=len(digest.stories))
+        _LAST_CENSUS_STAGES.extend(census.stages)
         # to_thread, because BriefingStorage is synchronous and R2Storage is boto3.
         # This is ~3MB up on a blocking socket, and it runs inside the API process
         # while the client polls /status — so calling it directly froze the server
@@ -657,6 +666,16 @@ def _newsletters_for_extraction(emails: list[Item]) -> list[Item]:
         item for item in emails
         if item.raw.get("is_newsletter") and not item.raw.get("is_transactional")
     ]
+
+
+# The most recent run's census stages, for tests that need to assert on
+# WHAT production recorded rather than on a hand-built stand-in. Review of
+# #56 showed the alternative: removing `degraded=degraded` from the census
+# below left the whole suite green, because every test built its own.
+#
+# Read-only for everything but `generate_briefing`, and never load-bearing
+# — nothing in the pipeline reads it.
+_LAST_CENSUS_STAGES: list = []
 
 
 def _when_a_stage_is_starved(names: list[str]) -> None:
