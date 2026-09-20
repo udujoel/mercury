@@ -231,7 +231,14 @@ async def generate_briefing(
     # synthesis — and those are precisely the runs whose funnel is worth
     # reading. Reporting on the happy path only would have left the worst
     # morning of all as the one with no census line.
-    with RunCensus(on_starved=_when_a_stage_is_starved) as census:
+    with RunCensus(
+        on_starved=_when_a_stage_is_starved,
+        # By reference: ingestion has already filled it and the
+        # script chain appends to it as segments drop, so the
+        # census can tell a starved stage apart from a stage whose
+        # source died upstream.
+        degraded=degraded,
+    ) as census:
         world_stories, inbox_emails, all_stories = await _build_world_stories(
             emails=emails,
             articles=articles,

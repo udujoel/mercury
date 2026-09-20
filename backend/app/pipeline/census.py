@@ -84,6 +84,11 @@ class RunCensus:
     # is what the docstring below warns about in the same breath — a
     # warning nobody reads is how all four of these survived.
     on_starved: Callable[[list[str]], None] | None = None
+    # The run's degraded-source list, by REFERENCE. `generate_briefing`
+    # builds it during ingestion and appends to it as segments drop, and
+    # holding the same object means the census sees those later appends
+    # without a second plumbing path that could disagree with the first.
+    degraded: list[str] = field(default_factory=list)
 
     def __enter__(self) -> RunCensus:
         return self
@@ -96,7 +101,7 @@ class RunCensus:
         is a far worse version of the bug this module was written to catch.
         """
         try:
-            self.report()
+            self.report(failure=exc)
         except Exception:  # pragma: no cover - instrumentation must not bite
             log.warning("run census failed to report", exc_info=True)
         return False
@@ -108,12 +113,22 @@ class RunCensus:
             Stage(name=name, took=took, made=made, may_be_empty=may_be_empty)
         )
 
-    def report(self) -> list[str]:
+    def report(self, *, failure: BaseException | None = None) -> list[str]:
         """Log the census and return the names of any starved stages.
 
         Returned rather than only logged so a caller can put them on the
         manifest or a watchdog can act on them — a warning nobody reads is
         how all four of these survived.
+
+        `failure` is the exception unwinding the run, when there is one.
+        It changes what the warning SAYS, and a real incident is why. On
+        2026-09-20 the Gemini project hit its monthly spend cap, every call
+        409'd and then 429'd, and this printed "newsletters received 14
+        item(s) and produced nothing... this stage may not be wired to
+        anything". The stage was wired correctly. The API was dead. An
+        alarm that names the wrong cause is only marginally better than no
+        alarm: it sends the next reader hunting a bug that is not there,
+        and the time it costs is the time this module exists to save.
         """
         if not self.stages:
             return []
@@ -121,11 +136,48 @@ class RunCensus:
         log.info("run census: %s", summary)
 
         starved = [s.name for s in self.stages if s.starved]
+        # Why it is empty decides what to say about it. Three cases, and
+        # only the third is the one this module was built for.
+        if failure is not None:
+            because = (
+                f"the run is failing with {type(failure).__name__}: "
+                f"{_detail_of(failure)}"
+            )
+        elif self.degraded:
+            because = (
+                "these sources degraded this run: "
+                + ", ".join(sorted(self.degraded))
+            )
+        else:
+            because = ""
+
         for stage in (s for s in self.stages if s.starved):
+            if because:
+                # Reported, not shouted, and the annotation says the same
+                # thing. Something upstream already explains this, and on
+                # a failing run the run page is already showing it.
+                log.warning(
+                    "%s received %d item(s) and produced nothing — %s. "
+                    "Probably a consequence rather than a wiring defect, "
+                    "but worth confirming the stage recovers once that is "
+                    "fixed",
+                    stage.name, stage.took, because,
+                )
+                if failure is None:
+                    # A DEGRADED run still shipped, so nobody is looking at
+                    # a red run to explain it. A failing one does not need
+                    # a second panel competing with its own traceback.
+                    _annotate(
+                        f"{stage.name} received {stage.took} item(s) and "
+                        f"produced nothing, after {because}"
+                    )
+                continue
+
             log.warning(
-                "STARVED STAGE: %s received %d item(s) and produced nothing. "
-                "This is the shape of every 'built but never called' bug in "
-                "this project's history — check what actually reaches it",
+                "STARVED STAGE: %s received %d item(s) and produced nothing, "
+                "and nothing upstream failed. This is the shape of every "
+                "'built but never called' bug in this project's history — "
+                "check what actually reaches it",
                 stage.name, stage.took,
             )
             # And on the run page, not only in the scrollback.
@@ -144,7 +196,11 @@ class RunCensus:
                 f"{stage.name} received {stage.took} item(s) and produced "
                 f"nothing — this stage may not be wired to anything"
             )
-        if starved and self.on_starved is not None:
+        # The handler writes to the run summary, which is for a finding
+        # somebody has to chase. When the run is already failing, GitHub is
+        # already showing the exception; adding a starved-stage panel next
+        # to it just invites the wrong diagnosis.
+        if starved and not because and self.on_starved is not None:
             # Guarded like everything else here. A handler that raises must
             # not become the thing that loses the morning.
             try:
@@ -152,6 +208,27 @@ class RunCensus:
             except Exception:  # pragma: no cover - instrumentation must not bite
                 log.warning("census starved-stage handler failed", exc_info=True)
         return starved
+
+
+def _detail_of(failure: BaseException) -> str:
+    """The exception's message, trimmed, without a doubled status code.
+
+    `google.api_core` prepends its own numeric code to whatever the
+    exception was constructed with, so today's spend-cap error stringifies
+    as "429 429 Your project has exceeded...". Cosmetic, but this line
+    exists to be read in a hurry by someone deciding whether they are
+    looking at a wiring bug, and a stutter in it reads like a logging
+    defect that then needs ruling out too.
+    """
+    detail = str(failure).strip()[:200]
+    head, sep, rest = detail.partition(" ")
+    # Only when the repeated token is a STATUS CODE. A bare
+    # "starts with the same word twice" rule would quietly rewrite
+    # "boom boom baz" to "boom baz", and silently editing an error
+    # message is a worse bug than the stutter it tidies.
+    if sep and head.isdigit() and rest.startswith(f"{head} "):
+        detail = f"{head} {rest[len(head) + 1:]}"
+    return detail
 
 
 def _annotate(message: str) -> None:
