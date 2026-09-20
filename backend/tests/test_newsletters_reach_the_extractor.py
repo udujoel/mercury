@@ -269,3 +269,56 @@ async def test_a_newsletter_the_world_segment_absorbed_is_not_extracted_again():
         f"{sorted(handed & absorbed)} is spoken in the world segment AND "
         "handed to the newsletter extractor — the same story twice"
     )
+
+
+async def test_the_census_sees_degradation_recorded_by_the_real_run(
+    tmp_path, caplog
+):
+    """The wiring, not the logic — `test_census.py` covers the logic.
+
+    Review of #56 removed `degraded=degraded` from `generate_briefing`
+    outright, leaving the census permanently blind to a degraded run, and
+    the whole 811-test suite stayed green. Passing `list(degraded)` so
+    later appends are invisible also passed. Both are the same mistake
+    this file was created for: every test hand-built the object instead of
+    asking what production hands it.
+
+    `degraded` is shared BY REFERENCE, so this asserts on an entry the
+    script chain appends from inside `generate_script`, after the census
+    already exists.
+    """
+    class _Degrading(FakeLLMProvider):
+        pass
+
+    async def _script(**kwargs):
+        # Exactly what `script_chain._give_up` does on a refusal.
+        kwargs["degraded"].append("world")
+        from app.pipeline.script_chain import generate_script
+        return await generate_script(**kwargs)
+
+    with caplog.at_level(logging.INFO):
+        await _run(
+            tmp_path, _the_morning_that_failed(),
+            llm=_Degrading(), generate_script=_script,
+        )
+
+    census_line = next(
+        r.getMessage() for r in caplog.records
+        if r.getMessage().startswith("run census:")
+    )
+    assert "script" in census_line
+
+    # The stage recorded AFTER the append must see it; the ones recorded
+    # before must not. That ordering is the whole point — a refusal in the
+    # script chain cannot explain an extractor that already finished.
+    from app.pipeline.generate import _LAST_CENSUS_STAGES
+
+    by_name = {s.name: s for s in _LAST_CENSUS_STAGES}
+    assert by_name["newsletters"].degraded_before == (), (
+        "the extractor ran before anything failed; letting a later "
+        "refusal explain it is the wrong-cause alarm #56 exists to stop"
+    )
+    assert "world" in by_name["script"].degraded_before, (
+        "the census is not sharing the run's degraded list — removing "
+        "`degraded=degraded` from generate_briefing would pass silently"
+    )

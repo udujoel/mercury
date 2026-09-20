@@ -47,6 +47,19 @@ class Stage:
     # subjects the web has not covered. Those set this, and are reported
     # without the alarm.
     may_be_empty: bool = False
+    # What had already gone wrong at the moment this stage ran.
+    #
+    # A snapshot, not a live reference, and that is the whole point.
+    # `script_chain._give_up` appends "world"/"inbox"/"follow_ups" to the
+    # run's degraded list from INSIDE `generate_script`, long after the
+    # newsletter extractor finished — so reading the list at report time
+    # let a refusal that happened later "explain" a stage that had already
+    # produced nothing. Review of #56 caught that being exactly the bug
+    # #56 exists to fix: an alarm naming the wrong cause.
+    #
+    # Causality is the rule. Only something that had already failed when a
+    # stage ran can account for that stage being empty.
+    degraded_before: tuple[str, ...] = ()
 
     @property
     def starved(self) -> bool:
@@ -110,7 +123,10 @@ class RunCensus:
         self, name: str, *, took: int, made: int, may_be_empty: bool = False
     ) -> None:
         self.stages.append(
-            Stage(name=name, took=took, made=made, may_be_empty=may_be_empty)
+            Stage(
+                name=name, took=took, made=made, may_be_empty=may_be_empty,
+                degraded_before=tuple(self.degraded),
+            )
         )
 
     def report(self, *, failure: BaseException | None = None) -> list[str]:
@@ -136,26 +152,32 @@ class RunCensus:
         log.info("run census: %s", summary)
 
         starved = [s.name for s in self.stages if s.starved]
-        # Why it is empty decides what to say about it. Three cases, and
-        # only the third is the one this module was built for.
-        if failure is not None:
-            because = (
-                f"the run is failing with {type(failure).__name__}: "
-                f"{_detail_of(failure)}"
-            )
-        elif self.degraded:
-            because = (
-                "these sources degraded this run: "
-                + ", ".join(sorted(self.degraded))
-            )
-        else:
-            because = ""
+        # Why a stage is empty decides what to say about it, and it is
+        # asked PER STAGE. Three cases, and only the third is the one this
+        # module was built for.
+        run_failed = (
+            f"the run is failing with {type(failure).__name__}: "
+            f"{_detail_of(failure)}"
+            if failure is not None else ""
+        )
 
+        def _why(stage: Stage) -> str:
+            if run_failed:
+                return run_failed
+            if stage.degraded_before:
+                return (
+                    "this had already failed when it ran: "
+                    + ", ".join(sorted(stage.degraded_before))
+                )
+            return ""
+
+        unexplained: list[str] = []
         for stage in (s for s in self.stages if s.starved):
+            because = _why(stage)
             if because:
                 # Reported, not shouted, and the annotation says the same
-                # thing. Something upstream already explains this, and on
-                # a failing run the run page is already showing it.
+                # thing. Something that had already failed accounts for
+                # this, and on a failing run the page is already showing it.
                 log.warning(
                     "%s received %d item(s) and produced nothing — %s. "
                     "Probably a consequence rather than a wiring defect, "
@@ -165,13 +187,15 @@ class RunCensus:
                 )
                 if failure is None:
                     # A DEGRADED run still shipped, so nobody is looking at
-                    # a red run to explain it. A failing one does not need
+                    # a red run to explain it. A FAILING one does not need
                     # a second panel competing with its own traceback.
                     _annotate(
                         f"{stage.name} received {stage.took} item(s) and "
                         f"produced nothing, after {because}"
                     )
                 continue
+
+            unexplained.append(stage.name)
 
             log.warning(
                 "STARVED STAGE: %s received %d item(s) and produced nothing, "
@@ -196,15 +220,20 @@ class RunCensus:
                 f"{stage.name} received {stage.took} item(s) and produced "
                 f"nothing — this stage may not be wired to anything"
             )
-        # The handler writes to the run summary, which is for a finding
-        # somebody has to chase. When the run is already failing, GitHub is
-        # already showing the exception; adding a starved-stage panel next
-        # to it just invites the wrong diagnosis.
-        if starved and not because and self.on_starved is not None:
+        # The summary panel is only ever about UNEXPLAINED starvation.
+        #
+        # Its text asks the reader to go and check what reaches the stage,
+        # which is the right question when nothing else went wrong and the
+        # wrong one otherwise — so a stage with an explanation gets the
+        # softer log line and annotation above, and never the panel. This
+        # is narrower than `not because` was: that suppressed the panel
+        # for EVERY starved stage as soon as any one of them had an
+        # explanation.
+        if unexplained and self.on_starved is not None:
             # Guarded like everything else here. A handler that raises must
             # not become the thing that loses the morning.
             try:
-                self.on_starved(starved)
+                self.on_starved(unexplained)
             except Exception:  # pragma: no cover - instrumentation must not bite
                 log.warning("census starved-stage handler failed", exc_info=True)
         return starved
@@ -220,7 +249,16 @@ def _detail_of(failure: BaseException) -> str:
     looking at a wiring bug, and a stutter in it reads like a logging
     defect that then needs ruling out too.
     """
-    detail = str(failure).strip()[:200]
+    # Collapsed to ONE LINE first. A multi-line message split the stage
+    # name from "probably a consequence rather than a wiring defect", in a
+    # module whose entire thesis is being legible inside 4,000 lines of pip
+    # output — and `_annotate` only escapes newlines it is handed directly.
+    detail = " ".join(str(failure).split())[:200]
+    if not detail:
+        # `asyncio.CancelledError()` really does stringify to "", and
+        # "the run is failing with CancelledError: ." reads as a logging
+        # bug the reader then has to rule out as well.
+        return "no message"
     head, sep, rest = detail.partition(" ")
     # Only when the repeated token is a STATUS CODE. A bare
     # "starts with the same word twice" rule would quietly rewrite

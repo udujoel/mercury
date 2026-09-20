@@ -200,13 +200,17 @@ def test_a_degraded_run_names_the_source_that_failed(caplog):
 
     from app.pipeline.census import RunCensus
 
-    census = RunCensus(degraded=["rss", "calendar"])
-    census.record("articles", took=146, made=0)
+    # `calendar` and `email` are what ingestion actually records; `rss` is
+    # deliberately excluded there, so a test using it would be asserting
+    # against a value production can never produce.
+    census = RunCensus(degraded=["calendar", "email"])
+    census.record("inbox", took=146, made=0)
     with caplog.at_level(logging.WARNING):
         census.report()
 
     assert "STARVED STAGE" not in caplog.text
-    assert "calendar, rss" in caplog.text
+    assert "calendar, email" in caplog.text
+    assert "already failed when it ran" in caplog.text
 
 
 def test_a_clean_run_still_gets_the_full_alarm(caplog):
@@ -288,3 +292,136 @@ def test_a_doubled_status_code_is_not_repeated_back():
     # genuinely repeats a word.
     assert _detail_of(RuntimeError("boom boom")) == "boom boom"
     assert _detail_of(RuntimeError("boom boom baz")) == "boom boom baz"
+
+
+def test_a_later_failure_cannot_explain_an_earlier_stage(caplog):
+    """The bug review found inside the fix for the same bug.
+
+    `script_chain._give_up` appends "world"/"inbox"/"follow_ups" to the
+    run's degraded list from inside `generate_script` — long after the
+    newsletter extractor has finished. Reading that list at report time
+    let a refusal which happened LATER account for a stage that was
+    already empty, which is the wrong-cause alarm this module exists to
+    stop. Causality is the rule: only what had already failed when a stage
+    ran can account for it.
+    """
+    import logging
+
+    from app.pipeline.census import RunCensus
+
+    degraded: list[str] = []
+    census = RunCensus(degraded=degraded)
+    census.record("newsletters", took=13, made=0)   # nothing had failed yet
+    degraded.append("world")                        # the refusal, afterwards
+    census.record("script", took=6, made=29)
+
+    with caplog.at_level(logging.WARNING):
+        assert census.report() == ["newsletters"]
+
+    assert "STARVED STAGE: newsletters" in caplog.text, (
+        "a segment that gave up AFTER the extractor ran cannot explain it; "
+        "softening this is how the 09-16 bug would hide a second time"
+    )
+
+
+def test_an_earlier_failure_still_explains_a_later_stage(caplog):
+    """The other direction has to keep working, or the branch is dead."""
+    import logging
+
+    from app.pipeline.census import RunCensus
+
+    degraded = ["calendar"]
+    census = RunCensus(degraded=degraded)
+    census.record("inbox", took=21, made=0)
+
+    with caplog.at_level(logging.WARNING):
+        census.report()
+
+    assert "STARVED STAGE" not in caplog.text
+    assert "calendar" in caplog.text
+
+
+def test_only_unexplained_stages_reach_the_run_summary():
+    """The panel asks the reader to check what reaches the stage. That is
+    the right question when nothing else went wrong and the wrong one
+    otherwise — and the old guard suppressed the panel for EVERY starved
+    stage as soon as any one of them had an explanation."""
+    from app.pipeline.census import RunCensus
+
+    seen: list[list[str]] = []
+    degraded = ["calendar"]
+    census = RunCensus(on_starved=seen.append, degraded=degraded)
+    census.record("inbox", took=21, made=0)          # explained by calendar
+    census.record("newsletters", took=13, made=0)    # explained too
+
+    census.stages.append(type(census.stages[0])(
+        name="widgets", took=9, made=0, degraded_before=()
+    ))                                                # nothing explains this
+    census.report()
+
+    assert seen == [["widgets"]], (
+        "the explained stages must not be in the panel, and the "
+        "unexplained one must be"
+    )
+
+
+def test_a_degraded_run_still_gets_an_annotation(capsys, monkeypatch):
+    """It shipped, so nobody is looking at a red run to explain it. A
+    FAILING run does not need a second panel competing with its traceback,
+    which is the distinction `if failure is None` draws."""
+    from app.pipeline.census import RunCensus
+
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+
+    census = RunCensus(degraded=["calendar"])
+    census.record("inbox", took=21, made=0)
+    census.report()
+    assert "::warning::" in capsys.readouterr().out
+
+    census = RunCensus(degraded=["calendar"])
+    census.record("inbox", took=21, made=0)
+    census.report(failure=RuntimeError("the run died"))
+    assert "::warning::" not in capsys.readouterr().out
+
+
+def test_a_multi_line_exception_stays_on_one_line(caplog):
+    """A three-line WARNING splits the stage name from the sentence that
+    says it is probably not a wiring defect — in the module whose whole
+    thesis is being legible inside 4,000 lines of pip output."""
+    import logging
+
+    from app.pipeline.census import RunCensus
+
+    census = RunCensus()
+    census.record("newsletters", took=13, made=0)
+    with caplog.at_level(logging.WARNING):
+        census.report(failure=RuntimeError("multi\nline\nmessage"))
+
+    assert "multi line message" in caplog.text
+    assert "multi\nline" not in caplog.text
+
+
+def test_an_exception_with_no_message_does_not_render_a_bare_colon(caplog):
+    """`asyncio.CancelledError()` really does stringify to "", and "failing
+    with CancelledError: ." reads as a logging bug the reader then has to
+    rule out too."""
+    import asyncio
+    import logging
+
+    from app.pipeline.census import RunCensus
+
+    census = RunCensus()
+    census.record("newsletters", took=13, made=0)
+    with caplog.at_level(logging.WARNING):
+        census.report(failure=asyncio.CancelledError())
+
+    assert "CancelledError: no message" in caplog.text
+    assert ": ." not in caplog.text
+
+
+def test_a_runaway_exception_message_is_bounded():
+    """The warning has to stay readable next to the traceback that already
+    carries the full text."""
+    from app.pipeline.census import _detail_of
+
+    assert len(_detail_of(RuntimeError("x" * 5_000))) == 200
