@@ -672,7 +672,7 @@ Eight independent reviews of Mercury as a thing used at 7am rather than as a
 codebase. Full evidence in `docs/REVIEW-2026-09-14.md`; these are the tasks it
 produced, ranked by what they buy per hour spent.
 
-- [~] 27. **Split the newsletter flag.** HALF DONE (#51). The AUDIO half
+- [x] 27. **Split the newsletter flag.** DONE (#51 audio half, #55 desk half). The AUDIO half
       landed: a bank alert is no longer pinned LOW and barred from the
       actionable segment — `detect_urgent` lifts money/account/security mail
       to HIGH with `requires_response`, and it is deliberately narrow because
@@ -698,6 +698,50 @@ produced, ranked by what they buy per hour spent.
       with an escalation list — restricted, suspended, unauthorised, verify,
       failed payment, unusual sign-in — that can lift an account notice to
       HIGH. This is the single highest-value change on the board.
+
+      DESK HALF DONE (#55). Live inbox 2026-09-20: 13 messages flagged
+      `is_newsletter` and eligible for the 30-day desk. After the gate, 6
+      are gated — three GitHub notification mails, GTBank "Transaction
+      Notification", a Google "Security alert" (also escalated to URGENT),
+      Trading212 "Deposit successful" — and all five real publications are
+      kept. The gate covers `digest_members`, the newsletters shelf and
+      `_newsletters_for_extraction`.
+
+      TWO STILL SLIP THROUGH and that is the deliberate trade: a Google
+      account-data notice and a Qoder billing notice, both from `noreply-`
+      addresses. The first cut caught them with `noreply@` / `no-reply@`
+      sender rules, and review showed what that cost — those two strings
+      are ALREADY in `NEWSLETTER_SENDER_PATTERNS` as evidence a message IS
+      a newsletter, so two functions in one file drew opposite conclusions
+      from one substring, and `noreply@medium.com` and a Reuters digest
+      were gated along with the bank. `noreply@` means BULK, which
+      journalism and receipts both are, so it discriminates nothing.
+      Recall on two billing notices is the cheaper thing to lose.
+
+      Three tiers now, because one list was again answering two questions:
+      `FINANCIAL_SENDER_DOMAINS` (an explicit provider list — the only tier
+      that can escalate to urgent), `TRANSACTIONAL_SUBJECT_SIGNALS`
+      (anchored on a possessive or a completed action) and
+      `TRANSACTIONAL_SENDER_SIGNALS` (shapes a publisher does not use).
+
+      The half that was NOT in this description, and is the more serious
+      one: `detect_urgent` refuses anything flagged `is_newsletter`, so the
+      same `List-Unsubscribe` misclassification made bank alerts
+      structurally incapable of being urgent. The category named above as
+      the whole point of the escalation list could never reach it.
+
+      The exemption is keyed on `is_financial`, NOT on `is_transactional`,
+      and the first cut got this badly wrong. Four subject signals were
+      also `URGENT_PATTERNS` — "security alert", "verify your", "unusual
+      sign-in", "payment failed" — so one match both pulled a message off
+      the desk and promoted it into the action-required list. Four of five
+      realistic publications came out HIGH, including the PR's own
+      counter-example. And because escalated newsletters sort first, they
+      ate the six-email selection cap and were then dropped from OTHER
+      MAIL, so the inbox segment read out NOTHING. For a newsletter only
+      the SUBJECT is searched now: a bank states the consequence in the
+      subject line, a digest mentions someone else's breach in paragraph
+      three.
 
 - [ ] 28. **Two briefings a day, and count what they cost.** Four a day put
       Google TTS at ~88% of its million free characters and Actions at ~82%
