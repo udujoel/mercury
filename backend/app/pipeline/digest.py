@@ -204,10 +204,17 @@ def stories_to_enrich(stories: list[Story]) -> list[Story]:
     highest-scoring newsletter clusters; the rest are still on the desk with
     the publication's own headline, which is what the bound has always cost.
     """
+    # `digest_members`, not raw `_is_newsletter`. Review of #55: a cluster
+    # holding a GTBank alert plus a low-scoring wire story jumped the
+    # enrichment queue ahead of a pure-RSS story scoring five times higher,
+    # because the bank alert counted as "newsletter-backed". No body leaks
+    # — `build_enrichment_prompt` goes through `digest_members` too — but
+    # it is the same one-flag-two-questions bug this task exists to fix,
+    # left in place one function away from the fix.
     newsletter_backed = [
         story
         for story in stories
-        if any(_is_newsletter(member) for member in story.members)
+        if any(_is_newsletter(member) for member in digest_members(story))
     ]
     chosen = list(newsletter_backed[:DIGEST_MAX_ENRICHED])
     seen = {story.cluster_id for story in chosen}

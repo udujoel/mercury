@@ -279,17 +279,39 @@ async def generate_briefing(
         newsletter_stories, newsletter_remainder = await _extract_newsletter_stories(
             llm, for_extraction
         )
+        # `took` is the count BEFORE the transactional gate, deliberately.
+        # Measuring after it means a gate that empties the list reports
+        # "newsletters 0->0" and never warns — and this is the exact stage
+        # that ran zero times for four days while every run said success.
+        # The line below it uses the pre-filter inbox count for the same
+        # reason.
         census.record(
-            "newsletters", took=len(for_extraction), made=len(newsletter_stories)
+            "newsletters",
+            took=sum(1 for e in inbox_emails if e.raw.get("is_newsletter")),
+            made=len(newsletter_stories),
         )
         census.record("articles", took=len(articles), made=len(world_stories))
-        # OTHER MAIL means OTHER. Without this the newsletters arrive in the
-        # prompt TWICE — once taken apart into stories, and once whole with
-        # their bodies, under a header telling the hosts to cover them "by
-        # sender and subject only". The bundle the whole feature exists to
-        # dismantle would be sitting in the same prompt, intact.
+        # OTHER MAIL means everything the newsletter block did NOT take.
+        #
+        # Without this the newsletters arrive in the prompt TWICE — once
+        # taken apart into stories, and once whole with their bodies, under
+        # a header telling the hosts to cover them "by sender and subject
+        # only". The bundle the whole feature exists to dismantle would be
+        # sitting in the same prompt, intact.
+        #
+        # So the test is the COMPLEMENT of `_newsletters_for_extraction`,
+        # not "is it a newsletter". Review of #55 found the difference is
+        # not academic: transactional mail is excluded from extraction, so
+        # excluding it here too sent it nowhere at all. A GTBank
+        # "Transaction Notification" was off the desk, out of the
+        # newsletter block, out of the rapid-fire tail and not urgent
+        # enough to be escalated — the message the whole task was written
+        # about reached no surface in the product.
+        spoken_as_stories = {
+            id(e) for e in _newsletters_for_extraction(selection["emails"])
+        }
         other_mail = [
-            e for e in selection["emails"] if not e.raw.get("is_newsletter")
+            e for e in selection["emails"] if id(e) not in spoken_as_stories
         ]
         census.record("inbox", took=len(emails), made=len(other_mail),
                       # An inbox that is entirely newsletters legitimately

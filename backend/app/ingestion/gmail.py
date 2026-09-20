@@ -231,28 +231,59 @@ def detect_newsletter(headers: dict[str, str]) -> tuple[bool, str | None]:
 # while never reaching the desk, the enrichment pass or the research
 # provider.
 
-# Lowercase substrings. Subject signals match the subject; sender signals
-# match the whole From header, so a signal can be a bare domain
-# ("@gtbank.com") or a local part ("noreply@", "notifications@").
+# Three lists, because review of #55 showed one was answering two questions
+# again — the exact mistake this task exists to fix.
 #
-# Local-part shapes first, because they generalise to senders nobody has
-# listed yet. The risk runs the other way too: plenty of real publications
-# send from `noreply@`, and one that does would lose its desk row. That is
-# the trade this list encodes, and it is why the SUBJECT list is the more
-# conservative half — a subject rule fires on what the message IS rather
-# than on how it happened to be sent.
+# `noreply@` and `no-reply@` are NOT here, though the first cut had them.
+# They are already in `NEWSLETTER_SENDER_PATTERNS` above as evidence a
+# message IS a newsletter, and two functions in one file cannot draw
+# opposite conclusions from one substring. The reason they appear in both
+# is that they mean BULK, which journalism and receipts both are. So they
+# discriminate nothing, and using them gated `noreply@medium.com` off the
+# desk along with the bank.
+#
+# What is left are shapes a publication does not use. A newsletter is sent
+# by a publisher; `notifications@`, `alerts@` and `donotreply@` are sent by
+# a system with no editorial voice at all.
 TRANSACTIONAL_SENDER_SIGNALS: list[str] = [
-    "noreply@", "no-reply@", "noreply-", "no-reply-", "donotreply@",
     "notifications@", "notification@", "notify@",
-    "alerts@", "alert@", "@accounts.google.com", "notifications@github.com",
+    "alerts@", "alerting@", "donotreply@", "do-not-reply@",
+    "mailer-daemon@", "postmaster@",
 ]
 
+# Providers whose mail is about the reader's own money or account, never
+# about the world. An explicit list, because this is the one place where
+# precision is worth the maintenance: it is what lifts a bank alert into
+# ACTION REQUIRED, and a wrong entry here does not merely lose a desk row,
+# it wakes someone up.
+#
+# Matched against the whole From header, so an entry can be a domain
+# ("@gtbank.com") or a subdomain suffix that covers a family of senders.
+FINANCIAL_SENDER_DOMAINS: list[str] = [
+    "@gtbank.com", "@trading212.com", "@wise.com", "@revolut.com",
+    "@paypal.com", "@stripe.com", "@monzo.com", "@starlingbank.com",
+    "@accounts.google.com", "@account.microsoft.com",
+]
+
+# Subjects that can only be about the reader's own account.
+#
+# Four entries were removed after review: "withdrawal", "your order",
+# "verify your" and "security alert". Each is a news phrase before it is a
+# banking one — "US Announces Troop Withdrawal From Syria" was gated off
+# the desk, and the PRD's own five-source acceptance story lost three of
+# its five sources to it. Worse, those four are also `URGENT_PATTERNS`, so
+# the subject that marked a message transactional was the same string that
+# marked it urgent: a security newsletter was removed from the desk AND
+# promoted into the action-required list by one match.
+#
+# What remains is anchored on a possessive or a completed action, which a
+# headline about the world does not have.
 TRANSACTIONAL_SUBJECT_SIGNALS: list[str] = [
-    "transaction notification", "deposit successful", "security alert",
-    "payment received", "payment failed", "failed payment", "your receipt",
-    "your invoice", "invoice #", "your order", "order confirmation",
-    "withdrawal", "account statement", "statement is ready",
-    "verify your", "password reset", "sign-in attempt", "unusual sign-in",
+    "transaction notification", "transaction alert",
+    "deposit successful", "withdrawal request", "withdrawal successful",
+    "payment received", "your receipt", "your invoice", "invoice #",
+    "order confirmation", "your statement", "statement is ready",
+    "account statement", "password reset", "reset your password",
 ]
 
 
@@ -276,6 +307,11 @@ def detect_transactional(
     haystack = (subject or "").lower()
     sender = headers.get("From", "").lower()
 
+    # Financial senders first, so the signal string names the tier that
+    # `detect_urgent` keys on rather than whichever rule happened to match.
+    for domain in FINANCIAL_SENDER_DOMAINS:
+        if domain in sender:
+            return True, f"financial ({domain})"
     for signal in TRANSACTIONAL_SUBJECT_SIGNALS:
         if signal in haystack:
             return True, f"subject ({signal})"
@@ -283,6 +319,19 @@ def detect_transactional(
         if signal in sender:
             return True, f"sender ({signal})"
     return False, None
+
+
+def is_financial_sender(headers: dict[str, str]) -> bool:
+    """Is this from a provider that holds the reader's money or account?
+
+    The narrow gate, kept separate from `detect_transactional` because the
+    two carry different consequences. Being transactional costs a message
+    its place on the browse desk. Being FINANCIAL can lift it past the
+    newsletter floor into the segment the hosts introduce as needing
+    attention — so it is an explicit list of providers, never a keyword.
+    """
+    sender = headers.get("From", "").lower()
+    return any(domain in sender for domain in FINANCIAL_SENDER_DOMAINS)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -330,7 +379,14 @@ URGENT_PATTERNS: list[str] = [
     # Squarely inside the owner's "money, accounts and security only" rule,
     # and the live inbox carried one on 2026-09-20 that reached nothing:
     # "Security alert for <an account>" from no-reply@accounts.google.com.
-    r"security alert",
+    #
+    # ANCHORED, because the bare noun phrase is not rare. Review found
+    # `r"security alert"` promoting a colleague's "we are rolling out a new
+    # security alert system next week, no action needed" to HIGH, and every
+    # GitHub notification for a PR whose title contains the words. Every
+    # other entry in this list is possessive-anchored for the same reason.
+    r"security alert (?:for|on) your",
+    r"security alert for [\w.+-]+@",
     r"new (?:device|sign[- ]?in) (?:on|to) your account",
 ]
 
@@ -343,7 +399,7 @@ URGENT_BODY_CHARS = 800
 
 def detect_urgent(
     subject: str, body: str, *, is_newsletter: bool = False,
-    is_transactional: bool = False,
+    is_financial: bool = False,
 ) -> tuple[bool, str | None]:
     """Does this mail carry a consequence worth naming out loud?
 
@@ -357,24 +413,41 @@ def detect_urgent(
     expensive direction: this segment's whole value is that when it says
     something needs attention, it does.
 
-    **Transactional mail is exempt from that guard**, and the omission was
-    load-bearing. `detect_newsletter` fires on `List-Unsubscribe`, which
-    every bank and payment app sets, so a GTBank account-restriction warning
-    arrived flagged `is_newsletter` and this function refused it before
-    reading a word — the one category the owner named as worth waking up for
-    was the one category structurally incapable of being urgent. The two
-    flags now say different things: `is_newsletter` is about EDITORIAL
-    TREATMENT, `is_transactional` about whether a machine sent it, and the
-    false-positive argument above is entirely about the first. Someone
-    else's incident reported as news is a newsletter; a notice addressed to
-    the reader about their own money is not.
+    **Mail from a FINANCIAL sender is exempt from that guard**, and the
+    omission was load-bearing. `detect_newsletter` fires on
+    `List-Unsubscribe`, which every bank and payment app sets, so a GTBank
+    account-restriction warning arrived flagged `is_newsletter` and this
+    function refused it before reading a word — the one category the owner
+    named as worth waking up for was the one category structurally
+    incapable of being urgent.
+
+    The exemption is `is_financial`, NOT `is_transactional`, and review of
+    #55 is why. Four `TRANSACTIONAL_SUBJECT_SIGNALS` were also
+    `URGENT_PATTERNS` — "security alert", "verify your", "unusual sign-in",
+    "payment failed" — so for those strings the subject that marked a
+    message transactional was the SAME MATCH that marked it urgent. A
+    security newsletter was pulled off the desk and promoted into the
+    action-required list in one move, and four of five realistic
+    publications came out HIGH. `is_financial` is an explicit list of
+    providers who hold the reader's money, which is the owner's stated
+    rule — money, accounts and security — rather than a keyword that
+    journalism also uses.
+
+    **For a newsletter, only the SUBJECT is searched.** A bank states the
+    consequence in the subject line; a digest mentions someone else's
+    breach in its third paragraph. Searching the body of an exempted bulk
+    message is how "Cloudflare users saw unusual sign-in alerts" became an
+    emergency.
 
     Matched on the subject and the first screen of the body only. A phrase in
     a fortieth paragraph is reporting, not addressing.
     """
-    if is_newsletter and not is_transactional:
+    if is_newsletter and not is_financial:
         return False, None
-    haystack = f"{subject or ''}\n{(body or '')[:URGENT_BODY_CHARS]}"
+    if is_newsletter:
+        haystack = subject or ""
+    else:
+        haystack = f"{subject or ''}\n{(body or '')[:URGENT_BODY_CHARS]}"
     match = _URGENT_RE.search(haystack)
     if match:
         return True, match.group(0).lower()
@@ -469,7 +542,7 @@ def message_to_item(raw: dict[str, Any], user_email: str) -> Item:
     )
     is_urgent, urgent_signal = detect_urgent(
         subject, body,
-        is_newsletter=is_newsletter, is_transactional=is_transactional,
+        is_newsletter=is_newsletter, is_financial=is_financial_sender(headers),
     )
     priority, requires_response = classify_priority(
         is_newsletter=is_newsletter,

@@ -31,8 +31,20 @@ async def test_fetch_emails_respects_max_messages():
 
 
 async def test_newsletter_is_low_priority_never_requires_response():
+    """Narrowed to NON-FINANCIAL newsletters (ROADMAP task 27).
+
+    "Every newsletter is LOW" stopped being what the code claims once a
+    bank alert — which carries `List-Unsubscribe` like everything else
+    bulk — could be escalated. It stayed green only because this fixture's
+    one `noreply@` sender is a flash sale with no urgent phrase in it, so
+    it was one fixture edit away from failing for the right reason with a
+    misleading message.
+    """
     items = await gmail.fetch_emails(fixture=FIXTURE)
-    newsletters = [i for i in items if i.raw.get("is_newsletter")]
+    newsletters = [
+        i for i in items
+        if i.raw.get("is_newsletter") and not i.raw.get("is_urgent")
+    ]
     assert newsletters, "fixture should contain at least one newsletter"
     for item in newsletters:
         assert item.priority == Priority.LOW
