@@ -485,6 +485,31 @@ class UserSettings(BaseModel):
     feeds: list[str] = Field(default_factory=list)
     muted_senders: list[str] = Field(default_factory=list)
 
+    # What the listener actually cares about, in their own words —
+    # "semiconductor export controls", "Nigerian fintech", "Formula One".
+    #
+    # ROADMAP task 30. `score_stories` has accepted a `topic_centroid`
+    # since Phase 2 and no caller ever passed one, because there was
+    # nowhere for a person to say what they were interested in. So
+    # `interest` was the constant 0.5, its 0.20 weight cancelled, and with
+    # 153 of 160 stories single-outlet the cluster term was constant too:
+    # the world segment was `0.12 x cluster + 0.08 x recency`, a recency
+    # sort. On 2026-09-13 the two stories that reached the audio were the
+    # two most recently published of 209, and "Ask HN: how can I browse HN
+    # in dark mode?" beat a Russian strike on a Ukrainian train by six
+    # minutes.
+    #
+    # Empty means UNRANKED-BY-INTEREST, not "no interests" — the centroid
+    # is simply not computed and the weight goes on cancelling, exactly as
+    # before. That is the safe default, and the run log says so out loud
+    # every morning so this cannot go back to being silently dead.
+    interests: list[str] = Field(default_factory=list)
+    # Named people, companies and projects. A cruder, higher-precision
+    # signal than the centroid: an exact substring match worth 0.8 on the
+    # personal-relevance term, where the centroid is a fuzzy 0-1 on a
+    # different term entirely.
+    followed_entities: list[str] = Field(default_factory=list)
+
     @field_validator("feeds")
     @classmethod
     def _feeds_must_be_http_urls(cls, value: list[str]) -> list[str]:

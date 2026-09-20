@@ -6,7 +6,8 @@ times in production and nothing said so:
   - Phase 2's news half passed a hardcoded `n_stories=0` into every briefing
   - `music_set` was stripped by a Worker whitelist, so the setting never
     once applied
-  - `score_stories` accepts `topic_centroid`, and no caller passes it
+  - `score_stories` accepted `topic_centroid`, and no caller passed it
+    (fixed in #58 — and the settings field it needed had never been built)
   - the newsletter segment was fed from a cap that ranks newsletters last,
     and produced nothing for sixteen consecutive briefings
 

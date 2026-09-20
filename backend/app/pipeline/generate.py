@@ -55,7 +55,7 @@ from app.pipeline.digest import (
     research_subjects,
     stories_to_enrich,
 )
-from app.pipeline.ranking import score_stories
+from app.pipeline.ranking import score_stories, topic_centroid
 from app.synthesis.music import DEFAULT_SET as DEFAULT_MUSIC_SET
 from app.synthesis.stitch import synthesize_briefing
 from app.synthesis.storage import BriefingStorage, build_storage
@@ -142,6 +142,13 @@ async def generate_briefing(
     feeds: list[str] | None = None,
     # Senders whose mail never reaches the briefing.
     muted_senders: list[str] | None = None,
+    # ROADMAP task 30. Threaded explicitly rather than through
+    # `apply_to_environment`, for the same reason `disabled_segments` is:
+    # these are lists, and flattening one into an environment variable to
+    # parse it back out is a round trip through a format that cannot hold
+    # it.
+    interests: list[str] | None = None,
+    followed_entities: list[str] | None = None,
     # Which music set tops and tails the briefing, or "none" for silence.
     # None means the product default — this is the level that decides what a
     # briefing sounds like, as distinct from `synthesize_briefing`, which
@@ -246,6 +253,8 @@ async def generate_briefing(
             events=events,
             embeddings=embeddings,
             length=length,
+            interests=interests,
+            followed_entities=followed_entities,
         )
 
         scored_emails = _score_emails(score_emails, inbox_emails, events)
@@ -784,6 +793,71 @@ async def _extract_newsletter_stories(
         return [], 0
 
 
+async def _topic_centroid(
+    interests: list[str] | None, embeddings: EmbeddingProvider | None
+):
+    """The listener's interests as one normalised vector, or None.
+
+    None is the ordinary case and means the ranker behaves exactly as it
+    did before — `interest` falls back to its 0.5 constant, which after
+    the rescale in `score_stories` means "orthogonal", i.e. no
+    information either way.
+
+    Never raises, and now actually doesn't. Review of #58 found
+    `topic_centroid(vectors)` sitting OUTSIDE the try, so a provider
+    returning ragged vectors raised straight out of here, through
+    `_build_world_stories` (no try there either) and killed the whole
+    briefing — a ranking refinement taking down the morning, which is
+    rule 7 exactly backwards.
+    """
+    wanted = [t.strip() for t in (interests or []) if t.strip()]
+    if not wanted or embeddings is None:
+        log.info(
+            "ranking: no interest topics configured, so the world segment "
+            "is ranked without the interest term (set `interests` in the "
+            "user settings to change that)"
+        )
+        return None
+    try:
+        vectors = await embeddings.embed(wanted)
+        centroid = topic_centroid(vectors)
+    except Exception:
+        log.warning(
+            "ranking: could not embed interest topics; ranking without "
+            "the interest term", exc_info=True,
+        )
+        return None
+
+    # Logged AFTER computing, and keyed on what came back.
+    #
+    # The first cut logged "ranked against 1 interest topic(s)" for a
+    # settings value of [" "] — every topic filtered out, centroid None,
+    # the term inert, and the morning log affirming it was active. The
+    # line this PR leans on as its safety net was able to state the
+    # opposite of the truth.
+    if centroid is None:
+        log.warning(
+            "ranking: %d interest topic(s) produced no usable centroid, so "
+            "the world segment is ranked WITHOUT the interest term",
+            len(wanted),
+        )
+        return None
+    if len(vectors) != len(wanted):
+        # `dedup.build_stories` refuses this case outright rather than
+        # guessing an order mapping. Here the centroid is order-free, so
+        # a subset is still meaningful — but it must not be reported as
+        # the whole.
+        log.warning(
+            "ranking: embedded %d of %d interest topic(s); the centroid "
+            "covers the subset", len(vectors), len(wanted),
+        )
+    log.info(
+        "ranking: world segment ranked against %d interest topic(s): %s",
+        len(vectors), ", ".join(wanted[:6]),
+    )
+    return centroid
+
+
 async def _build_world_stories(
     *,
     emails: list[Item],
@@ -791,6 +865,8 @@ async def _build_world_stories(
     events: list[Any],
     embeddings: EmbeddingProvider | None,
     length: BriefingLength,
+    interests: list[str] | None = None,
+    followed_entities: list[str] | None = None,
 ) -> tuple[list[Story], list[Item], list[Story]]:
     """Cluster the day's news and decide what the world segment gets.
 
@@ -841,7 +917,17 @@ async def _build_world_stories(
     # it here does not protect a today story — that story's score does not
     # move either way — it only stops a Thursday one outranking news you have
     # no connection to at all.
-    stories = score_stories(stories, calendar_events=events)
+    # ROADMAP task 30: the ranker has accepted a topic centroid since
+    # Phase 2 and no caller ever passed one, so `interest` was a constant
+    # and its 0.20 weight cancelled out. Third of the four "built and
+    # never called" bugs in this project's history.
+    centroid = await _topic_centroid(interests, embeddings)
+    stories = score_stories(
+        stories,
+        calendar_events=events,
+        topic_centroid=centroid,
+        followed_entities=set(followed_entities or ()),
+    )
 
     world = [
         story

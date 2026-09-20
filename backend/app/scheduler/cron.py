@@ -273,6 +273,10 @@ async def run_daily_briefing_job(
             ),
             feeds=user_settings.feeds if user_settings else None,
             muted_senders=user_settings.muted_senders if user_settings else None,
+            interests=user_settings.interests if user_settings else None,
+            followed_entities=(
+                user_settings.followed_entities if user_settings else None
+            ),
             music_set=user_settings.music_set if user_settings else None,
             # The MORNING path, which is the one that actually runs. A
             # setting honoured only by the CLI is honoured by nobody: the

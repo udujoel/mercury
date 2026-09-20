@@ -66,12 +66,24 @@ struct UserSettings: Codable, Equatable {
     /// news is not a thing anyone asks for by accident.
     var feeds: [String]
     var mutedSenders: [String]
+    /// What the listener cares about, in their own words — "semiconductor
+    /// export controls", "Nigerian fintech". ROADMAP task 30.
+    ///
+    /// Empty means UNRANKED BY INTEREST rather than "no interests": the
+    /// world segment's interest term simply goes on cancelling, which is
+    /// what it did for two phases before this existed.
+    var interests: [String]
+    /// Named people, companies and projects. Matched on a word boundary
+    /// and ignored below three characters — following "X" once matched
+    /// "extension".
+    var followedEntities: [String]
 
     init(briefingLength: String? = nil,
          ttsProvider: String? = nil, musicSet: String? = nil,
          voiceA: String? = nil, voiceB: String? = nil,
          feeds: [String] = [], mutedSenders: [String] = [],
-         disabledSegments: [String] = []) {
+         disabledSegments: [String] = [],
+         interests: [String] = [], followedEntities: [String] = []) {
         self.disabledSegments = disabledSegments
         self.briefingLength = briefingLength
         self.musicSet = musicSet
@@ -80,6 +92,8 @@ struct UserSettings: Codable, Equatable {
         self.voiceB = voiceB
         self.feeds = feeds
         self.mutedSenders = mutedSenders
+        self.interests = interests
+        self.followedEntities = followedEntities
     }
 
     enum CodingKeys: String, CodingKey {
@@ -93,6 +107,8 @@ struct UserSettings: Codable, Equatable {
         case feeds
         case mutedSenders = "muted_senders"
         case disabledSegments = "disabled_segments"
+        case interests
+        case followedEntities = "followed_entities"
     }
 
     init(from decoder: Decoder) throws {
@@ -106,6 +122,9 @@ struct UserSettings: Codable, Equatable {
         mutedSenders = try c.decodeIfPresent([String].self, forKey: .mutedSenders) ?? []
         disabledSegments =
             try c.decodeIfPresent([String].self, forKey: .disabledSegments) ?? []
+        interests = try c.decodeIfPresent([String].self, forKey: .interests) ?? []
+        followedEntities =
+            try c.decodeIfPresent([String].self, forKey: .followedEntities) ?? []
     }
 
     /// Writes the version and a timestamp the client never reads back.
@@ -125,6 +144,8 @@ struct UserSettings: Codable, Equatable {
         try c.encode(feeds, forKey: .feeds)
         try c.encode(mutedSenders, forKey: .mutedSenders)
         try c.encode(disabledSegments, forKey: .disabledSegments)
+        try c.encode(interests, forKey: .interests)
+        try c.encode(followedEntities, forKey: .followedEntities)
     }
 
 }
