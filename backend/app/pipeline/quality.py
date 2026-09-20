@@ -207,6 +207,103 @@ def check_grounding(turns: list[Turn], source_text: str) -> list[dict]:
 
 
 # ──────────────────────────────────────────────────────────────
+# Rule 4-adjacent — the hosts must not relay a security instruction.
+# ──────────────────────────────────────────────────────────────
+
+# The fence stops the model OBEYING an email. It does nothing about the
+# model faithfully RELAYING one, and relaying is the more dangerous half.
+#
+# Live, 2026-09-13-1835: "It advises changing your password... This is a
+# critical security step to protect your account." Every safeguard worked
+# as designed. The model did not obey the email; it reported it, which is
+# exactly what the prompt asks for. But audio strips what a reader uses to
+# judge a phishing mail — the sender address, the headers, the link — and
+# replaces it with two trusted voices calling the instruction critical.
+#
+# The selection is attacker-controlled: `classify_priority` gives HIGH plus
+# `requires_response` to anything addressed to the listener containing a
+# "?". Task 27 widened this further, deliberately — account and security
+# mail can now escalate past the newsletter floor — so the path from "a
+# stranger sends a well-worded email" to "the hosts read it out as urgent"
+# is shorter than it was, not longer.
+#
+# And `check_grounding` makes it WORSE rather than better: a phishing claim
+# quoted accurately from the email scores as MORE grounded, because the
+# email is the source data.
+#
+# Two things have to be true for a flag, because either alone is fine. The
+# hosts SAYING an email asks for something is journalism. The hosts telling
+# the listener to do it, or vouching for it, is the product taking the
+# sender's side.
+_SECURITY_ACTION = re.compile(
+    r"\b(?:"
+    r"chang(?:e|ing) (?:your )?password|reset(?:ting)? (?:your )?password"
+    r"|verify (?:your )?(?:account|identity|email|details)"
+    r"|confirm (?:your )?(?:account|identity|details|payment)"
+    r"|updat(?:e|ing) (?:your )?(?:payment|billing|card|details)"
+    r"|click (?:the|that|this) link|follow (?:the|that) link"
+    r"|log ?in to (?:your )?account|sign ?in to (?:your )?account"
+    r"|enable two[- ]factor|share (?:your )?(?:code|otp|pin)"
+    r")\b",
+    re.I,
+)
+
+# The hosts endorsing it, or issuing it themselves.
+_ENDORSEMENT = re.compile(
+    r"\b(?:"
+    r"you should|you'?ll want to|make sure (?:you|to)|be sure to"
+    r"|worth doing|definitely (?:do|worth)|don'?t ignore|do that (?:today|now)"
+    r"|critical|urgent(?:ly)?|important that you|act (?:on it|now|today)"
+    r"|right away|as soon as possible|straight away|first thing"
+    r")\b",
+    re.I,
+)
+
+# Only where third-party text is spoken. The cold open and the weather do
+# not quote anybody's email.
+_RELAY_SEGMENTS = {"inbox", "follow_ups", "world"}
+
+
+def check_relayed_instructions(turns: list[Turn]) -> list[dict]:
+    """The hosts must not pass on a security instruction from a sender.
+
+    HEURISTIC, in the shape of the other gates and with the same honesty
+    about it: it looks for a security ACTION phrase and an ENDORSEMENT in
+    the same turn. Reporting that an email asks for something is allowed
+    and must stay allowed — that is journalism, and the segment's job.
+    What this catches is the hosts adding their own weight to it.
+
+    False positives are expected and are the cheap direction. "This is a
+    critical security step" about a legitimate password-reset the listener
+    themselves requested is a flag worth raising anyway: the hosts still
+    cannot tell the listener whether the mail is genuine, so naming the
+    sender and stopping is the right behaviour either way.
+    """
+    flagged = []
+    for index, turn in enumerate(turns):
+        if turn.segment.value not in _RELAY_SEGMENTS:
+            continue
+        action = _SECURITY_ACTION.search(turn.text)
+        if not action:
+            continue
+        endorsement = _ENDORSEMENT.search(turn.text)
+        if not endorsement:
+            continue
+        flagged.append({
+            "turn_index": index,
+            "segment": turn.segment.value,
+            "action": action.group(0).lower(),
+            "endorsement": endorsement.group(0).lower(),
+            "reason": (
+                "the hosts relay a security instruction and add their own "
+                "weight to it; audio has already stripped the sender "
+                "address, the headers and the link"
+            ),
+        })
+    return flagged
+
+
+# ──────────────────────────────────────────────────────────────
 # Run all gates together
 # ──────────────────────────────────────────────────────────────
 
@@ -221,12 +318,15 @@ def run_all_gates(turns: list[Turn], source_text: str) -> dict:
     monologues = check_monologues(turns)
     disagreement = check_disagreement(turns)
     grounding = check_grounding(turns, source_text)
+    relayed = check_relayed_instructions(turns)
     return {
         "filler": filler,
         "monologues": monologues,
         "disagreement": disagreement,
         "grounding": grounding,
+        "relayed_instructions": relayed,
         "total_issues": (
-            len(filler) + len(monologues) + len(disagreement) + len(grounding)
+            len(filler) + len(monologues) + len(disagreement)
+            + len(grounding) + len(relayed)
         ),
     }

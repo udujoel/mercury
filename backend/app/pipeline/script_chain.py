@@ -1061,7 +1061,8 @@ _CRITIQUE_SCHEMA = {
                     "type": {
                         "type": "string",
                         "enum": ["FLAT", "MONOLOGUE", "UNGROUNDED",
-                                 "AGREEABLE", "GENERIC", "FILLER"],
+                                 "AGREEABLE", "GENERIC", "FILLER",
+                                 "RELAYED_INSTRUCTION"],
                     },
                     "detail": {"type": "string"},
                     "fix": {"type": "string"},
@@ -1389,6 +1390,38 @@ async def _run_critique_and_revise(
     # revision if it does not regress.
     draft_report = run_all_gates(draft_turns, source_data)
     revised_report = run_all_gates(revised_turns, source_data)
+
+    # A relayed security instruction is not a quality issue to be traded
+    # off against the others, so it is decided BEFORE the score.
+    #
+    # `total_issues` treats every finding as one point, which is right for
+    # a flat turn or a generic line and wrong here: a revision that drops
+    # the phishing endorsement and picks up two clumsy sentences scores
+    # worse and would have been discarded. Rule 4 says this app must be
+    # structurally incapable of acting against the listener; reading a
+    # stranger's instruction out in a trusted voice is the closest thing
+    # to acting that a read-only product can do.
+    draft_relays = len(draft_report["relayed_instructions"])
+    revised_relays = len(revised_report["relayed_instructions"])
+    if revised_relays != draft_relays:
+        keep_revision = revised_relays < draft_relays
+        logger.warning(
+            "relayed security instruction: draft=%d revised=%d — keeping "
+            "the %s on that basis alone, whatever the other gates say",
+            draft_relays, revised_relays,
+            "revision" if keep_revision else "draft",
+        )
+        return revised_turns if keep_revision else draft_turns
+    if revised_relays:
+        # Both carry one. Nothing here can fix that, but it must not go
+        # out unremarked — the segment contract and the critique category
+        # are what should have caught it upstream.
+        logger.error(
+            "a relayed security instruction survived revision (%d in both "
+            "draft and revision): %s",
+            revised_relays, revised_report["relayed_instructions"],
+        )
+
     if revised_report["total_issues"] > draft_report["total_issues"]:
         logger.warning(
             "revision scored worse than draft on quality gates "

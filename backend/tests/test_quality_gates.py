@@ -221,20 +221,23 @@ def test_check_grounding_allows_host_and_user_names():
 # ──────────────────────────────────────────────────────────────
 
 
-def test_run_all_gates_aggregates_all_four():
+def test_run_all_gates_aggregates_every_gate():
     turns = [
         Turn(speaker="A", segment=Segment.CALENDAR, text="Um, meeting at nine."),
         Turn(speaker="B", segment=Segment.CALENDAR, text="Sounds good, agreed."),
     ]
     report = run_all_gates(turns, "meeting at nine source text")
     assert set(report.keys()) == {
-        "filler", "monologues", "disagreement", "grounding", "total_issues",
+        "filler", "monologues", "disagreement", "grounding",
+        "relayed_instructions", "total_issues",
     }
     assert len(report["filler"]) == 1
     assert len(report["disagreement"]) == 1
-    assert report["total_issues"] == (
-        len(report["filler"]) + len(report["monologues"])
-        + len(report["disagreement"]) + len(report["grounding"])
+    # Summed from the report's own lists rather than a hand-kept count, so
+    # a gate added without being counted fails here instead of quietly
+    # scoring zero forever.
+    assert report["total_issues"] == sum(
+        len(v) for k, v in report.items() if k != "total_issues"
     )
 
 

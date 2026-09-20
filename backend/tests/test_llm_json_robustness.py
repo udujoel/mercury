@@ -213,14 +213,34 @@ def test_turn_schema_matches_what_the_parser_accepts():
 
 
 def test_outline_and_critique_schemas_match_their_prompts():
+    """Derived from the prompt, not hardcoded beside it.
+
+    This used to assert two literal sets, so it pinned the schema and the
+    prompt to a snapshot rather than to EACH OTHER — the thing its name
+    promises. Adding a seventh critique category failed it for the wrong
+    reason: the schema and prompt agreed perfectly, and the test simply
+    had not been told. Meanwhile the failure it exists to catch — a
+    category the prompt asks for and the schema rejects, which makes the
+    model's answer unparseable — would have slipped through whenever
+    somebody updated both literals to match the schema alone.
+    """
+    import re
+
+    from app.pipeline.prompts import CRITIQUE_PROMPT
+
     assert set(
         _OUTLINE_SCHEMA["properties"]["segments"]["items"]["required"]
     ) == {"segment", "covers", "angle", "words"}
     issues = _CRITIQUE_SCHEMA["properties"]["issues"]["items"]
     assert set(issues["required"]) == {"turn_index", "type", "detail", "fix"}
-    assert set(issues["properties"]["type"]["enum"]) == {
-        "FLAT", "MONOLOGUE", "UNGROUNDED", "AGREEABLE", "GENERIC", "FILLER",
-    }
+
+    # The numbered category list the prompt actually asks the model for.
+    asked_for = set(re.findall(r"^\d+\. ([A-Z_]+) —", CRITIQUE_PROMPT, re.M))
+    assert asked_for, "the prompt's category list stopped being parseable"
+    assert asked_for == set(issues["properties"]["type"]["enum"]), (
+        "the critique prompt and its response schema disagree; the model "
+        "is asked for a category the schema will reject"
+    )
 
 
 async def test_every_json_pass_sends_a_schema():
