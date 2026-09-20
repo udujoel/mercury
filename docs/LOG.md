@@ -668,6 +668,54 @@ above the corrected line. Correcting code and leaving the comment that
 justified the old behaviour is how a fix gets reverted by the next reader.
 
 
+## 2026-09-20 — the newsletter segment has now run in production, once
+
+Merged #53 and dispatched a real run rather than trusting the merge. Run
+35534389198, `completed/success`:
+
+```
+newsletters: 11 issue(s) handed to the extractor
+newsletters: 11 issue(s) yielded 20 item(s) across 20 subject(s)
+newsletters: 6 subject(s) spoken, 14 held back, 6 researched
+stored briefing 2026-09-20-2106 in R2 (3,400,646 bytes) + manifest
+run census: newsletters 11->6  articles 157->4  inbox 12->1  script 11->48  desk 154->154
+```
+
+Fetched back through the deployed Worker, HTTP 200: 7.2 minutes, 48 turns,
+`degraded_sources: []`, and the inbox segment opens "Your inbox is dominated
+by artificial intelligence, revealing a fascinating tension between rapid
+innovation and rising apprehension" — then the second turn challenges it
+rather than agreeing, which is rule 2. Compare the 05:50 run the same
+morning, which spent ten of its inbox turns reading out one contract email.
+
+**The evidence that settled the diagnosis.** `gh run view 35490104809 --log`
+for the 05:50 briefing: 1,430 lines, and no `newsletters:` line anywhere in
+it, while `app.pipeline.digest` in the same run counted **13 newsletter(s)**.
+The extractor was handed an empty list and returned before reaching its log
+call. The same absence holds across five runs sampled from 09-19 and 09-20,
+all `completed/success`.
+
+That log also settled the cost question on the fix: `absorbing 0 email(s);
+0 further email(s) collapsed`. On the morning that failed, `inbox_emails`
+and `emails` were the same list, so feeding the extractor the deduplicated
+one would have cost nothing on the exact run this was about.
+
+**What the census would have said on day one**, had it existed on 09-16:
+
+```
+run census: newsletters 13->0  articles 146->4  inbox 21->6  script 11->34  desk 137->137
+STARVED STAGE: newsletters received 13 item(s) and produced nothing.
+```
+
+Four days and sixteen briefings earlier.
+
+**Bot reviews are not review.** Kilo's check went red on this PR with
+"Review failed: Assistant request was rate limited", and CodeRabbit posted
+"Review rate limited". Neither produced a finding. Every one of the eight
+real findings came from running `/code-review` deliberately — which is what
+CLAUDE.md step 4 says and why it says it.
+
+
 ---
 
 ## Standing facts worth not rediscovering
