@@ -67,7 +67,7 @@ from app.pipeline.prompts import (  # noqa: F401
     _fence_untrusted,
     _strip_fence_markers,
 )
-from app.pipeline.quality import run_all_gates
+from app.pipeline.quality import check_relayed_instructions, run_all_gates
 
 logger = logging.getLogger(__name__)
 
@@ -1061,7 +1061,8 @@ _CRITIQUE_SCHEMA = {
                     "type": {
                         "type": "string",
                         "enum": ["FLAT", "MONOLOGUE", "UNGROUNDED",
-                                 "AGREEABLE", "GENERIC", "FILLER"],
+                                 "AGREEABLE", "GENERIC", "FILLER",
+                                 "RELAYED_INSTRUCTION"],
                     },
                     "detail": {"type": "string"},
                     "fix": {"type": "string"},
@@ -1389,6 +1390,57 @@ async def _run_critique_and_revise(
     # revision if it does not regress.
     draft_report = run_all_gates(draft_turns, source_data)
     revised_report = run_all_gates(revised_turns, source_data)
+
+    # A relayed security instruction is not a quality issue to be traded
+    # off against the others, so it is decided BEFORE the score.
+    #
+    # `total_issues` treats every finding as one point, which is right for
+    # a flat turn or a generic line and wrong here: a revision that drops
+    # the phishing endorsement and picks up two clumsy sentences scores
+    # worse and would have been discarded. Rule 4 says this app must be
+    # structurally incapable of acting against the listener; reading a
+    # stranger's instruction out in a trusted voice is the closest thing
+    # to acting that a read-only product can do.
+    draft_relays = len(draft_report["relayed_instructions"])
+    revised_relays = len(revised_report["relayed_instructions"])
+    if revised_relays < draft_relays:
+        logger.warning(
+            "relayed security instruction: draft=%d revised=%d — keeping "
+            "the revision on that basis alone, whatever the other gates say",
+            draft_relays, revised_relays,
+        )
+        return revised_turns
+    if revised_relays > draft_relays:
+        # ONE-DIRECTIONAL, and review of #57 is why.
+        #
+        # The first cut also returned the draft here, and that turned a
+        # false positive into shipped damage: a revision that fixed four
+        # filler hits — rule 1, the non-negotiable CLAUDE.md calls the
+        # most important — was discarded because a legitimate world story
+        # about a breach used the words "critical" and "log in to your
+        # account". The gate is a heuristic; a heuristic may VETO nothing.
+        #
+        # So a suspected new relay is said out loud and then falls through
+        # to the ordinary score, where it costs one point like any other
+        # finding. Removing a relay still wins outright, because that
+        # direction cannot be made worse by a false positive.
+        logger.warning(
+            "the revision may have introduced a relayed security "
+            "instruction (draft=%d revised=%d): %s — not vetoing on a "
+            "heuristic, falling through to the quality score",
+            draft_relays, revised_relays,
+            revised_report["relayed_instructions"],
+        )
+    elif revised_relays:
+        # Both carry one. Nothing here can fix that, but it must not go
+        # out unremarked — the segment contract and the critique category
+        # are what should have caught it upstream.
+        logger.error(
+            "a relayed security instruction survived revision (%d in both "
+            "draft and revision): %s",
+            revised_relays, revised_report["relayed_instructions"],
+        )
+
     if revised_report["total_issues"] > draft_report["total_issues"]:
         logger.warning(
             "revision scored worse than draft on quality gates "
@@ -1762,6 +1814,26 @@ async def _generate_script_once(
     # but "normally" is doing work in that sentence, and the cost of being
     # sure is one set comparison.
     final_turns = _drop_disabled(final_turns, segments)
+
+    # The last word on what actually ships, whatever route it took here.
+    #
+    # `run_all_gates` has one production caller, inside
+    # `_run_critique_and_revise` — and every early return above it skips
+    # the gate entirely: an invalid revision, a refused critique, a raised
+    # exception, or `passes` below 4. Review of #57 confirmed the worst of
+    # those: a draft carrying the live phishing line plus an over-budget
+    # revision produced "revision invalid — keeping draft" and not one
+    # word about the relay. None of those paths scanned the DRAFT, which
+    # is the thing that ships.
+    #
+    # Logs only. Rule 7 — a briefing that names a suspicious message
+    # badly still beats no briefing, and this is a heuristic.
+    shipped_relays = check_relayed_instructions(final_turns)
+    if shipped_relays:
+        logger.error(
+            "SHIPPING a script that relays %d security instruction(s): %s",
+            len(shipped_relays), shipped_relays,
+        )
 
     source_refs = _build_source_refs(final_turns, emails, events, stories)
 

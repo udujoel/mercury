@@ -800,7 +800,7 @@ produced, ranked by what they buy per hour spent.
       and no check — the 2026-09-13 evening run died with a segfault and
       nothing reported it. Add `--max-age-hours` to `app.cli check`.
 
-- [ ] 32. **The hosts must not relay a security instruction.** The fence
+- [x] 32. **The hosts must not relay a security instruction.** DONE (#57). The fence
       stops the model OBEYING an email; it does nothing about it faithfully
       RELAYING one, and relaying is the more dangerous half because the
       hosts strip the sender address, the headers and the link. Live
@@ -812,6 +812,21 @@ produced, ranked by what they buy per hour spent.
       more grounded, not less. Add a `RELAYED_INSTRUCTION` critique category
       and a gate in the shape of the existing four, and change the segment
       contract so the hosts name the sender's domain and stop.
+
+      All three landed. `check_relayed_instructions` flags a turn carrying
+      BOTH a security action and an endorsement — reporting that a message
+      asks for something stays allowed, because that is the segment's job;
+      what is caught is the hosts adding their own weight to it.
+
+      One thing the description did not anticipate. `total_issues` treats
+      every finding as one point, so a revision that dropped the phishing
+      endorsement and picked up two clumsy sentences scored WORSE and was
+      discarded. The relay count is therefore decided BEFORE the score and
+      overrides it, and a relay surviving both draft and revision is logged
+      at ERROR. Task 27 also made this more urgent rather than less: account
+      and security mail can now escalate past the newsletter floor, so the
+      path from "a stranger sends a well-worded email" to "the hosts read it
+      out as urgent" got shorter today.
 
 - [ ] 33. **Decode `degraded_sources` on the phone.** The manifest has
       carried it since the schema was written and `BriefingManifest.swift`

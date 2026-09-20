@@ -774,6 +774,51 @@ a general "same word twice" rule would rewrite "boom boom baz", and
 silently editing an error message is a worse bug than the stutter.
 
 
+## 2026-09-20 — relaying is the dangerous half, not obeying
+
+Task 32. The injection fence has always stopped the model OBEYING an email.
+It does nothing about the model faithfully RELAYING one, and the live
+example is not a jailbreak — it is the system working exactly as designed:
+
+```
+2026-09-13-1835: "It advises changing your password... This is a critical
+security step to protect your account."
+```
+
+The model did not obey the email. It reported it, which is what the prompt
+asks for. What makes that dangerous is the medium: audio strips the sender
+address, the headers and the link — everything a reader uses to judge a
+phishing mail — and replaces them with two trusted voices calling the
+instruction critical.
+
+Three things compound it. The selection is attacker-controlled
+(`classify_priority` gives HIGH plus `requires_response` to anything
+addressed to the listener containing a "?"). Task 27, merged hours earlier
+today, widened it deliberately — account and security mail now escape the
+newsletter floor — so the path from "a stranger sends a well-worded email"
+to "the hosts read it as urgent" got SHORTER today. And `check_grounding`
+scores a phishing claim as MORE grounded, not less, because the email is
+the source data. A test pins that inversion, because it is the argument for
+a separate gate rather than a tweak to that one.
+
+**The thing the task description missed.** `total_issues` treats every
+finding as one point, which is right for a flat turn and wrong for this: a
+revision that dropped the phishing endorsement and picked up two clumsy
+sentences scored worse and would have been discarded. Security is not a
+quality dimension to be traded against pacing. The relay count is now
+decided before the score and overrides it, and a relay surviving both draft
+and revision is logged at ERROR.
+
+**Two tests here passed vacuously before they passed honestly**, and it is
+worth writing down how. `_run_critique_and_revise` validates a revision
+against the word budget and the expected segment list BEFORE comparing
+quality, so the first cut — a one-turn fixture with the default budget —
+had its revision rejected upstream and returned the draft. The assertion
+"the draft is kept" was satisfied for entirely the wrong reason. Mutation
+testing caught it: removing the override changed nothing. A test whose
+expected value is also its failure mode cannot tell you which one it saw.
+
+
 ---
 
 ## Standing facts worth not rediscovering
