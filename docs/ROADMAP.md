@@ -802,7 +802,30 @@ DROP, with reasons, from the review:
 - Storage cost work — R2 is at 4% of tier. The cost table belongs on
   characters and charged minutes, which is where both real cliffs are.
 
-- [x] 35. **Newsletters are bundles, so take them apart.** DONE (#51). The
+- [x] 36. **A census of every stage, on every run.** DONE (#53). Four times
+      a finished, tested feature ran zero times in production and nothing
+      said so — `n_stories=0`, `music_set`, `topic_centroid`, and the
+      newsletter segment for sixteen consecutive briefings. Every one was
+      green in CI and invisible in the log, because a stage that produces
+      nothing logs nothing and reads exactly like a stage with nothing to
+      do. `app/pipeline/census.py` records what each stage took in and gave
+      back, warns on any stage with input and no output, and writes the
+      finding to the GitHub job summary as well as the log. It never fails
+      a run. CLAUDE.md's "check what CALLS the new code" is advice to
+      whoever remembers; this is the same check run by the machine.
+
+      Review of #53 found the instrument had the bug it was built to catch:
+      `report()` sat on the happy path, so the run that produced nothing at
+      all was the one run with no census line. It is a context manager now.
+
+      Also worth not rediscovering: a FAKE can be the coverage hole.
+      `FakeLLMProvider` had no branch for the extraction prompt, so it
+      returned `{}` and every offline briefing had an empty newsletter
+      segment — including the acceptance test written to catch exactly the
+      double coverage that review later found. Green, and proving nothing.
+
+- [x] 35. **Newsletters are bundles, so take them apart.** DONE (#51, wired
+      in #53 — it had never once run in production; see below). The
       owner's 2026-09-15 spec: extract the news inside each newsletter,
       research it, and build one narrative across them, with a rapid-fire
       tail for other mail and urgent items escalated.
