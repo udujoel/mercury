@@ -35,7 +35,7 @@ import argparse
 import asyncio
 import logging
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 from app.core.config import apply_to_environment, get_settings
@@ -217,7 +217,7 @@ def _resolve_briefing_id(explicit: str | None, fallback: str) -> str | None:
     return briefing_id
 
 
-def _check(briefing_id: str) -> int:
+def _check(briefing_id: str, max_age_hours: float | None = None) -> int:
     """Is there a briefing for this id the phone could actually play?
 
     Deliberately does NOT stop at "the manifest exists". Two real failure
@@ -232,6 +232,22 @@ def _check(briefing_id: str) -> int:
 
     Both look exactly like success from the Actions log. So this asks for the
     audio too, and calls a zero-turn briefing what it is.
+
+    `max_age_hours` adds the question none of the above asks: is it still
+    FRESH? ROADMAP task 31. Present and playable is not the same as
+    current, and the gap is not hypothetical:
+
+      - the `00:12` cron generates a briefing named for the NEW day, so
+        every one of the Worker's morning checkpoints sees "this date has
+        a playable briefing" and stands down — the 05:40 alarm included.
+        The listener wakes to a briefing assembled from an inbox six
+        hours stale, and nothing anywhere reports a problem.
+      - on 2026-09-20 two runs failed at 20:44 and 20:48 on a Gemini
+        spend cap, and the last good briefing was 2.5 hours old with
+        nothing to say so. The watchdog had last run at 11:51.
+
+    Both are "the pipeline stopped and the check still passed", which is
+    the failure this whole file exists to make impossible.
     """
     from app.synthesis.storage import MIN_PLAYABLE_AUDIO_BYTES, build_storage
 
@@ -311,6 +327,33 @@ def _check(briefing_id: str) -> int:
             "upload did not finish. Re-run with force=true."
         )
         return 1
+
+    # Freshness LAST, so the more specific failures above keep their own
+    # exit codes and messages. A stale briefing that is also empty should
+    # be reported as empty.
+    if max_age_hours is not None:
+        generated = manifest.generated_at
+        if generated.tzinfo is None:
+            # Naive timestamps have cost this project three bugs; the
+            # manifest is written with UTC, so assume it rather than
+            # raising on the subtraction.
+            generated = generated.replace(tzinfo=UTC)
+        age_hours = (datetime.now(UTC) - generated).total_seconds() / 3600
+        if age_hours > max_age_hours:
+            print(
+                f"::error::Briefing {briefing_id} is playable but "
+                f"{age_hours:.1f} hours old, past the {max_age_hours:g}-hour "
+                "floor. It is being served as today's while describing an "
+                "inbox that has moved on. Generation has stopped, or the "
+                "only run that succeeded was the one just after midnight."
+            )
+            log.error(
+                "briefing %s is %.1fh old, past the %.1fh floor",
+                briefing_id, age_hours, max_age_hours,
+            )
+            return 1
+        log.info("briefing %s is %.1fh old, inside the floor",
+                 briefing_id, age_hours)
 
     log.info(
         "briefing %s is present and playable: %d turns, %.0fs of audio",
@@ -734,6 +777,16 @@ def main(argv: list[str] | None = None) -> int:
         help="verify a briefing exists and is playable; exit 1 if it is not",
     )
     chk.add_argument("--briefing-id", default=None, help="defaults to today, local")
+    chk.add_argument(
+        "--max-age-hours",
+        type=float,
+        default=None,
+        help=(
+            "also fail if the briefing is older than this many hours. "
+            "Present and playable is not the same as current — see "
+            "ROADMAP task 31."
+        ),
+    )
 
     prune = sub.add_parser(
         "prune", help="delete briefings older than the retention window"
@@ -807,7 +860,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.command == "check":
-        return _check(briefing_id)
+        return _check(briefing_id, args.max_age_hours)
 
     if args.command == "generate":
         raw_length = args.length or settings.briefing_length

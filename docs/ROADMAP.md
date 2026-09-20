@@ -814,7 +814,7 @@ produced, ranked by what they buy per hour spent.
       field is missing from that whitelist; it catches `music_set`
       retroactively too.
 
-- [ ] 31. **A freshness floor, and a watchdog for all four slots.** The
+- [~] 31. **A freshness floor, and a watchdog for all four slots.** HALF DONE (#59). The
       `00:12` cron generates a briefing named for the NEW day, so all five of
       the Worker's morning checkpoints see "this date has a playable
       briefing" and stand down, the 05:40 alarm included. Masked today only
@@ -824,6 +824,25 @@ produced, ranked by what they buy per hour spent.
       ~03:00 local. Separately, three of the four daily slots have no retry
       and no check — the 2026-09-13 evening run died with a segfault and
       nothing reported it. Add `--max-age-hours` to `app.cli check`.
+
+      DONE: the watchdog half. `app.cli check --max-age-hours` exists and
+      the watchdog runs at 13:42, 19:42 and 01:42 UTC as well as the two
+      morning entries, each ~90 minutes after its generation slot. The
+      floor is 7 hours, just over the six-hourly cadence, so a MISSED
+      SLOT is caught: if the 12:12 run fails, the 13:42 check finds a
+      06:12 briefing 7.5 hours old and says so.
+
+      Prompted by a live failure: on 2026-09-20 two runs failed at 20:44
+      and 20:48 on a Gemini spend cap, the last good briefing was 2.5
+      hours old, `check` would have passed on it, and the watchdog had
+      last run at 11:51.
+
+      STILL OPEN: the `dayState` half. A 00:12 briefing is 5.7 hours old
+      at the 05:52 checkpoint, so it passes a 7-hour floor while not
+      covering the morning at all — that is a different question
+      ("does this cover the morning?") from the one the floor answers
+      ("has generation stopped?"), and it belongs in the Worker, where
+      `dayState` should require an `-HHMM` at or after ~03:00 local.
 
 - [x] 32. **The hosts must not relay a security instruction.** DONE (#57). The fence
       stops the model OBEYING an email; it does nothing about it faithfully

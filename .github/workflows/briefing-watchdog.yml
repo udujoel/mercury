@@ -33,6 +33,24 @@ on:
     # the last generation dispatch, and still an hour before the 07:00 wake.
     - cron: "52 5 * * *"
     - cron: "56 6 * * *"
+    # ROADMAP task 31. Generation runs FOUR times a day (06:12, 12:12,
+    # 18:12, 00:12 UTC) and only the morning had a watchdog, so three of
+    # the four slots had no retry and no check at all. Two real
+    # consequences, both observed:
+    #
+    #   - the 2026-09-13 evening run died with a segfault and nothing
+    #     reported it;
+    #   - on 2026-09-20 two runs failed at 20:44 and 20:48 on a Gemini
+    #     spend cap, and the last watchdog had run at 11:51.
+    #
+    # Each of these sits ~90 minutes after its generation slot — the same
+    # margin the morning entries use, for the same reason: an Actions
+    # queue only has to be slow once for a watchdog to look before the
+    # run has written anything, and crying wolf is how an alarm stops
+    # being read.
+    - cron: "42 13 * * *"
+    - cron: "42 19 * * *"
+    - cron: "42 1 * * *"
   workflow_dispatch:
     inputs:
       briefing_id:
@@ -141,7 +159,14 @@ jobs:
           # the four minutes.
           for attempt in 1 2 3; do
             set +e
-            python -m app.cli check "${args[@]}"
+            # 7, which is just over the six-hourly cadence. Sized so that
+            # a MISSED SLOT is caught: if the 12:12 run fails, the 13:42
+            # check finds a 06:12 briefing 7.5 hours old and says so.
+            # Looser than that and a whole slot can vanish silently, which
+            # is what happened on 2026-09-20; tighter and a run delayed by
+            # GitHub's scheduler — documented, routine, and the reason
+            # this watchdog exists — would cry wolf.
+            python -m app.cli check "${args[@]}" --max-age-hours 7
             status=$?
             set -e
             if [ "$status" -eq 0 ]; then exit 0; fi

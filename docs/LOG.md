@@ -857,6 +857,55 @@ on a Ukrainian train by six minutes — is a recency sort behaving exactly
 as written.
 
 
+## 2026-09-20 — two runs failed and nothing said so, for two hours
+
+Checked the run history again at 22:36 UTC and found the state worse than
+the earlier entry recorded:
+
+```
+2026-09-20T20:48:09Z  failure
+2026-09-20T20:44:42Z  failure
+2026-09-20T20:05:04Z  success      <- last good briefing, 2.5h earlier
+...
+watchdog, most recent:  2026-09-20T11:51:31Z   <- eleven hours earlier
+```
+
+The Gemini spend cap is the proximate cause and only the owner can lift
+it. The interesting failure is the second one: **nothing reported that
+generation had stopped.** `app.cli check` would have passed — a briefing
+for today exists and is playable — and the watchdog, which runs only at
+05:52 and 06:56 UTC, was not going to look again until morning.
+
+Generation runs FOUR times a day. One of the four had a watchdog.
+
+So task 31's two halves, and only one of them is done.
+
+**Done: the freshness floor.** `app.cli check --max-age-hours` asks the
+question none of the existing assertions do. Everything in `_check` asks
+whether a briefing EXISTS and can be PLAYED; none asks whether it is
+still worth playing. The floor is 7 hours, just over the six-hourly
+cadence, so a MISSED SLOT is caught: if the 12:12 run fails, the 13:42
+check finds a 06:12 briefing 7.5 hours old and says so. Looser and a
+whole slot vanishes silently; tighter and a run delayed by GitHub's
+scheduler — documented, routine, and the reason the watchdog exists —
+cries wolf.
+
+The watchdog now runs at 13:42, 19:42 and 01:42 UTC as well, each ~90
+minutes after its generation slot.
+
+**Still open: the `dayState` half.** A 00:12 briefing is 5.7 hours old at
+the 05:52 checkpoint, so it passes a 7-hour floor while not covering the
+morning at all. That is a DIFFERENT question — "does this cover the
+morning?" rather than "has generation stopped?" — and conflating them is
+how one number ends up answering two questions, which is the mistake
+three separate reviews caught this session. It belongs in the Worker.
+
+Worth noting for anyone verifying this locally: R2 credentials live only
+in GitHub secrets, so `STORAGE_BACKEND=r2 python -m app.cli check` exits
+2 on a developer machine. That is the correct "storage is not configured"
+branch, not a failure of the check.
+
+
 ---
 
 ## Standing facts worth not rediscovering
