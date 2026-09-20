@@ -63,18 +63,29 @@ class ContentBlocked(RuntimeError):
     the morning's briefing was lost to a news story.
     """
 
-    # The reasons that are a POLICY decision about the text itself. Asking
-    # again with the same input gets the same answer, so these skip the
-    # backoff and go straight to the caller's degradation.
+    # The reasons where asking again with the same input gets the same
+    # answer, so these skip the backoff and go straight to the caller's
+    # degradation.
+    #
+    # The first four are a POLICY decision about the text itself: the filter
+    # read the input and said no, and it will say no again.
+    #
+    # MAX_TOKENS is here for a different reason and was originally left out
+    # of this set, described as "a bad roll rather than a verdict". Review
+    # of #53 showed what that costs. MAX_TOKENS means the answer did not fit
+    # the output window, which is a property of how much was ASKED FOR — so
+    # an identical prompt asks for the same amount again. The retry is not
+    # merely unlikely to help; it is five attempts at the largest prompt the
+    # pipeline sends, with 1.5+3+6+12s of backoff, against a 90-second
+    # budget. Spending a quarter of the morning to re-lose the same segment
+    # is the opposite of rule 7.
     #
     # Everything else that yields no text — STOP with an empty part list,
-    # MAX_TOKENS, RECITATION, a bare OTHER — is a bad roll rather than a
-    # verdict. RECITATION in particular means the model was echoing source
-    # wording, which a re-draft at a different temperature routinely clears.
-    # Treating those as final would spend a whole news segment to avoid one
-    # cheap retry.
+    # RECITATION, a bare OTHER — stays retryable. RECITATION in particular
+    # means the model was echoing source wording, which a re-draft at a
+    # different temperature routinely clears.
     DETERMINISTIC = frozenset(
-        {"SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII"}
+        {"SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "MAX_TOKENS"}
     )
 
     def __init__(self, reason: str, *, stage: str) -> None:

@@ -543,6 +543,131 @@ that when it says something needs attention, it does.
   because everything ordered still reached the prompt. Ordering a firehose
   gives you an ordered firehose.
 
+## 2026-09-20 — The newsletter segment never ran. Not once.
+
+#51 merged on 2026-09-16. Between then and today, sixteen briefings
+generated and every one of them reported success. The newsletter segment
+ran **zero times**. `gh run list` shows no failures; the run logs contain no
+line about newsletters at all, which is exactly what a morning with no
+newsletters looks like.
+
+**The cause.** The extractor was fed `selection["emails"]`.
+`select_for_briefing` caps emails at six, and `score_emails` sorts
+newsletters LAST because they are `Priority.LOW` — and they are LOW
+precisely because they were never meant to be read out one at a time. On
+2026-09-20 the inbox held 21 emails, 13 of them newsletters; the eight
+ordinary ones filled all six slots and the extractor received an empty
+list. I wrote a comment defending that choice — "those are the ones the
+segment can actually talk about" — and it was exactly backwards. Selection
+bounds what is read out INDIVIDUALLY. This segment summarises newsletters
+as a GROUP and already had its own cap further down, `take_spoken`. Capping
+twice, once by the wrong unit, produced nothing.
+
+**Why it survived four days: it is intermittent.** On an inbox that is
+mostly newsletters, some survive the cap. A spot check an hour before
+writing this passed 5 of 11 through and looked fine. The composition of the
+inbox decided whether the feature existed, so no single observation could
+settle it.
+
+**This is the fourth time.** `n_stories=0`, `music_set`, `topic_centroid`,
+and now this — each a finished, tested feature that ran zero times in
+production. CLAUDE.md has carried the advice since the first one: "when a
+phase is marked done, check what CALLS the new code." I wrote the roadmap
+entry repeating that warning the same week I committed this.
+
+So the advice is not enough, because it is advice to a person who remembers
+to follow it. `app/pipeline/census.py` runs the check on every briefing: it
+records what each stage took in and gave back, logs one census line, and
+warns on any stage that had input and produced nothing. `newsletters 13->0`
+would have been on the first run's log four days ago. It never fails a run
+— rule 7 applies to instrumentation too — and it emits a `::warning::`
+annotation so the finding is on the run page rather than inside four
+thousand lines of pip output. The watchdog's own header already records why
+that matters: the 2026-08-27 failure "was found days later by reading gh
+run list".
+
+**Generalising it.** The bug class is not "someone forgot to call the
+function". It is that a stage producing nothing is indistinguishable from a
+stage with nothing to do, and every log in this pipeline was written to
+describe work done rather than work skipped. Any stage that can legitimately
+be empty now says so explicitly (`may_be_empty`), which forces the question
+to be answered once, in code, instead of never.
+
+**Also found, and NOT changed.** Every run 401s against ElevenLabs
+(quota_exceeded, 5 credits remaining) and fails over to Google on the first
+turn — so today's briefings are wholly Google-voiced, consistently, not
+switching partway. Roadmap task 29 proposed pinning the workflow to Google;
+that is withdrawn, because the owner asked for ElevenLabs to stay the
+default and be restored when the quota resets, and pinning would prevent
+exactly that. What remains worth doing is recording the failover where the
+phone can see it.
+
+## 2026-09-20 — what eight review findings said about the fix (PR #53)
+
+The wiring fix was right and the way it was joined on was not, twice over.
+Both are worth recording because neither is visible in a diff of the file
+that changed.
+
+**Widening an input is not the same as removing a filter.** The extractor
+was starved by `select_for_briefing`'s six-email cap, so it was given the
+whole post-mute inbox instead. But the list it replaced descended from
+`inbox_emails`, which has already had the newsletters absorbed into world
+stories subtracted. The fix escaped the cap and the dedup in one move, and
+the two blocks are rendered independently — so one acquisition would be
+covered in the world segment and again as "two of your newsletters led with
+this". The correct input was `inbox_emails` all along: same escape from the
+cap, subtraction intact.
+
+Measured before accepting it, because the counter-argument is this module's
+own thesis — an issue is a bundle, and dropping a whole absorbed issue also
+drops the items in it that duplicate nothing. On a real morning: 12
+newsletters, 4 promoted world stories, **0 absorbed**. The cost was not
+measurable that day, and the gate is a stated acceptance criterion.
+
+**A fake that answers nothing certifies nothing.** `FakeLLMProvider` had no
+branch for the extraction prompt, so it fell through to `{}` and every
+offline briefing produced an empty newsletter segment. That included
+`test_the_story_is_offered_to_exactly_one_segment_of_the_briefing`, which
+spans the newsletter block to the world block specifically to catch the
+double coverage above. It was green throughout and proved nothing. Adding
+the branch made it fail on the old wiring and pass on the new.
+
+This is a sharper version of "a green suite certified a feature the product
+had never run". There the caller was missing; here the caller existed and
+the *fake* was the thing that never exercised it. A fake's `else: return {}`
+branch is a silent test-coverage hole with no symptom.
+
+**The census missed the runs it exists for.** `report()` sat after TTS and
+the digest on the happy path, so a run where every turn failed synthesis —
+`EmptyBriefingError` through the middle of the pipeline — was the one run
+with no census line at all. It is a context manager now and reports in a
+`finally`. Instrumentation for the bad morning has to outlive the exception,
+which sounds obvious written down and was not obvious while writing it.
+
+**Two stages measured the wrong quantity.** `desk` compared the digest
+against every cluster including personal mail, so a day with no RSS and
+fifteen ordinary emails would have been reported as starved — the false
+positive that trains people to ignore the true one, in the very module
+written to stop alarms being ignored. `script` summed two unrelated
+ingestion counts. Both now compare like with like:
+
+```
+run census: newsletters 12->6  articles 157->4  inbox 13->1  script 11->56  desk 156->156
+```
+
+**MAX_TOKENS is not a bad roll.** It was left out of
+`ContentBlocked.DETERMINISTIC` with a comment calling it "a bad roll rather
+than a verdict". It is not: an answer that overflowed the output window
+overflows again on an identical prompt. The retry bought five attempts at
+the largest prompt in the pipeline and 22 seconds of backoff out of a
+90-second budget.
+
+**And the comment above the fix still argued for the bug.** Verbatim the
+reasoning this log had already recorded as "exactly backwards", left sitting
+above the corrected line. Correcting code and leaving the comment that
+justified the old behaviour is how a fix gets reverted by the next reader.
+
+
 ---
 
 ## Standing facts worth not rediscovering
@@ -555,10 +680,15 @@ that when it says something needs attention, it does.
   402; datacenter IPs get free API access disabled entirely (401); and the
   account can simply run out of credits, which is what is happening now. Each
   failure degrades to Google and ships green.
-- **A green suite has certified unrun code twice.** Phase 2's news half ran
-  with a hardcoded `n_stories=0`; `music_set` was stripped by a Worker
-  whitelist so the setting never once applied. When a phase is marked done,
-  check what **calls** the new code.
+- **A green suite has certified unrun code four times.** Phase 2's news half
+  ran with a hardcoded `n_stories=0`; `music_set` was stripped by a Worker
+  whitelist so the setting never once applied; `score_stories` takes a
+  `topic_centroid` no caller passes; the newsletter segment ran zero times
+  across sixteen briefings. When a phase is marked done, check what **calls**
+  the new code — and check what the FAKE does with it, because a fake whose
+  `else` branch returns `{}` gives a green end-to-end test of a code path
+  that never executed. `app/pipeline/census.py` now runs this check on every
+  briefing rather than leaving it to whoever remembers.
 - **`follow_ups` is built from the literal string `"(none)"`**
   (`script_chain.py:1347`) — the same shape as `n_stories=0`, still open as
   task 24.

@@ -712,7 +712,19 @@ produced, ranked by what they buy per hour spent.
       twice, and correct the two cost comments that still price the old
       cadence.
 
-- [ ] 29. **Stop reaching for a tier that cannot carry one briefing.** Every
+- [!] 29. **WITHDRAWN — this task contradicts an explicit instruction.**
+      It proposed setting `TTS_PROVIDER: google` in `briefing.yml`. The
+      owner's instruction of 2026-09-13 was: "The elevenlabs is still the
+      default, whenever the api is reset it should be restored. No
+      adjustments was requested for this part." Pinning the workflow to
+      Google would stop ElevenLabs being restored when the quota resets,
+      which is precisely what was asked for. The current behaviour — try
+      ElevenLabs, fail over to Google, self-heal next month — IS the
+      requested behaviour.
+      WHAT IS STILL WORTH DOING is the honesty half, task 22/33: record the
+      failover in `degraded_sources` and decode it on the phone, so a
+      briefing narrated by the fallback voice says so instead of looking
+      like a normal morning. Original text: Every
       run calls ElevenLabs and gets a 401; the free tier is 10,000 credits a
       month against ~6,300 characters per briefing. What "resets with no
       action" produces in practice is one morning a month where the voice
