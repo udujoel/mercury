@@ -800,8 +800,19 @@ produced, ranked by what they buy per hour spent.
       normalised centroid. Empty stays the default and is a deliberate
       no-op, but the run log now states every morning that the term is
       inactive — a silent no-op is how this survived two phases. THE
-      SETTING IS STILL EMPTY in production: the wiring is live, the
-      behaviour changes the day someone fills it in.
+      SETTING IS STILL EMPTY in production: the wiring is live end to end
+      (Worker whitelist, iOS model, backend), and the behaviour changes
+      the day someone fills it in.
+
+      Review of #58 caught the `music_set` bug happening again, verbatim:
+      the Worker's `SETTINGS_FIELDS` whitelist had no entry for either
+      field, so a save returned 200 and dropped them, and the feature
+      could not have activated on the deployed path at all. Worse, the
+      safety net would have MISREPORTED it — "no interest topics
+      configured" is indistinguishable from the user having set none.
+      `test_settings_fields_parity.py` now fails when any `UserSettings`
+      field is missing from that whitelist; it catches `music_set`
+      retroactively too.
 
 - [ ] 31. **A freshness floor, and a watchdog for all four slots.** The
       `00:12` cron generates a briefing named for the NEW day, so all five of

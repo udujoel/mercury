@@ -92,8 +92,17 @@ async def test_the_centroid_reaches_score_stories_from_the_real_path(
 
 
 async def test_interests_change_which_story_leads():
-    """The point of the whole task. If the order cannot move, the wiring
-    is decoration."""
+    """The order MOVES. Deliberately not a claim about direction.
+
+    Review of #58: `FakeEmbeddingProvider` hashes each token to a +-1
+    sign, so with non-overlapping vocabulary the cosine is small-magnitude
+    hash noise of arbitrary sign. Under it, `["front-end web
+    development"]` also puts reuters first — so asserting direction from
+    one phrasing here measures token overlap and luck. What this test
+    honestly proves is the wiring claim: the centroid reaches the ranker
+    and changes the result. `test_the_interest_term_points_the_right_way`
+    does direction, against recency pulling the other way.
+    """
     without = await _world()
     with_war = await _world(interests=[
         "war in Ukraine", "Russian missile strikes", "European security",
@@ -208,3 +217,276 @@ async def test_generate_briefing_itself_forwards_the_interests(
         "back to a recency sort and every test above still passes"
     )
     assert seen.get("followed_entities") == {"Reuters"}
+
+
+async def test_the_scheduled_job_forwards_the_settings(monkeypatch):
+    """One level ABOVE `generate_briefing`, where the settings hop lives.
+
+    The test above was written to fix exactly this mistake and then made
+    it again: review of #58 deleted the `interests=` block from
+    `cron.run_daily_briefing_job` and all 861 tests stayed green, because
+    every test entered at `generate_briefing` or below.
+
+    `generate_briefing` is not the top of the production path.
+    `run_daily_briefing_job` is, and the settings -> pipeline hop is only
+    visible from there. Third time this session the same shape has come
+    back, so this one enters at the genuine top.
+    """
+    import contextlib
+
+    from app.core.schemas import UserSettings
+    from app.providers.fake import FakeLLMProvider
+    from app.providers.fake_tts import FakeTTSProvider
+    from app.scheduler import cron
+
+    seen: dict = {}
+
+    async def _spy(**kwargs):
+        seen.update(kwargs)
+        raise RuntimeError("far enough — the arguments are what matter")
+
+    monkeypatch.setattr(cron, "generate_briefing", _spy)
+
+    class _Storage:
+        def load_settings(self):
+            return UserSettings(
+                interests=["war in Ukraine"], followed_entities=["Reuters"],
+            )
+
+        def load_manifest(self, briefing_id):
+            return None      # nothing generated yet, so the job proceeds
+
+    with contextlib.suppress(Exception):
+        await cron.run_daily_briefing_job(
+            storage=_Storage(), llm=FakeLLMProvider(), tts=FakeTTSProvider(),
+            embeddings=FakeEmbeddingProvider(),
+        )
+
+    assert seen.get("interests") == ["war in Ukraine"], (
+        "the scheduled job dropped `interests` between the settings and "
+        "the pipeline; every test below this level still passes"
+    )
+    assert seen.get("followed_entities") == ["Reuters"]
+
+
+# ──────────────────────────────────────────────────────────────
+# The scoring maths, after review of #58.
+# ──────────────────────────────────────────────────────────────
+
+
+JUNK = _article("junk", "!!!", "!!!", minutes_old=3)
+
+
+async def test_an_unembeddable_item_does_not_lead_the_world_segment():
+    """The change meant to demote junk was promoting it.
+
+    `interest` fell back to the constant 0.5 for an item with no usable
+    embedding, and a raw cosine is not on that scale — so the one story
+    the pipeline could not embed outscored the story the interests were
+    actually about. `dedup` nulls embeddings PER ITEM, so this is uneven
+    rather than run-wide.
+    """
+    world, _, _ = await _build_world_stories(
+        emails=[], articles=[DARK_MODE, STRIKE, JUNK], events=[],
+        embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
+        interests=["war in Ukraine", "Russian missile strikes"],
+    )
+    leaders = [s.canonical.source_name for s in world]
+    assert leaders[0] != "junk", (
+        f"the unembeddable item leads the segment: {leaders}"
+    )
+
+
+async def test_a_degenerate_interest_topic_does_not_nan_every_score():
+    """One bad topic used to poison the whole run, silently.
+
+    The per-row norm was unguarded, so `0/0` gave NaN, `mean` spread it
+    everywhere, and `score_stories` set `score = nan` for every story.
+    `sorted` on NaN is arbitrary, so the segment fell back to clustering
+    order with no exception and no log line.
+    """
+    centroid = await _topic_centroid(
+        ["war in Ukraine", "!!!"], FakeEmbeddingProvider()
+    )
+    assert centroid is not None
+    assert np.isfinite(centroid).all(), "a degenerate topic poisoned it"
+
+    world, _, _ = await _build_world_stories(
+        emails=[], articles=[DARK_MODE, STRIKE], events=[],
+        embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
+        interests=["war in Ukraine", "!!!"],
+    )
+    assert all(np.isfinite(s.score) for s in world)
+
+
+async def test_every_topic_degenerate_is_reported_not_silently_inert(caplog):
+    with caplog.at_level(logging.WARNING):
+        assert await _topic_centroid(["!!!"], FakeEmbeddingProvider()) is None
+    assert "no usable centroid" in caplog.text
+
+
+async def test_a_whitespace_only_setting_says_the_term_is_off(caplog):
+    """The log line this PR leans on as its safety net was able to state
+    the opposite of the truth: `[" "]` filtered to nothing, the term was
+    inert, and the morning log said "ranked against 1 interest topic"."""
+    with caplog.at_level(logging.INFO):
+        assert await _topic_centroid(["   "], FakeEmbeddingProvider()) is None
+    assert "no interest topics configured" in caplog.text
+    assert "ranked against" not in caplog.text
+
+
+async def test_a_raising_provider_costs_the_term_not_the_briefing():
+    """Rule 7, and the docstring said "never raises" while it did —
+    `topic_centroid(vectors)` sat outside the try, so ragged vectors
+    killed the whole briefing from inside a ranking refinement."""
+    class _Ragged:
+        async def embed(self, texts):
+            return [[0.1, 0.2], [0.1, 0.2, 0.3]]
+
+    assert await _topic_centroid(["a", "b"], _Ragged()) is None
+
+
+# ──────────────────────────────────────────────────────────────
+# followed_entities — an unanchored substring re-created the bug.
+# ──────────────────────────────────────────────────────────────
+
+
+async def test_following_a_short_name_does_not_match_inside_words():
+    """Following "X" matched 10 of 25 stories in the clustering corpus,
+    because "extension" contains an x, and put the dark-mode post above a
+    missile strike at 3.2x its score."""
+    world, _, _ = await _build_world_stories(
+        emails=[], articles=[DARK_MODE, STRIKE], events=[],
+        embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
+        interests=["war in Ukraine"], followed_entities=["X"],
+    )
+    assert [s.canonical.source_name for s in world][0] == "reuters"
+
+
+async def test_an_all_whitespace_entity_does_not_match_everything():
+    world, _, _ = await _build_world_stories(
+        emails=[], articles=[DARK_MODE, STRIKE], events=[],
+        embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
+        followed_entities=[" "],
+    )
+    assert len({s.score for s in world}) > 1, (
+        "every story got the same +0.28 personal boost"
+    )
+
+
+async def test_following_a_publication_by_name_works():
+    """The most obvious thing a person types into this box, and before
+    review it was the one thing that could not match: the haystack was
+    title and body only, never `source_name`."""
+    world, _, _ = await _build_world_stories(
+        emails=[], articles=[DARK_MODE, STRIKE], events=[],
+        embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
+        followed_entities=["reuters"],
+    )
+    assert [s.canonical.source_name for s in world][0] == "reuters"
+
+
+async def test_a_trailing_space_does_not_stop_a_match():
+    world, _, _ = await _build_world_stories(
+        emails=[], articles=[DARK_MODE, STRIKE], events=[],
+        embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
+        followed_entities=["Reuters "],
+    )
+    assert [s.canonical.source_name for s in world][0] == "reuters"
+
+
+async def test_the_interest_term_points_the_right_way():
+    """Direction, with recency pulling AGAINST it.
+
+    The dark-mode post is made the OLDER item here, so recency favours
+    the strike and any apparent win for dark mode has to come from the
+    interest term. Then the same two stories are ranked under two
+    opposite interest profiles and must swap.
+
+    Review of #58 was right that the earlier assertion did not establish
+    this: `assert with_war[0] == "reuters"` held under interests that
+    mean the opposite. A single-direction check against a recency sort
+    that already favours the same answer proves nothing.
+    """
+    old_dark_mode = _article(
+        "hn", DARK_MODE.title, DARK_MODE.body, minutes_old=30,
+    )
+    fresh_strike = _article(
+        "reuters", STRIKE.title, STRIKE.body, minutes_old=0,
+    )
+
+    async def _rank(interests):
+        world, _, _ = await _build_world_stories(
+            emails=[], articles=[old_dark_mode, fresh_strike], events=[],
+            embeddings=FakeEmbeddingProvider(),
+            length=BriefingLength.STANDARD, interests=interests,
+        )
+        return [s.canonical.source_name for s in world]
+
+    assert await _rank(None) == ["reuters", "hn"], (
+        "precondition: with no interests, recency puts the strike first"
+    )
+    assert await _rank(["dark theme", "browser extensions"]) == ["hn", "reuters"], (
+        "interests about the HN post did not overcome recency, so the "
+        "term is either inert or pointing the wrong way"
+    )
+    war = await _rank(["Russian missile strikes", "war in Ukraine"])
+    assert war[0] == "reuters"
+
+
+async def test_an_entity_does_not_match_inside_a_longer_word():
+    """The word boundary, pinned on its own.
+
+    The length floor and the anchor were covering for each other: "X" is
+    dropped by the floor, so removing the anchor changed nothing, and
+    "X" is anchored, so removing the floor changed nothing. Each guard
+    needs a case the other cannot rescue. This one is long enough to pass
+    the floor and only matches unanchored.
+    """
+    about_metadata = _article(
+        "verge", "A new metadata standard for photos",
+        "Photographers are arguing about metadata again this week.",
+        minutes_old=30,
+    )
+    world, _, _ = await _build_world_stories(
+        emails=[], articles=[about_metadata, STRIKE], events=[],
+        embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
+        followed_entities=["Meta"],
+    )
+    assert [s.canonical.source_name for s in world][0] == "reuters", (
+        "following Meta matched 'metadata' and promoted an unrelated story"
+    )
+
+
+async def test_a_one_letter_entity_does_not_boost_ordinary_prose():
+    """The length floor, pinned on its own.
+
+    A single letter clears every word boundary in ordinary English —
+    "I" is a word in most sentences — so anchoring cannot save it and the
+    floor is the only thing that does.
+
+    The HN post is aged so that recency favours the strike; otherwise it
+    leads anyway and the assertion says nothing about entity matching.
+    The first cut of this test got that wrong and failed for the right
+    answer's reason.
+    """
+    aged_dark_mode = _article(
+        "hn", DARK_MODE.title, DARK_MODE.body, minutes_old=30,
+    )
+    baseline, _, _ = await _build_world_stories(
+        emails=[], articles=[aged_dark_mode, STRIKE], events=[],
+        embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
+    )
+    assert [s.canonical.source_name for s in baseline][0] == "reuters", (
+        "precondition: without any entity, recency puts the strike first"
+    )
+
+    world, _, _ = await _build_world_stories(
+        emails=[], articles=[aged_dark_mode, STRIKE], events=[],
+        embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
+        followed_entities=["I"],
+    )
+    assert "I" in aged_dark_mode.body, "precondition: a standalone I"
+    assert [s.canonical.source_name for s in world][0] == "reuters", (
+        "a one-letter entity boosted a story for containing the word 'I'"
+    )

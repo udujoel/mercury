@@ -763,6 +763,15 @@ const SETTINGS_FIELDS = {
   disabled_segments: "string[]",
   feeds: "string[]",
   muted_senders: "string[]",
+  // ROADMAP task 30. Omitting these here is not a small bug: this map is
+  // a WHITELIST and `handleSettingsWrite` rebuilds the stored object from
+  // it, so a field missing here is accepted with a 200 and silently
+  // dropped. That is exactly how `music_set` never once applied, and
+  // review of #58 caught the same thing happening to these two before
+  // they ever shipped. `test_settings_fields_parity` now fails when a
+  // `UserSettings` field has no entry here.
+  interests: "string[]",
+  followed_entities: "string[]",
 };
 
 function matchesShape(value, shape) {

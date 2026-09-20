@@ -799,16 +799,19 @@ async def _topic_centroid(
     """The listener's interests as one normalised vector, or None.
 
     None is the ordinary case and means the ranker behaves exactly as it
-    did before — `interest` falls back to its 0.5 constant. That is the
-    safe default for a setting nobody has filled in yet.
+    did before — `interest` falls back to its 0.5 constant, which after
+    the rescale in `score_stories` means "orthogonal", i.e. no
+    information either way.
 
-    Never raises. The embeddings provider is already allowed to fail the
-    whole clustering step gracefully (rule 7), and a ranking refinement is
-    a far weaker reason to lose a briefing than clustering is.
+    Never raises, and now actually doesn't. Review of #58 found
+    `topic_centroid(vectors)` sitting OUTSIDE the try, so a provider
+    returning ragged vectors raised straight out of here, through
+    `_build_world_stories` (no try there either) and killed the whole
+    briefing — a ranking refinement taking down the morning, which is
+    rule 7 exactly backwards.
     """
-    if not interests or embeddings is None:
-        # Said out loud, every run. A silent no-op here is precisely how
-        # this parameter went unnoticed for two phases.
+    wanted = [t.strip() for t in (interests or []) if t.strip()]
+    if not wanted or embeddings is None:
         log.info(
             "ranking: no interest topics configured, so the world segment "
             "is ranked without the interest term (set `interests` in the "
@@ -816,17 +819,41 @@ async def _topic_centroid(
         )
         return None
     try:
-        vectors = await embeddings.embed([t for t in interests if t.strip()])
+        vectors = await embeddings.embed(wanted)
+        centroid = topic_centroid(vectors)
     except Exception:
         log.warning(
             "ranking: could not embed interest topics; ranking without "
             "the interest term", exc_info=True,
         )
         return None
-    centroid = topic_centroid(vectors)
+
+    # Logged AFTER computing, and keyed on what came back.
+    #
+    # The first cut logged "ranked against 1 interest topic(s)" for a
+    # settings value of [" "] — every topic filtered out, centroid None,
+    # the term inert, and the morning log affirming it was active. The
+    # line this PR leans on as its safety net was able to state the
+    # opposite of the truth.
+    if centroid is None:
+        log.warning(
+            "ranking: %d interest topic(s) produced no usable centroid, so "
+            "the world segment is ranked WITHOUT the interest term",
+            len(wanted),
+        )
+        return None
+    if len(vectors) != len(wanted):
+        # `dedup.build_stories` refuses this case outright rather than
+        # guessing an order mapping. Here the centroid is order-free, so
+        # a subset is still meaningful — but it must not be reported as
+        # the whole.
+        log.warning(
+            "ranking: embedded %d of %d interest topic(s); the centroid "
+            "covers the subset", len(vectors), len(wanted),
+        )
     log.info(
         "ranking: world segment ranked against %d interest topic(s): %s",
-        len(interests), ", ".join(interests[:6]),
+        len(vectors), ", ".join(wanted[:6]),
     )
     return centroid
 
