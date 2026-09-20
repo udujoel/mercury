@@ -672,7 +672,7 @@ Eight independent reviews of Mercury as a thing used at 7am rather than as a
 codebase. Full evidence in `docs/REVIEW-2026-09-14.md`; these are the tasks it
 produced, ranked by what they buy per hour spent.
 
-- [~] 27. **Split the newsletter flag.** HALF DONE (#51). The AUDIO half
+- [x] 27. **Split the newsletter flag.** DONE (#51 audio half, #55 desk half). The AUDIO half
       landed: a bank alert is no longer pinned LOW and barred from the
       actionable segment — `detect_urgent` lifts money/account/security mail
       to HIGH with `requires_response`, and it is deliberately narrow because
@@ -698,6 +698,23 @@ produced, ranked by what they buy per hour spent.
       with an escalation list — restricted, suspended, unauthorised, verify,
       failed payment, unusual sign-in — that can lift an account notice to
       HIGH. This is the single highest-value change on the board.
+
+      DESK HALF DONE (#55). Measured on the live inbox 2026-09-20: 12
+      messages flagged `is_newsletter` and eligible for the 30-day desk, of
+      which SEVEN were machines — GTBank "Transaction Notification",
+      Trading212 "Deposit successful", a Google "Security alert", two GitHub
+      notification mails, a Google account-data notice, a Qoder billing
+      notice. After the gate: 7 gated, the 5 real publications kept, no
+      false positives. The gate covers `digest_members`, the newsletters
+      shelf, and `_newsletters_for_extraction`.
+
+      The half that was NOT in this description, and is the more serious
+      one: `detect_urgent` refuses anything flagged `is_newsletter`, so the
+      same `List-Unsubscribe` misclassification made bank alerts
+      structurally incapable of being urgent. The category named above as
+      the whole point of the escalation list could never reach it. The
+      guard is now exempted for transactional mail only, so a digest
+      reporting someone else's breach is still correctly not an emergency.
 
 - [ ] 28. **Two briefings a day, and count what they cost.** Four a day put
       Google TTS at ~88% of its million free characters and Actions at ~82%

@@ -625,7 +625,16 @@ def _newsletters_for_extraction(emails: list[Item]) -> list[Item]:
     newsletters", and which list to ask about is a dedup question that
     belongs at the call site, where the world stories are in scope.
     """
-    return [item for item in emails if item.raw.get("is_newsletter")]
+    # `is_transactional` excluded as well as required-`is_newsletter`. A
+    # bank alert carries `List-Unsubscribe` so it arrives flagged as a
+    # newsletter, but there is no journalism inside it to extract — the
+    # model would be asked to find the news in a debit notification, spend
+    # prompt budget doing it, and hand the body to Gemini on the way (rule
+    # 5). ROADMAP task 27.
+    return [
+        item for item in emails
+        if item.raw.get("is_newsletter") and not item.raw.get("is_transactional")
+    ]
 
 
 def _when_a_stage_is_starved(names: list[str]) -> None:

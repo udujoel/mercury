@@ -197,6 +197,95 @@ def detect_newsletter(headers: dict[str, str]) -> tuple[bool, str | None]:
 
 
 # ──────────────────────────────────────────────────────────────
+# Transactional mail (ROADMAP task 27)
+# ──────────────────────────────────────────────────────────────
+
+# Why this is a SECOND flag rather than a fix to the first.
+#
+# `detect_newsletter` is not wrong about what it measures. A GTBank debit
+# alert really does carry `List-Unsubscribe`, really is bulk-sent, and really
+# should be treated editorially the way a newsletter is — not read out as
+# though a person wrote it to you. What that flag cannot do is answer the
+# DIFFERENT question `digest_members` asks it: does this belong on a screen
+# built for published journalism?
+#
+# Those two questions had one answer, and here is what it cost, measured on
+# the live inbox on 2026-09-20. Twelve messages were flagged `is_newsletter`
+# and so were eligible for the 30-day browse desk. Seven of them:
+#
+#     gens@gtbank.com               "Transaction Notification"
+#     no-reply@info.trading212.com  "Deposit successful"
+#     no-reply@accounts.google.com  "Security alert for <an account>"
+#     noreply-accounts@google.com   "You shared some Google Account data..."
+#     notifications@github.com x2   "Re: [udujoel/mercury] ..."
+#     notice-noreply@qoder.com      "Qoder Credit Consumption Rate Update"
+#
+# Five real newsletters, seven machines — and the machines are eligible for
+# an LLM-written summary persisted to R2 for thirty days. Two of those seven
+# are financial and one is a security alert, which is the precise material
+# the owner's triage rule says belongs in ACTION REQUIRED, not on a browse
+# shelf as though it were an article someone wrote.
+#
+# So `is_newsletter` keeps deciding TREATMENT and this decides ELIGIBILITY.
+# Splitting them lets a bank alert stay correctly classified as bulk mail
+# while never reaching the desk, the enrichment pass or the research
+# provider.
+
+# Lowercase substrings. Subject signals match the subject; sender signals
+# match the whole From header, so a signal can be a bare domain
+# ("@gtbank.com") or a local part ("noreply@", "notifications@").
+#
+# Local-part shapes first, because they generalise to senders nobody has
+# listed yet. The risk runs the other way too: plenty of real publications
+# send from `noreply@`, and one that does would lose its desk row. That is
+# the trade this list encodes, and it is why the SUBJECT list is the more
+# conservative half — a subject rule fires on what the message IS rather
+# than on how it happened to be sent.
+TRANSACTIONAL_SENDER_SIGNALS: list[str] = [
+    "noreply@", "no-reply@", "noreply-", "no-reply-", "donotreply@",
+    "notifications@", "notification@", "notify@",
+    "alerts@", "alert@", "@accounts.google.com", "notifications@github.com",
+]
+
+TRANSACTIONAL_SUBJECT_SIGNALS: list[str] = [
+    "transaction notification", "deposit successful", "security alert",
+    "payment received", "payment failed", "failed payment", "your receipt",
+    "your invoice", "invoice #", "your order", "order confirmation",
+    "withdrawal", "account statement", "statement is ready",
+    "verify your", "password reset", "sign-in attempt", "unusual sign-in",
+]
+
+
+def detect_transactional(
+    headers: dict[str, str], subject: str
+) -> tuple[bool, str | None]:
+    """Is this a receipt, an alert, or a notification from a machine?
+
+    Returns `(is_transactional, signal)`, with the signal naming which rule
+    fired — the same debuggability contract as `detect_newsletter`, and for
+    the same reason: a silent classifier is one nobody can argue with when
+    it is wrong.
+
+    Deliberately NOT a judgement about importance. A login alert may matter
+    enormously; this says only that it is not journalism, so it must not be
+    summarised onto the browse desk. Priority is `classify_priority`'s job,
+    and `detect_urgent` is what lifts the ones that matter — the two run
+    independently precisely so that "keep it off the desk" and "say it out
+    loud" can both be true of one bank alert.
+    """
+    haystack = (subject or "").lower()
+    sender = headers.get("From", "").lower()
+
+    for signal in TRANSACTIONAL_SUBJECT_SIGNALS:
+        if signal in haystack:
+            return True, f"subject ({signal})"
+    for signal in TRANSACTIONAL_SENDER_SIGNALS:
+        if signal in sender:
+            return True, f"sender ({signal})"
+    return False, None
+
+
+# ──────────────────────────────────────────────────────────────
 # requires_response / priority (PRD F-05)
 # ──────────────────────────────────────────────────────────────
 
@@ -238,6 +327,11 @@ URGENT_PATTERNS: list[str] = [
     r"action required",
     r"verify your (?:account|identity|email)",
     r"confirm your identity",
+    # Squarely inside the owner's "money, accounts and security only" rule,
+    # and the live inbox carried one on 2026-09-20 that reached nothing:
+    # "Security alert for <an account>" from no-reply@accounts.google.com.
+    r"security alert",
+    r"new (?:device|sign[- ]?in) (?:on|to) your account",
 ]
 
 _URGENT_RE = re.compile("|".join(f"({p})" for p in URGENT_PATTERNS), re.I)
@@ -248,7 +342,8 @@ URGENT_BODY_CHARS = 800
 
 
 def detect_urgent(
-    subject: str, body: str, *, is_newsletter: bool = False
+    subject: str, body: str, *, is_newsletter: bool = False,
+    is_transactional: bool = False,
 ) -> tuple[bool, str | None]:
     """Does this mail carry a consequence worth naming out loud?
 
@@ -262,10 +357,22 @@ def detect_urgent(
     expensive direction: this segment's whole value is that when it says
     something needs attention, it does.
 
+    **Transactional mail is exempt from that guard**, and the omission was
+    load-bearing. `detect_newsletter` fires on `List-Unsubscribe`, which
+    every bank and payment app sets, so a GTBank account-restriction warning
+    arrived flagged `is_newsletter` and this function refused it before
+    reading a word — the one category the owner named as worth waking up for
+    was the one category structurally incapable of being urgent. The two
+    flags now say different things: `is_newsletter` is about EDITORIAL
+    TREATMENT, `is_transactional` about whether a machine sent it, and the
+    false-positive argument above is entirely about the first. Someone
+    else's incident reported as news is a newsletter; a notice addressed to
+    the reader about their own money is not.
+
     Matched on the subject and the first screen of the body only. A phrase in
     a fortieth paragraph is reporting, not addressing.
     """
-    if is_newsletter:
+    if is_newsletter and not is_transactional:
         return False, None
     haystack = f"{subject or ''}\n{(body or '')[:URGENT_BODY_CHARS]}"
     match = _URGENT_RE.search(haystack)
@@ -357,8 +464,12 @@ def message_to_item(raw: dict[str, Any], user_email: str) -> Item:
     body = clean_body(body_raw)
 
     is_newsletter, signal = detect_newsletter(headers)
+    is_transactional, transactional_signal = detect_transactional(
+        headers, subject
+    )
     is_urgent, urgent_signal = detect_urgent(
-        subject, body, is_newsletter=is_newsletter
+        subject, body,
+        is_newsletter=is_newsletter, is_transactional=is_transactional,
     )
     priority, requires_response = classify_priority(
         is_newsletter=is_newsletter,
@@ -385,6 +496,8 @@ def message_to_item(raw: dict[str, Any], user_email: str) -> Item:
             "thread_id": raw.get("threadId"),
             "is_newsletter": is_newsletter,
             "newsletter_signal": signal,
+            "is_transactional": is_transactional,
+            "transactional_signal": transactional_signal,
             "is_urgent": is_urgent,
             "urgent_signal": urgent_signal,
             "to": to_addresses,

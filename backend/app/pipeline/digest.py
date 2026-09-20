@@ -127,6 +127,17 @@ def _is_newsletter(item: Item) -> bool:
     )
 
 
+def _is_transactional(item: Item) -> bool:
+    """A receipt, alert or machine notification, per `detect_transactional`.
+
+    Checked on EVERY source type rather than on email alone. Nothing but
+    Gmail sets the flag today, but a gate whose safety depends on a source
+    type it never names is a gate that opens the day a second source starts
+    carrying receipts.
+    """
+    return bool(item.raw.get("is_transactional"))
+
+
 def digest_members(story: Story) -> list[Item]:
     """The members of a cluster that belong on the browse surface.
 
@@ -149,7 +160,8 @@ def digest_members(story: Story) -> list[Item]:
     return [
         member
         for member in story.members
-        if member.source_type is SourceType.RSS or _is_newsletter(member)
+        if not _is_transactional(member)
+        and (member.source_type is SourceType.RSS or _is_newsletter(member))
     ]
 
 
@@ -755,7 +767,14 @@ def build_digest(
     # `SourceRef` can tell them apart — and nothing needs to, because
     # `_build_source_refs` copies `em.cluster_id` onto every email ref, so
     # the cluster route above answers the same question exactly.
-    incoming = [item for item in emails if _is_newsletter(item)]
+    # The newsletters SHELF — the browse surface's other half, and it needs
+    # the same gate as `digest_members`. This is the list that carried the
+    # bank alert, the deposit notice and the PR-review bots.
+    incoming = [
+        item
+        for item in emails
+        if _is_newsletter(item) and not _is_transactional(item)
+    ]
     ambiguous = {
         subject
         for subject, count in Counter(
