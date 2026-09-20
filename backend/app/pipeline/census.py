@@ -29,6 +29,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 log = logging.getLogger(__name__)
@@ -78,6 +79,11 @@ class RunCensus:
     """
 
     stages: list[Stage] = field(default_factory=list)
+    # Called once with the starved stage names, if there are any. The
+    # alternative was leaving `report()`'s return value on the floor, which
+    # is what the docstring below warns about in the same breath — a
+    # warning nobody reads is how all four of these survived.
+    on_starved: Callable[[list[str]], None] | None = None
 
     def __enter__(self) -> RunCensus:
         return self
@@ -138,6 +144,13 @@ class RunCensus:
                 f"{stage.name} received {stage.took} item(s) and produced "
                 f"nothing — this stage may not be wired to anything"
             )
+        if starved and self.on_starved is not None:
+            # Guarded like everything else here. A handler that raises must
+            # not become the thing that loses the morning.
+            try:
+                self.on_starved(starved)
+            except Exception:  # pragma: no cover - instrumentation must not bite
+                log.warning("census starved-stage handler failed", exc_info=True)
         return starved
 
 

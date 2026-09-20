@@ -79,3 +79,79 @@ def test_nothing_is_printed_outside_actions(capsys, monkeypatch):
     census.record("newsletters", took=13, made=0)
     census.report()
     assert capsys.readouterr().out == ""
+
+
+# ──────────────────────────────────────────────────────────────
+# The consumer. `report()` returned the starved names and nothing
+# read them, which is the failure the module's own docstring warns
+# about one paragraph earlier.
+# ──────────────────────────────────────────────────────────────
+
+
+def test_a_starved_stage_reaches_the_handler():
+    from app.pipeline.census import RunCensus
+
+    seen: list[list[str]] = []
+    census = RunCensus(on_starved=seen.append)
+    census.record("newsletters", took=13, made=0)
+    census.record("articles", took=146, made=4)
+    census.report()
+
+    assert seen == [["newsletters"]]
+
+
+def test_a_healthy_run_does_not_wake_the_handler():
+    """The alarm has to stay quiet on a good morning or it trains people
+    to ignore it — which is the thing this module exists to prevent."""
+    from app.pipeline.census import RunCensus
+
+    seen: list[list[str]] = []
+    census = RunCensus(on_starved=seen.append)
+    census.record("newsletters", took=12, made=6)
+    census.record("inbox", took=13, made=0, may_be_empty=True)
+    census.report()
+
+    assert seen == []
+
+
+def test_a_raising_handler_cannot_cost_the_morning(caplog):
+    """Rule 7 reaches the instrumentation's instrumentation."""
+    import logging
+
+    from app.pipeline.census import RunCensus
+
+    def _explode(_names):
+        raise RuntimeError("handler is broken")
+
+    census = RunCensus(on_starved=_explode)
+    census.record("newsletters", took=13, made=0)
+    with caplog.at_level(logging.WARNING):
+        assert census.report() == ["newsletters"]
+    assert "starved-stage handler failed" in caplog.text
+
+
+def test_the_run_summary_names_the_stage(tmp_path, monkeypatch):
+    """Written where a person looks, not only where a grep would find it.
+
+    The `::warning::` annotation already fires. This is the second channel,
+    because the annotation alone demonstrably was not enough: the
+    2026-08-27 failure was "found days later by reading gh run list".
+    """
+    from app.pipeline.generate import _when_a_stage_is_starved
+
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    _when_a_stage_is_starved(["newsletters"])
+
+    written = summary.read_text()
+    assert "Starved stage(s)" in written
+    assert "`newsletters`" in written
+
+
+def test_the_run_summary_is_silent_outside_actions(monkeypatch):
+    """A developer running `app.cli generate` gets the log line and nothing
+    else; there is no run page to annotate."""
+    from app.pipeline.generate import _when_a_stage_is_starved
+
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    _when_a_stage_is_starved(["newsletters"])  # must not raise

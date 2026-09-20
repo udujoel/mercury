@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -230,7 +231,7 @@ async def generate_briefing(
     # synthesis — and those are precisely the runs whose funnel is worth
     # reading. Reporting on the happy path only would have left the worst
     # morning of all as the one with no census line.
-    with RunCensus() as census:
+    with RunCensus(on_starved=_when_a_stage_is_starved) as census:
         world_stories, inbox_emails, all_stories = await _build_world_stories(
             emails=emails,
             articles=articles,
@@ -625,6 +626,48 @@ def _newsletters_for_extraction(emails: list[Item]) -> list[Item]:
     belongs at the call site, where the world stories are in scope.
     """
     return [item for item in emails if item.raw.get("is_newsletter")]
+
+
+def _when_a_stage_is_starved(names: list[str]) -> None:
+    """Put the finding where someone will actually see it.
+
+    By the time this runs the briefing has been built and stored, so it
+    cannot reach `degraded_sources` on the manifest or ask `cli.py` to
+    regenerate — those decisions happen upstream, and a stage that produced
+    nothing is not the same as a source that failed. What is still
+    available is how loudly the finished run complains.
+
+    It deliberately does NOT fail the run. The briefing shipped; a red run
+    would say the opposite of the thing the owner most needs to know, and
+    on a false positive it would say it about a perfectly good morning.
+    Rule 7 is about the morning surviving, and it survived.
+
+    So: the job summary, which renders as a panel at the top of the run
+    page rather than as line 3,200 of pip output. The `::warning::`
+    annotation in `census.py` already fires; this exists because the
+    annotation alone was not enough — the 2026-08-27 failure sat unnoticed
+    for days and was "found by reading gh run list", and the newsletter
+    segment ran zero times for four days while every run said success.
+    Writing it twice, in two places with different failure modes, is the
+    cheapest insurance available against a third.
+    """
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not summary:
+        return
+    listed = "\n".join(f"- `{name}`" for name in names)
+    try:
+        with open(summary, "a", encoding="utf-8") as handle:
+            handle.write(
+                "\n### Starved stage(s) in this run\n\n"
+                f"{listed}\n\n"
+                "Each of these received input and produced nothing. The "
+                "briefing still shipped, so this run is green — but every "
+                '"built and never actually called" bug in this project '
+                "looked exactly like this in the log. Check what reaches "
+                "the named stage before assuming it was a quiet morning.\n"
+            )
+    except OSError:  # pragma: no cover - instrumentation must not bite
+        log.warning("could not write the starved-stage run summary", exc_info=True)
 
 
 async def _extract_newsletter_stories(
