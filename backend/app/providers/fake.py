@@ -406,14 +406,51 @@ def _digest_json(prompt: str) -> str:
     )
 
 
+def _newsletter_items_json(prompt: str) -> str:
+    """One extracted item per newsletter block found in the prompt.
+
+    Driven by its input, like `_digest_json`, and for a sharper reason than
+    realism. Without this branch the extraction prompt fell through to
+    `unknown` and `{}`, so EVERY offline briefing produced an empty
+    newsletter segment — and the acceptance test that asks whether a story
+    reaches exactly one segment passed without the newsletter path having
+    run at all. A fake that answers nothing certifies nothing.
+
+    `subject` is the newsletter's own subject line, lowercased, because the
+    merge downstream is an exact string match. Two publications that led
+    with the same thing therefore arrive as one MergedStory carrying two
+    outlets, which is the behaviour the module exists for and the only way
+    an offline test can see it. Headline and gist stay generic on purpose:
+    echoing the body back would defeat the test that no raw body reaches a
+    stored artifact (rule 5).
+    """
+    blocks = re.findall(
+        r"^\[(\d+)\] FROM: (.*)\n^SUBJECT: (.*)$", prompt, flags=re.MULTILINE
+    )
+    return json.dumps(
+        [
+            {
+                "source": int(index),
+                "headline": f"Fake headline about {subject.strip()}",
+                "gist": f"A fake one-sentence gist of what {name.strip()} "
+                        f"said about {subject.strip()}.",
+                "subject": subject.strip().lower(),
+            }
+            for index, name, subject in blocks
+        ]
+    )
+
+
 class FakeLLMProvider:
     """Deterministic LLMProvider for offline development and tests.
 
-    Detects which of the four prompts (outline / draft / critique / revise)
-    it has been asked to complete by looking for strings that are unique to
-    each template in app/pipeline/prompts.py, and returns a fixed,
-    schema-valid response for that pass. The voice-answer pass is the one
-    exception to "fixed" — see `_voice_answer_json`.
+    Detects which prompt it has been asked to complete by looking for
+    strings that are unique to each template in app/pipeline/prompts.py, and
+    returns a schema-valid response for that pass. Three passes answer from
+    their input rather than from a canned body — the digest, the voice
+    answer and the newsletter extraction — because each of those is a JOIN,
+    and a fixed response proves nothing about whether the right thing came
+    back matched to the right input.
     """
 
     def __init__(self) -> None:
@@ -442,6 +479,8 @@ class FakeLLMProvider:
             kind, body = "revise", _revised_json()
         elif "Write one card for each story below" in template:
             kind, body = "digest", _digest_json(prompt)
+        elif "Pull out the news." in template:
+            kind, body = "newsletter_items", _newsletter_items_json(prompt)
         elif "just interrupted the briefing" in template:
             kind, body = "voice_answer", _voice_answer_json(prompt)
         else:

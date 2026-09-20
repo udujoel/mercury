@@ -11,12 +11,13 @@ from __future__ import annotations
 
 import inspect
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from app.core.providers import ContentBlocked, LLMProvider
 from app.core.schemas import Item, SourceType
 from app.pipeline.newsletter_items import (
     MAX_ITEMS_PER_NEWSLETTER,
+    MAX_NEWSLETTERS,
     MergedStory,
     NewsletterItem,
     extract_items,
@@ -429,3 +430,99 @@ async def test_the_remainder_is_grounded_in_the_source_block():
         54,
     )
     assert "54" in source
+
+
+def _issues(count: int) -> list[Item]:
+    """`count` newsletters, newest first. Minutes rather than the shared
+    helper's hours: it does arithmetic on the hour field, which runs out of
+    day somewhere around the twentieth issue."""
+    return [
+        Item(
+            source_type=SourceType.EMAIL,
+            source_name=f"Publication {i}",
+            title=f"issue {i}",
+            body="body",
+            author=f"pub{i}@example.test",
+            timestamp=datetime(2026, 9, 15, 6, tzinfo=UTC) - timedelta(minutes=i),
+            raw={"is_newsletter": True},
+        )
+        for i in range(count)
+    ]
+
+
+async def test_a_heavy_newsletter_morning_cannot_overflow_one_prompt():
+    """The input had no bound; every cap in this module was on the output.
+
+    Review of #53. `MAX_ITEMS_PER_NEWSLETTER` and `take_spoken` both run
+    AFTER the model answers, so nothing stopped forty-nine issues asking for
+    294 objects against an output window near 8,192 tokens. The result is
+    not a smaller segment, it is no segment: truncated JSON reaches `_parse`
+    and returns [].
+
+    Asserted on what reaches the prompt, because that is the thing with the
+    budget. A cap enforced anywhere later is not a cap on this.
+    """
+    many = _issues(MAX_NEWSLETTERS + 12)
+    llm = _Extractor([])
+    await extract_items(llm, many)
+
+    prompt = llm.prompts[0]
+    present = [n for n in many if f"FROM: {n.source_name}\n" in prompt]
+    assert len(present) == MAX_NEWSLETTERS, (
+        f"{len(present)} issues reached the prompt against a cap of "
+        f"{MAX_NEWSLETTERS}"
+    )
+    assert f"You are reading {MAX_NEWSLETTERS} newsletters" in prompt, (
+        "the count in the prompt must be the count in the prompt — telling "
+        "the model it is reading 32 issues while sending 20 invites it to "
+        "invent the other twelve, which is rule 3"
+    )
+
+
+async def test_the_issues_kept_are_the_freshest_ones():
+    """Newsletters are perishable in a way the rest of the inbox is not.
+
+    `hours_ago` ascending, so issue 0 is newest. When something has to go,
+    the oldest issue is the cheapest thing to lose — an issue from Tuesday
+    describes a Tuesday the listener has already had.
+    """
+    many = _issues(MAX_NEWSLETTERS + 5)
+    llm = _Extractor([])
+    await extract_items(llm, many)
+
+    prompt = llm.prompts[0]
+    assert "FROM: Publication 0\n" in prompt
+    for dropped in range(MAX_NEWSLETTERS, MAX_NEWSLETTERS + 5):
+        assert f"FROM: Publication {dropped}\n" not in prompt, dropped
+
+
+async def test_the_dropped_issues_are_named_in_the_log(caplog):
+    """A silent cap reads as "we covered everything".
+
+    This module exists because a stage that produced nothing looked exactly
+    like a stage with nothing to do. A cap that hides what it dropped is the
+    same mistake with a different shape.
+    """
+    import logging
+
+    many = _issues(MAX_NEWSLETTERS + 7)
+    with caplog.at_level(logging.WARNING):
+        await extract_items(_Extractor([]), many)
+
+    assert "dropping 7" in caplog.text
+
+
+async def test_an_issue_with_no_date_header_does_not_crash_the_cap():
+    """`gmail._parse_date` returns None for an unparseable Date header.
+
+    Sorting a mix of None and datetime raises TypeError, and this module
+    catches broadly for rule 7 — so one malformed header would have taken
+    the whole segment out behind a single warning line. Third occurrence of
+    the naive/aware/None family in this repo; see `MergedStory.latest`.
+    """
+    many = _issues(MAX_NEWSLETTERS + 3)
+    many[4] = many[4].model_copy(update={"timestamp": None})
+    llm = _Extractor([])
+    await extract_items(llm, many)
+
+    assert llm.prompts, "the cap raised instead of capping"

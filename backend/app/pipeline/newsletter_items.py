@@ -53,6 +53,30 @@ log = logging.getLogger(__name__)
 BODY_CHARS = 6_000
 MAX_ITEMS_PER_NEWSLETTER = 6
 
+# How many issues may go into the one extraction call.
+#
+# Everything else in this module caps the OUTPUT — `MAX_ITEMS_PER_NEWSLETTER`
+# per issue, `MAX_SPOKEN_SUBJECTS` for the segment — and every one of those
+# runs after the model has answered. The input had no bound at all except
+# `max_messages=60`, which is a cap on the inbox, not on this prompt.
+#
+# The binding constraint is the model's OUTPUT window, not its context. Each
+# item costs roughly sixty tokens of JSON, so N issues ask for up to N x 6
+# items — about 360N tokens — against a default output limit near 8,192.
+# Twenty issues sit inside that; forty-nine, which a real morning produced,
+# ask for nearly twice it. The failure is not a smaller segment, it is no
+# segment: truncated JSON reaches `_parse` and returns [], or the response
+# comes back MAX_TOKENS with no parts at all.
+#
+# Twenty is the number the BODY_CHARS comment above already assumed, written
+# when nothing enforced it.
+MAX_NEWSLETTERS = 20
+
+# Sorts an issue with no Date header to the back of the queue rather than
+# crashing the comparison. `gmail._parse_date` can return None, and this is
+# the same naive/aware trap `_aware` exists for one line up.
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
 # How many merged subjects the hosts actually discuss.
 #
 # Found by listening, which is the only way it could have been found. A live
@@ -276,6 +300,28 @@ async def extract_items(
     """
     if not newsletters:
         return []
+    # Newest first, then capped. Newsletters are perishable in a way the
+    # rest of the inbox is not — an issue from Tuesday is describing a
+    # Tuesday the listener has already had — so when something has to go,
+    # the oldest issue is the cheapest thing to lose.
+    #
+    # Said out loud rather than dropped quietly. A silent cap reads as "we
+    # covered everything" in a log, and this module was written because a
+    # stage that produced nothing looked exactly like a stage with nothing
+    # to do.
+    if len(newsletters) > MAX_NEWSLETTERS:
+        newsletters = sorted(
+            newsletters,
+            key=lambda i: _aware(i.timestamp) if i.timestamp else _EPOCH,
+            reverse=True,
+        )
+        log.warning(
+            "newsletters: %d issue(s) is over the %d the extraction prompt "
+            "budgets for; taking the %d most recent and dropping %d",
+            len(newsletters), MAX_NEWSLETTERS, MAX_NEWSLETTERS,
+            len(newsletters) - MAX_NEWSLETTERS,
+        )
+        newsletters = newsletters[:MAX_NEWSLETTERS]
     # Fenced, and the instructions are OUTSIDE the fence — the mistake
     # `script_chain` documents and that this project has made once already.
     # A rule about the data, fenced together with the data, tells the model

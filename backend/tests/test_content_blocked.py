@@ -382,7 +382,24 @@ def test_a_refused_prompt_is_final_but_an_empty_response_is_not():
     assert not ContentBlocked("BLOCKLIST", stage="response").worth_retrying
     assert ContentBlocked("RECITATION", stage="response").worth_retrying
     assert ContentBlocked("STOP", stage="response").worth_retrying
-    assert ContentBlocked("MAX_TOKENS", stage="response").worth_retrying
+
+
+def test_max_tokens_is_not_worth_retrying_however_it_arrives():
+    """An overflowing answer is a property of the question.
+
+    This assertion used to run the other way, on the reasoning that
+    MAX_TOKENS was "a bad roll rather than a verdict". Review of #53 priced
+    that: the newsletter extraction sends the largest prompt in the
+    pipeline, and asking for more items than the output window holds fails
+    the same way every time. Retrying bought five attempts at it and
+    1.5+3+6+12 seconds of backoff out of a 90-second budget — a quarter of
+    the morning spent re-losing the same segment.
+
+    Both stages, because the stage says which half was refused and neither
+    half gets shorter on a second identical ask.
+    """
+    assert not ContentBlocked("MAX_TOKENS", stage="response").worth_retrying
+    assert not ContentBlocked("MAX_TOKENS", stage="prompt").worth_retrying
 
 
 def test_an_unset_block_reason_is_falsy_on_the_real_enum():

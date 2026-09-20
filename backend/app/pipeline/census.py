@@ -60,9 +60,40 @@ class Stage:
 
 @dataclass
 class RunCensus:
-    """Collected across a run, reported once at the end."""
+    """Collected across a run, reported once at the end.
+
+    Used as a context manager, so the report happens in a `finally` rather
+    than on the happy path:
+
+        with RunCensus() as census:
+            census.record("newsletters", took=13, made=0)
+            ...
+
+    That is not tidiness. The first cut called `report()` inline near the
+    end of the run, after TTS and after the digest — so the one run that
+    produced nothing at all, the run where every turn failed synthesis and
+    `EmptyBriefingError` came up through the middle of the pipeline, was
+    the single run with no census line in its log. The census exists for
+    the morning that went wrong; it has to outlive the exception.
+    """
 
     stages: list[Stage] = field(default_factory=list)
+
+    def __enter__(self) -> RunCensus:
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        """Report, whatever happened, and never change what happened.
+
+        Returns False always: instrumentation that swallowed a live
+        exception would turn a failed briefing into a silent success, which
+        is a far worse version of the bug this module was written to catch.
+        """
+        try:
+            self.report()
+        except Exception:  # pragma: no cover - instrumentation must not bite
+            log.warning("run census failed to report", exc_info=True)
+        return False
 
     def record(
         self, name: str, *, took: int, made: int, may_be_empty: bool = False

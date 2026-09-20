@@ -224,212 +224,242 @@ async def generate_briefing(
     # that covered the same acquisition to be read out separately —
     # precisely the "concatenated, not edited" failure ADR-003 exists to
     # prevent.
-    census = RunCensus()
-    world_stories, inbox_emails, all_stories = await _build_world_stories(
-        emails=emails,
-        articles=articles,
-        events=events,
-        embeddings=embeddings,
-        length=length,
-    )
-
-    scored_emails = _score_emails(score_emails, inbox_emails, events)
-
-    if select_for_briefing is None:
-        raise RuntimeError(
-            "select_for_briefing is not available (app.pipeline.scoring not "
-            "found and no fake was injected). Pass select_for_briefing= "
-            "explicitly, or wait for app/pipeline/scoring.py to land."
+    # A context manager, so the census reports in a `finally`. Every
+    # interesting failure in this pipeline happens BELOW here — a refusal
+    # the ladder cannot absorb, an EmptyBriefingError when every turn fails
+    # synthesis — and those are precisely the runs whose funnel is worth
+    # reading. Reporting on the happy path only would have left the worst
+    # morning of all as the one with no census line.
+    with RunCensus() as census:
+        world_stories, inbox_emails, all_stories = await _build_world_stories(
+            emails=emails,
+            articles=articles,
+            events=events,
+            embeddings=embeddings,
+            length=length,
         )
-    # date=, so "your day" means the briefing day. Ingestion deliberately
-    # fetches today plus 72 hours (PRD F-02) and this is the only place that
-    # narrows it to what gets spoken; without it the calendar segment walked
-    # the next three days under the heading "Your day".
-    selection = select_for_briefing(
-        scored_emails, events, length, date=briefing_date
-    )
 
-    # Take the newsletters apart before writing anything.
-    #
-    # On the emails the SELECTION kept, not the whole inbox: those are the
-    # ones the segment can actually talk about, and extracting from forty
-    # issues to discuss six is paying for thirty-four answers nobody hears.
-    for_extraction = _newsletters_for_extraction(emails)
-    newsletter_stories, newsletter_remainder = await _extract_newsletter_stories(
-        llm, for_extraction
-    )
-    census.record(
-        "newsletters", took=len(for_extraction), made=len(newsletter_stories)
-    )
-    census.record("articles", took=len(articles), made=len(world_stories))
-    # OTHER MAIL means OTHER. Without this the newsletters arrive in the
-    # prompt TWICE — once taken apart into stories, and once whole with
-    # their bodies, under a header telling the hosts to cover them "by
-    # sender and subject only". The bundle the whole feature exists to
-    # dismantle would be sitting in the same prompt, intact.
-    other_mail = [
-        e for e in selection["emails"] if not e.raw.get("is_newsletter")
-    ]
-    census.record("inbox", took=len(emails), made=len(other_mail),
-                  # An inbox that is entirely newsletters legitimately
-                  # leaves nothing for the rapid-fire tail.
-                  may_be_empty=True)
+        scored_emails = _score_emails(score_emails, inbox_emails, events)
 
-    if generate_script is None:
-        raise RuntimeError(
-            "generate_script is not available (app.pipeline.script_chain "
-            "not found and no fake was injected). Pass generate_script= "
-            "explicitly, or wait for app/pipeline/script_chain.py to land."
+        if select_for_briefing is None:
+            raise RuntimeError(
+                "select_for_briefing is not available (app.pipeline.scoring not "
+                "found and no fake was injected). Pass select_for_briefing= "
+                "explicitly, or wait for app/pipeline/scoring.py to land."
+            )
+        # date=, so "your day" means the briefing day. Ingestion deliberately
+        # fetches today plus 72 hours (PRD F-02) and this is the only place that
+        # narrows it to what gets spoken; without it the calendar segment walked
+        # the next three days under the heading "Your day".
+        selection = select_for_briefing(
+            scored_emails, events, length, date=briefing_date
         )
-    turns, sources = await generate_script(
-        llm=llm,
-        # THIS run's degradation list, handed in so the script chain can add
-        # to it. A model that refuses the news drops the world segment, and
-        # that has to reach the manifest rather than only the log — it is
-        # what `cli.py` reads to decide whether to regenerate.
-        degraded=degraded,
-        newsletter_stories=newsletter_stories,
-        newsletter_remainder=newsletter_remainder,
-        emails=other_mail,
-        events=selection["events"],
-        background_events=selection.get("background_events", []),
-        # PRD F-05 caps how many emails are read out individually; this is
-        # how many were left over. It was computed and dropped on the floor,
-        # so most of the inbox disappeared without so much as a "plus eleven
-        # others, nothing urgent".
-        aggregated_email_count=selection.get("aggregated_count", 0),
-        # The inbox as it stood BEFORE selection cut it to the handful that
-        # get read out — not literally every message, since `inbox_emails`
-        # already excludes what was absorbed into a world story. The follow-ups
-        # segment exists to catch what you owe a reply to, and the message
-        # most worth catching is exactly the one that ranked too low to be
-        # read out — so handing it `selection["emails"]` would make the
-        # segment blind in the case it was built for.
-        follow_up_candidates=inbox_emails,
-        stories=world_stories,
-        # Phase 2: outline -> draft -> critique -> revise. The chain keeps
-        # the draft if revision scores worse on the quality gates, which a
-        # live run showed is not hypothetical (19 issues -> 20).
-        passes=4,
-        weather=weather,
-        length=length,
-        date=briefing_date,
-        disabled_segments=disabled_segments,
-    )
 
-    # The LAST read of any body in this run, and it happens BEFORE the scrub
-    # below on purpose. `build_enrichment_prompt` flattens the source text
-    # into a prompt string; from here on the digest is built from metadata
-    # alone, so no code path after the scrub can reach a body even by
-    # mistake. See app/pipeline/digest.py.
-    browsable = digest_stories(all_stories)
-    enrichment_prompt = (
-        build_enrichment_prompt(stories_to_enrich(browsable))
-        if browsable
-        else ""
-    )
+        # Take the newsletters apart before writing anything.
+        #
+        # `inbox_emails`, not `emails`. The two differ by exactly the newsletters
+        # clustering already accounted for: the ones absorbed into a story the
+        # world segment is about to speak, and the ones collapsed into a
+        # newsletter-only cluster behind a keeper. Extracting from the full inbox
+        # hands those back, and nothing downstream compares the two blocks —
+        # `_format_newsletter_stories` and the WORLD block are rendered
+        # independently — so the hosts would cover one acquisition in the world
+        # segment and again as "two of your newsletters led with this". That is
+        # the Phase 2 gate verbatim and the ADR-003 failure.
+        #
+        # It is not free. An absorbed issue carries five other items that go with
+        # it, and this module's whole thesis is that an issue is a bundle rather
+        # than one story. Measured on a real morning before choosing: 12
+        # newsletters, 4 promoted world stories, 0 absorbed — the subtraction
+        # cost nothing that day. The gate is a stated acceptance criterion and
+        # the loss is bounded by the members of at most four clusters, so the
+        # trade goes this way until a morning shows otherwise.
+        for_extraction = _newsletters_for_extraction(inbox_emails)
+        newsletter_stories, newsletter_remainder = await _extract_newsletter_stories(
+            llm, for_extraction
+        )
+        census.record(
+            "newsletters", took=len(for_extraction), made=len(newsletter_stories)
+        )
+        census.record("articles", took=len(articles), made=len(world_stories))
+        # OTHER MAIL means OTHER. Without this the newsletters arrive in the
+        # prompt TWICE — once taken apart into stories, and once whole with
+        # their bodies, under a header telling the hosts to cover them "by
+        # sender and subject only". The bundle the whole feature exists to
+        # dismantle would be sitting in the same prompt, intact.
+        other_mail = [
+            e for e in selection["emails"] if not e.raw.get("is_newsletter")
+        ]
+        census.record("inbox", took=len(emails), made=len(other_mail),
+                      # An inbox that is entirely newsletters legitimately
+                      # leaves nothing for the rapid-fire tail.
+                      may_be_empty=True)
 
-    # CLAUDE.md rule 5: raw email bodies are ephemeral, held only for the
-    # duration of this run. The script has been written; nothing downstream
-    # needs the body text, so drop it from every Item this run touched
-    # before anything is persisted.
-    _scrub_email_bodies(emails)
-    _scrub_email_bodies(scored_emails)
-    _scrub_email_bodies(selection.get("emails", []))
+        if generate_script is None:
+            raise RuntimeError(
+                "generate_script is not available (app.pipeline.script_chain "
+                "not found and no fake was injected). Pass generate_script= "
+                "explicitly, or wait for app/pipeline/script_chain.py to land."
+            )
+        turns, sources = await generate_script(
+            llm=llm,
+            # THIS run's degradation list, handed in so the script chain can add
+            # to it. A model that refuses the news drops the world segment, and
+            # that has to reach the manifest rather than only the log — it is
+            # what `cli.py` reads to decide whether to regenerate.
+            degraded=degraded,
+            newsletter_stories=newsletter_stories,
+            newsletter_remainder=newsletter_remainder,
+            emails=other_mail,
+            events=selection["events"],
+            background_events=selection.get("background_events", []),
+            # PRD F-05 caps how many emails are read out individually; this is
+            # how many were left over. It was computed and dropped on the floor,
+            # so most of the inbox disappeared without so much as a "plus eleven
+            # others, nothing urgent".
+            aggregated_email_count=selection.get("aggregated_count", 0),
+            # The inbox as it stood BEFORE selection cut it to the handful that
+            # get read out — not literally every message, since `inbox_emails`
+            # already excludes what was absorbed into a world story. The follow-ups
+            # segment exists to catch what you owe a reply to, and the message
+            # most worth catching is exactly the one that ranked too low to be
+            # read out — so handing it `selection["emails"]` would make the
+            # segment blind in the case it was built for.
+            follow_up_candidates=inbox_emails,
+            stories=world_stories,
+            # Phase 2: outline -> draft -> critique -> revise. The chain keeps
+            # the draft if revision scores worse on the quality gates, which a
+            # live run showed is not hypothetical (19 issues -> 20).
+            passes=4,
+            weather=weather,
+            length=length,
+            date=briefing_date,
+            disabled_segments=disabled_segments,
+        )
 
-    # Concurrent with synthesis, not before it. TTS is the long pole — a live
-    # run is 71 seconds against the PRD's 90-second budget — and an
-    # enrichment call in series would spend a tenth of the remaining margin
-    # on a screen nobody is waiting for. Started first so it is already in
-    # flight while the turns synthesise.
-    cards_task = asyncio.create_task(enrich_stories(llm, enrichment_prompt))
-    try:
-        audio_bytes, manifest, audio_format = await synthesize_briefing(
-            turns,
-            tts=tts,
+        # The LAST read of any body in this run, and it happens BEFORE the scrub
+        # below on purpose. `build_enrichment_prompt` flattens the source text
+        # into a prompt string; from here on the digest is built from metadata
+        # alone, so no code path after the scrub can reach a body even by
+        # mistake. See app/pipeline/digest.py.
+        browsable = digest_stories(all_stories)
+        enrichment_prompt = (
+            build_enrichment_prompt(stories_to_enrich(browsable))
+            if browsable
+            else ""
+        )
+
+        # CLAUDE.md rule 5: raw email bodies are ephemeral, held only for the
+        # duration of this run. The script has been written; nothing downstream
+        # needs the body text, so drop it from every Item this run touched
+        # before anything is persisted.
+        _scrub_email_bodies(emails)
+        _scrub_email_bodies(scored_emails)
+        _scrub_email_bodies(selection.get("emails", []))
+
+        # Concurrent with synthesis, not before it. TTS is the long pole — a live
+        # run is 71 seconds against the PRD's 90-second budget — and an
+        # enrichment call in series would spend a tenth of the remaining margin
+        # on a screen nobody is waiting for. Started first so it is already in
+        # flight while the turns synthesise.
+        cards_task = asyncio.create_task(enrich_stories(llm, enrichment_prompt))
+        try:
+            audio_bytes, manifest, audio_format = await synthesize_briefing(
+                turns,
+                tts=tts,
+                briefing_id=briefing_id,
+                audio_url_for=lambda _fmt: storage.audio_path_for(briefing_id),
+                sources=sources,
+                music_set=music_set or DEFAULT_MUSIC_SET,
+                # THIS run's failures, carried down from ingestion rather than
+                # re-read from the module global at the end — see
+                # _ingest_concurrently for why the global cannot answer honestly.
+                degraded_sources=degraded,
+                # How many times this briefing has already been regenerated
+                # because it shipped degraded. Bounds the retry — see
+                # MAX_DEGRADED_RETRIES.
+                degraded_attempts=(
+                    (previous_degraded_attempts + 1) if degraded else 0
+                ),
+            )
+        except BaseException:
+            # An EmptyBriefingError here means nothing is stored and the run
+            # fails. Leaving the enrichment call running would hold the event
+            # loop open on an LLM round trip for a briefing that no longer
+            # exists — and, in the API process, would log its result against a
+            # job that has already reported failure.
+            cards_task.cancel()
+            raise
+
+        cards = await cards_task
+
+        # Built from the MANIFEST, so `turn_index` is the post-compaction index.
+        # `synthesize_briefing` drops turns whose TTS failed and remaps every
+        # SourceRef onto the compacted list; deriving deep-links from anything
+        # else lands them on the wrong sentence, which is a bug this project has
+        # already shipped once.
+        digest = build_digest(
             briefing_id=briefing_id,
-            audio_url_for=lambda _fmt: storage.audio_path_for(briefing_id),
-            sources=sources,
-            music_set=music_set or DEFAULT_MUSIC_SET,
-            # THIS run's failures, carried down from ingestion rather than
-            # re-read from the module global at the end — see
-            # _ingest_concurrently for why the global cannot answer honestly.
-            degraded_sources=degraded,
-            # How many times this briefing has already been regenerated
-            # because it shipped degraded. Bounds the retry — see
-            # MAX_DEGRADED_RETRIES.
-            degraded_attempts=(
-                (previous_degraded_attempts + 1) if degraded else 0
+            stories=all_stories,
+            # Everything that arrived, including muted senders — see the note
+            # where `all_emails` is set.
+            emails=all_emails,
+            manifest=manifest,
+            cards=cards,
+        )
+
+        # Task 18: go and find out what else is true about the morning's
+        # subjects, and attach it with its sources.
+        #
+        # AFTER the digest is built and BEFORE it is saved, deliberately. The
+        # digest is what supplies the subjects and the outlet counts that decide
+        # which are worth researching, and research must not be able to delay or
+        # break the artifact it decorates — `research_subjects` never raises, is
+        # capped by count and by wall clock, and returns an empty dict on any
+        # failure, so the worst case is the digest that would have been saved
+        # anyway (rule 7).
+        if research_provider is _UNSET:
+            research_provider = _real_build_research_provider()
+        if research_provider is not None:
+            found = await research_subjects(digest.stories, research_provider)
+            digest = digest.model_copy(
+                update={"stories": attach_research(digest.stories, found)}
+            )
+
+        # to_thread, because BriefingStorage is synchronous and R2Storage is boto3.
+        # This is ~3MB up on a blocking socket, and it runs inside the API process
+        # while the client polls /status — so calling it directly froze the server
+        # for the whole upload.
+        # What the script chain was HANDED, against what it wrote. The first cut
+        # summed `emails + articles`, which are the raw ingestion counts feeding
+        # two earlier stages — "157 articles + 13 emails -> 34 turns" is a ratio
+        # between quantities with no relationship, and a funnel line that cannot
+        # be read is not instrumentation.
+        census.record(
+            "script",
+            took=(
+                len(world_stories) + len(newsletter_stories)
+                + len(other_mail) + len(selection["events"])
             ),
+            made=len(turns),
         )
-    except BaseException:
-        # An EmptyBriefingError here means nothing is stored and the run
-        # fails. Leaving the enrichment call running would hold the event
-        # loop open on an LLM round trip for a briefing that no longer
-        # exists — and, in the API process, would log its result against a
-        # job that has already reported failure.
-        cards_task.cancel()
-        raise
-
-    cards = await cards_task
-
-    # Built from the MANIFEST, so `turn_index` is the post-compaction index.
-    # `synthesize_briefing` drops turns whose TTS failed and remaps every
-    # SourceRef onto the compacted list; deriving deep-links from anything
-    # else lands them on the wrong sentence, which is a bug this project has
-    # already shipped once.
-    digest = build_digest(
-        briefing_id=briefing_id,
-        stories=all_stories,
-        # Everything that arrived, including muted senders — see the note
-        # where `all_emails` is set.
-        emails=all_emails,
-        manifest=manifest,
-        cards=cards,
-    )
-
-    # Task 18: go and find out what else is true about the morning's
-    # subjects, and attach it with its sources.
-    #
-    # AFTER the digest is built and BEFORE it is saved, deliberately. The
-    # digest is what supplies the subjects and the outlet counts that decide
-    # which are worth researching, and research must not be able to delay or
-    # break the artifact it decorates — `research_subjects` never raises, is
-    # capped by count and by wall clock, and returns an empty dict on any
-    # failure, so the worst case is the digest that would have been saved
-    # anyway (rule 7).
-    if research_provider is _UNSET:
-        research_provider = _real_build_research_provider()
-    if research_provider is not None:
-        found = await research_subjects(digest.stories, research_provider)
-        digest = digest.model_copy(
-            update={"stories": attach_research(digest.stories, found)}
+        # `browsable`, not `all_stories`. The desk deliberately shows only what
+        # the wider press or a newsletter carried (`digest_stories` drops
+        # personal mail), so measuring it against every cluster fires on a
+        # perfectly good morning: RSS goes down, the inbox holds fifteen ordinary
+        # work emails, and a stage that is behaving correctly is reported as
+        # starved. An alarm that cries wolf on a quiet Wednesday is one nobody
+        # reads by Thursday — which is the failure this whole module exists to
+        # avoid, so it must not be the failure this module introduces.
+        census.record("desk", took=len(browsable), made=len(digest.stories))
+        # to_thread, because BriefingStorage is synchronous and R2Storage is boto3.
+        # This is ~3MB up on a blocking socket, and it runs inside the API process
+        # while the client polls /status — so calling it directly froze the server
+        # for the whole upload.
+        await asyncio.to_thread(
+            storage.save, briefing_id, audio_bytes, audio_format, manifest, digest
         )
-
-    # to_thread, because BriefingStorage is synchronous and R2Storage is boto3.
-    # This is ~3MB up on a blocking socket, and it runs inside the API process
-    # while the client polls /status — so calling it directly froze the server
-    # for the whole upload.
-    census.record("script", took=len(emails) + len(articles), made=len(turns))
-    census.record(
-        "desk", took=len(all_stories), made=len(digest.stories),
-    )
-    # Reported before the upload, so the line is in the log even if storing
-    # fails. Never raises and never fails the run — a census that can break
-    # the morning is a worse trade than the bugs it catches.
-    try:
-        census.report()
-    except Exception:  # pragma: no cover - instrumentation must not bite
-        log.warning("run census failed to report", exc_info=True)
-
-    # to_thread, because BriefingStorage is synchronous and R2Storage is boto3.
-    # This is ~3MB up on a blocking socket, and it runs inside the API process
-    # while the client polls /status — so calling it directly froze the server
-    # for the whole upload.
-    await asyncio.to_thread(
-        storage.save, briefing_id, audio_bytes, audio_format, manifest, digest
-    )
-    return manifest
+        return manifest
 
 
 async def _ingest_concurrently(
@@ -571,7 +601,7 @@ def _is_newsletter(item: Item) -> bool:
 
 
 def _newsletters_for_extraction(emails: list[Item]) -> list[Item]:
-    """Every newsletter in the inbox — NOT the ones selection kept.
+    """Every newsletter still in play — NOT the ones selection kept.
 
     This distinction is the whole bug of 2026-09-16 to 09-20, during which
     the newsletter segment ran zero times across sixteen briefings.
@@ -588,6 +618,11 @@ def _newsletters_for_extraction(emails: list[Item]) -> list[Item]:
     a group and has its own cap further down the chain — `take_spoken`,
     which bounds how many merged SUBJECTS get discussed. Capping twice, once
     by the wrong unit, is what produced nothing.
+
+    Callers pass `inbox_emails` rather than the raw inbox. This function is
+    deliberately not the place that decides: it answers "which of these are
+    newsletters", and which list to ask about is a dedup question that
+    belongs at the call site, where the world stories are in scope.
     """
     return [item for item in emails if item.raw.get("is_newsletter")]
 
