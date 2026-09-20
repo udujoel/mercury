@@ -235,58 +235,161 @@ def check_grounding(turns: list[Turn], source_text: str) -> list[dict]:
 # hosts SAYING an email asks for something is journalism. The hosts telling
 # the listener to do it, or vouching for it, is the product taking the
 # sender's side.
+# An instruction the sender wants the listener to CARRY OUT. Widened
+# after review of #57, which found 24 of 28 realistic relays missing and
+# the list internally inconsistent — "confirm your payment" caught while
+# "verify your payment" did not.
+#
+# Deliberately generous, because the cost is now asymmetric in the other
+# direction: a miss ships a phishing instruction in a trusted voice, and
+# a false positive costs one line of the script being rewritten.
+_ACTION_VERB = (
+    r"chang(?:e|ing)|reset(?:ting)?|updat(?:e|ing)|verif(?:y|ying)"
+    r"|confirm(?:ing)?|validat(?:e|ing)|secur(?:e|ing)|re-?authenticat(?:e|ing)"
+    r"|authoris(?:e|ing)|authoriz(?:e|ing)|transfer(?:ring)?"
+)
+_ACTION_OBJECT = (
+    r"password|passcode|credentials?|account|identity|payment|billing"
+    r"|card details|bank details|details|pin|otp|two[- ]factor|2fa"
+    # "authorise the transfer" — the object is the money, not a credential.
+    r"|transfer|payment"
+)
+# Verbs that are an instruction on their own, with no object to name.
+_STANDALONE_ACTION = r"re-?authenticat(?:e|ing)|re-?enter (?:your )?details"
 _SECURITY_ACTION = re.compile(
-    r"\b(?:"
-    r"chang(?:e|ing) (?:your )?password|reset(?:ting)? (?:your )?password"
-    r"|verify (?:your )?(?:account|identity|email|details)"
-    r"|confirm (?:your )?(?:account|identity|details|payment)"
-    r"|updat(?:e|ing) (?:your )?(?:payment|billing|card|details)"
-    r"|click (?:the|that|this) link|follow (?:the|that) link"
-    r"|log ?in to (?:your )?account|sign ?in to (?:your )?account"
-    r"|enable two[- ]factor|share (?:your )?(?:code|otp|pin)"
-    r")\b",
+    r"(?:"
+    # verb + (the|your|their|a) + object — "reset the password on that
+    # account" as well as "reset your password".
+    rf"\b(?:{_ACTION_VERB})\s+(?:the\s+|your\s+|their\s+|a\s+)?"
+    rf"(?:{_ACTION_OBJECT})\b"
+    rf"|\b(?:{_STANDALONE_ACTION})\b"
+    # the follow-a-lure family, which has no object of its own
+    r"|\bclick (?:the|that|this|a|on) (?:link|button)\b|\bclick here\b"
+    r"|\btap (?:the|that|this|a) (?:link|button)\b"
+    r"|\bfollow (?:the|that|those) (?:link|links|steps|instructions)\b"
+    r"|\bopen (?:the|that|their) attachment\b"
+    r"|\bcall (?:the|that) number\b"
+    r"|\blog ?in to|\bsign ?in to|\bshare (?:your )?(?:code|otp|pin)\b"
+    # the consequence clause every credential-phish carries
+    r"|\byour account will be (?:closed|suspended|locked|restricted)\b"
+    r"|\bunless you (?:act|respond|verify|confirm)\b"
+    r")",
     re.I,
 )
 
-# The hosts endorsing it, or issuing it themselves.
+# The hosts adding their own weight to it.
 _ENDORSEMENT = re.compile(
     r"\b(?:"
     r"you should|you'?ll want to|make sure (?:you|to)|be sure to"
     r"|worth doing|definitely (?:do|worth)|don'?t ignore|do that (?:today|now)"
     r"|critical|urgent(?:ly)?|important that you|act (?:on it|now|today)"
     r"|right away|as soon as possible|straight away|first thing"
+    # Review of #57: the three most natural co-host endorsements carried
+    # none of the markers above. A recommendation does not need an
+    # intensifier to be a recommendation.
+    r"|i'?d (?:do|handle|sort|deal with) (?:that|it|this)"
+    r"|that'?s the one to|the one to (?:handle|do|sort)"
+    r"|before (?:your|anything|everything)|top of (?:the|your) list"
+    r"|handle (?:that|it|this) (?:first|today|now)"
     r")\b",
     re.I,
 )
 
-# Only where third-party text is spoken. The cold open and the weather do
-# not quote anybody's email.
-_RELAY_SEGMENTS = {"inbox", "follow_ups", "world"}
+# Where third-party text is spoken.
+#
+# `calendar` is here after review of #57. `_format_calendar` interpolates
+# `ev.description` verbatim, and an invite from a stranger auto-populates
+# Google Calendar — so that field is an injection surface on a par with an
+# email body, and the calendar contract's "flag anything needing prep"
+# invites exactly the endorsing phrasing.
+_RELAY_SEGMENTS = {"inbox", "follow_ups", "world", "calendar"}
+
+# Leading words that do not stop a sentence being an order.
+_IMPERATIVE_LEAD = re.compile(
+    r"^(?:so|then|and|but|ok(?:ay)?|right|now|just|please|go and|go|"
+    r"you need to|you have to)[\s,]+", re.I
+)
+
+
+def _sentences(text: str) -> list[str]:
+    return [s for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+
+
+def _is_an_order(text: str) -> bool:
+    """Does a sentence here TELL the listener to do the thing?
+
+    The hosts issuing the instruction themselves — "Change your password.
+    Today." — carries no endorsement marker at all, so requiring two
+    signals made the most dangerous output unreachable. Review of #57.
+
+    An imperative is detected positionally: the action opens the sentence,
+    once conversational lead-ins are stripped. "It advises changing your
+    password" does not match, because the sentence opens with "It".
+    """
+    for sentence in _sentences(text):
+        stripped = _IMPERATIVE_LEAD.sub("", sentence.strip())
+        match = _SECURITY_ACTION.match(stripped)
+        if match:
+            return True
+    return False
+
+
+def _normalise_spaces(text: str) -> str:
+    """NBSP and friends collapse to a plain space.
+
+    HTML email text flows into the source data and out through the script,
+    and `"change\u00a0your\u00a0password"` defeated every literal-space
+    pattern here. Review of #57.
+    """
+    return re.sub(r"\s+", " ", text.replace("\u00a0", " "))
 
 
 def check_relayed_instructions(turns: list[Turn]) -> list[dict]:
     """The hosts must not pass on a security instruction from a sender.
 
-    HEURISTIC, in the shape of the other gates and with the same honesty
-    about it: it looks for a security ACTION phrase and an ENDORSEMENT in
-    the same turn. Reporting that an email asks for something is allowed
-    and must stay allowed — that is journalism, and the segment's job.
-    What this catches is the hosts adding their own weight to it.
+    HEURISTIC, in the shape of the other gates. A turn is flagged when it
+    carries a security ACTION and either an ENDORSEMENT — in the same turn
+    or in the co-host's adjacent reply — or is phrased as an ORDER.
 
-    False positives are expected and are the cheap direction. "This is a
-    critical security step" about a legitimate password-reset the listener
-    themselves requested is a flag worth raising anyway: the hosts still
-    cannot tell the listener whether the mail is genuine, so naming the
-    sender and stopping is the right behaviour either way.
+    **Adjacent turns, not one turn.** Review of #57: the product is two
+    hosts alternating, so the natural shape puts the report in one turn
+    and the endorsement in the reply. A per-turn scan caught the monologue
+    form and missed the dialogue form, in a product that is entirely
+    dialogue — and the inbox contract this PR added ("name the domain and
+    stop") makes the reporting turn compliant on its own, pushing the
+    endorsement into the reply where nothing was looking.
+
+    Reporting that a message asks for something is allowed and must stay
+    allowed: that is journalism, and the segment's job. What is caught is
+    the hosts adding their own weight, or issuing the instruction.
     """
     flagged = []
     for index, turn in enumerate(turns):
         if turn.segment.value not in _RELAY_SEGMENTS:
             continue
-        action = _SECURITY_ACTION.search(turn.text)
+        text = _normalise_spaces(turn.text)
+        action = _SECURITY_ACTION.search(text)
         if not action:
             continue
-        endorsement = _ENDORSEMENT.search(turn.text)
+
+        if _is_an_order(text):
+            flagged.append({
+                "turn_index": index, "segment": turn.segment.value,
+                "action": action.group(0).lower(), "endorsement": "(an order)",
+                "reason": "the hosts issue a security instruction themselves",
+            })
+            continue
+
+        # The co-host's reply, and the line that set this one up.
+        window = [text]
+        for neighbour in (index - 1, index + 1):
+            if 0 <= neighbour < len(turns) and (
+                turns[neighbour].segment is turn.segment
+            ):
+                window.append(_normalise_spaces(turns[neighbour].text))
+        endorsement = next(
+            (m for m in (_ENDORSEMENT.search(w) for w in window) if m), None
+        )
         if not endorsement:
             continue
         flagged.append({
