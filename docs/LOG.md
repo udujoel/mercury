@@ -543,6 +543,65 @@ that when it says something needs attention, it does.
   because everything ordered still reached the prompt. Ordering a firehose
   gives you an ordered firehose.
 
+## 2026-09-20 — The newsletter segment never ran. Not once.
+
+#51 merged on 2026-09-16. Between then and today, sixteen briefings
+generated and every one of them reported success. The newsletter segment
+ran **zero times**. `gh run list` shows no failures; the run logs contain no
+line about newsletters at all, which is exactly what a morning with no
+newsletters looks like.
+
+**The cause.** The extractor was fed `selection["emails"]`.
+`select_for_briefing` caps emails at six, and `score_emails` sorts
+newsletters LAST because they are `Priority.LOW` — and they are LOW
+precisely because they were never meant to be read out one at a time. On
+2026-09-20 the inbox held 21 emails, 13 of them newsletters; the eight
+ordinary ones filled all six slots and the extractor received an empty
+list. I wrote a comment defending that choice — "those are the ones the
+segment can actually talk about" — and it was exactly backwards. Selection
+bounds what is read out INDIVIDUALLY. This segment summarises newsletters
+as a GROUP and already had its own cap further down, `take_spoken`. Capping
+twice, once by the wrong unit, produced nothing.
+
+**Why it survived four days: it is intermittent.** On an inbox that is
+mostly newsletters, some survive the cap. A spot check an hour before
+writing this passed 5 of 11 through and looked fine. The composition of the
+inbox decided whether the feature existed, so no single observation could
+settle it.
+
+**This is the fourth time.** `n_stories=0`, `music_set`, `topic_centroid`,
+and now this — each a finished, tested feature that ran zero times in
+production. CLAUDE.md has carried the advice since the first one: "when a
+phase is marked done, check what CALLS the new code." I wrote the roadmap
+entry repeating that warning the same week I committed this.
+
+So the advice is not enough, because it is advice to a person who remembers
+to follow it. `app/pipeline/census.py` runs the check on every briefing: it
+records what each stage took in and gave back, logs one census line, and
+warns on any stage that had input and produced nothing. `newsletters 13->0`
+would have been on the first run's log four days ago. It never fails a run
+— rule 7 applies to instrumentation too — and it emits a `::warning::`
+annotation so the finding is on the run page rather than inside four
+thousand lines of pip output. The watchdog's own header already records why
+that matters: the 2026-08-27 failure "was found days later by reading gh
+run list".
+
+**Generalising it.** The bug class is not "someone forgot to call the
+function". It is that a stage producing nothing is indistinguishable from a
+stage with nothing to do, and every log in this pipeline was written to
+describe work done rather than work skipped. Any stage that can legitimately
+be empty now says so explicitly (`may_be_empty`), which forces the question
+to be answered once, in code, instead of never.
+
+**Also found, and NOT changed.** Every run 401s against ElevenLabs
+(quota_exceeded, 5 credits remaining) and fails over to Google on the first
+turn — so today's briefings are wholly Google-voiced, consistently, not
+switching partway. Roadmap task 29 proposed pinning the workflow to Google;
+that is withdrawn, because the owner asked for ElevenLabs to stay the
+default and be restored when the quota resets, and pinning would prevent
+exactly that. What remains worth doing is recording the failover where the
+phone can see it.
+
 ---
 
 ## Standing facts worth not rediscovering

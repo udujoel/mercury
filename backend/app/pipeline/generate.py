@@ -43,6 +43,7 @@ from app.core.schemas import (
     SourceType,
     Story,
 )
+from app.pipeline.census import RunCensus
 from app.pipeline.dedup import build_stories
 from app.pipeline.digest import (
     attach_research,
@@ -223,6 +224,7 @@ async def generate_briefing(
     # that covered the same acquisition to be read out separately —
     # precisely the "concatenated, not edited" failure ADR-003 exists to
     # prevent.
+    census = RunCensus()
     world_stories, inbox_emails, all_stories = await _build_world_stories(
         emails=emails,
         articles=articles,
@@ -252,12 +254,14 @@ async def generate_briefing(
     # On the emails the SELECTION kept, not the whole inbox: those are the
     # ones the segment can actually talk about, and extracting from forty
     # issues to discuss six is paying for thirty-four answers nobody hears.
-    spoken_newsletters = [
-        e for e in selection["emails"] if e.raw.get("is_newsletter")
-    ]
+    for_extraction = _newsletters_for_extraction(emails)
     newsletter_stories, newsletter_remainder = await _extract_newsletter_stories(
-        llm, spoken_newsletters
+        llm, for_extraction
     )
+    census.record(
+        "newsletters", took=len(for_extraction), made=len(newsletter_stories)
+    )
+    census.record("articles", took=len(articles), made=len(world_stories))
     # OTHER MAIL means OTHER. Without this the newsletters arrive in the
     # prompt TWICE — once taken apart into stories, and once whole with
     # their bodies, under a header telling the hosts to cover them "by
@@ -266,6 +270,10 @@ async def generate_briefing(
     other_mail = [
         e for e in selection["emails"] if not e.raw.get("is_newsletter")
     ]
+    census.record("inbox", took=len(emails), made=len(other_mail),
+                  # An inbox that is entirely newsletters legitimately
+                  # leaves nothing for the rapid-fire tail.
+                  may_be_empty=True)
 
     if generate_script is None:
         raise RuntimeError(
@@ -397,6 +405,22 @@ async def generate_briefing(
         digest = digest.model_copy(
             update={"stories": attach_research(digest.stories, found)}
         )
+
+    # to_thread, because BriefingStorage is synchronous and R2Storage is boto3.
+    # This is ~3MB up on a blocking socket, and it runs inside the API process
+    # while the client polls /status — so calling it directly froze the server
+    # for the whole upload.
+    census.record("script", took=len(emails) + len(articles), made=len(turns))
+    census.record(
+        "desk", took=len(all_stories), made=len(digest.stories),
+    )
+    # Reported before the upload, so the line is in the log even if storing
+    # fails. Never raises and never fails the run — a census that can break
+    # the morning is a worse trade than the bugs it catches.
+    try:
+        census.report()
+    except Exception:  # pragma: no cover - instrumentation must not bite
+        log.warning("run census failed to report", exc_info=True)
 
     # to_thread, because BriefingStorage is synchronous and R2Storage is boto3.
     # This is ~3MB up on a blocking socket, and it runs inside the API process
@@ -546,6 +570,28 @@ def _is_newsletter(item: Item) -> bool:
     )
 
 
+def _newsletters_for_extraction(emails: list[Item]) -> list[Item]:
+    """Every newsletter in the inbox — NOT the ones selection kept.
+
+    This distinction is the whole bug of 2026-09-16 to 09-20, during which
+    the newsletter segment ran zero times across sixteen briefings.
+
+    `select_for_briefing` caps emails at six and `score_emails` sorts
+    newsletters last, because they are `Priority.LOW` — and they are LOW
+    precisely because they were never meant to be read out one at a time.
+    Feeding this segment from that cap asked the wrong budget a question it
+    was built to answer "no" to. On a morning with eight ordinary emails,
+    all six slots went to those and the extractor got an empty list.
+
+    The two budgets are genuinely different. Selection limits how many
+    emails are READ OUT INDIVIDUALLY. This segment SUMMARISES newsletters as
+    a group and has its own cap further down the chain — `take_spoken`,
+    which bounds how many merged SUBJECTS get discussed. Capping twice, once
+    by the wrong unit, is what produced nothing.
+    """
+    return [item for item in emails if item.raw.get("is_newsletter")]
+
+
 async def _extract_newsletter_stories(
     llm, newsletters: list[Item]
 ) -> tuple[list, int]:
@@ -559,6 +605,16 @@ async def _extract_newsletter_stories(
     eight calls go to eight different questions. Researching items would
     spend nine of them on the one subject nine newsletters carried.
     """
+    # Said out loud even when there is nothing to say.
+    #
+    # This is the line whose absence hid the bug for four days. The first
+    # cut returned early on an empty list without logging, so sixteen
+    # consecutive briefings produced no newsletter segment and every run
+    # log looked exactly like a morning with no newsletters in it. A stage
+    # that can quietly do nothing must announce when it does — silence is
+    # indistinguishable from success, and that is how `n_stories=0`,
+    # `music_set` and `topic_centroid` all survived too.
+    log.info("newsletters: %d issue(s) handed to the extractor", len(newsletters))
     if not newsletters:
         return [], 0
     try:
