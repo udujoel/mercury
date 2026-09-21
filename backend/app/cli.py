@@ -223,7 +223,118 @@ def _resolve_briefing_id(explicit: str | None, fallback: str) -> str | None:
     return briefing_id
 
 
-def _check(briefing_id: str, max_age_hours: float | None = None) -> int:
+def _freshness(max_age_hours: float) -> int:
+    """Has generation stopped, whatever day it is?
+
+    A DIFFERENT QUESTION from `check`, and separating them is the whole
+    point. `check` is day-scoped: it resolves today's id and asks whether
+    that briefing exists and plays. Freshness is pipeline-scoped: it asks
+    how long it has been since ANY briefing was produced.
+
+    Review of #59 priced the confusion exactly. A `--max-age-hours` flag
+    bolted onto `check` could not fire at all, because a briefing filed
+    under today can never be older than the time since local midnight —
+    at the 05:52 checkpoint that is at most 6.9 hours, so any floor loose
+    enough to survive a healthy morning was mathematically unreachable.
+    And on the morning after the 2026-09-20 stall there was no briefing
+    for that day at all, so `check` returned 1 and the floor was never
+    even evaluated. Two ways of being inert, in the change written to
+    stop things being inert.
+
+    Asking about the newest briefing ANYWHERE has neither problem: no
+    date to resolve, so no wrong-day false alarm and no dependence on the
+    hour it runs.
+
+    Exit codes match `check` so the watchdog can treat them alike:
+    0 fresh, 5 stale, 2 storage misconfigured, 4 storage could not answer.
+    """
+    from app.synthesis.storage import build_storage
+
+    try:
+        storage = build_storage()
+    except Exception as exc:
+        log.error("storage is not configured: %s", exc)
+        return 2
+
+    try:
+        ids = storage.list_briefing_ids()
+    except Exception:
+        log.exception("could not list briefings")
+        print(
+            "::error::Could not list briefings from storage. This says "
+            "nothing about whether generation is healthy — check the R2 "
+            "credentials before concluding anything."
+        )
+        return 4
+
+    if not ids:
+        # Nothing at all is not staleness; it is a first run, or an empty
+        # bucket, and `check` is the command with something to say about
+        # a missing briefing.
+        log.info("no briefings in storage; freshness has nothing to measure")
+        return 0
+
+    newest = max(ids)
+    try:
+        manifest = storage.load_manifest(newest)
+    except Exception:
+        log.exception("could not read the manifest for %s", newest)
+        print(
+            f"::error::Could not read the newest briefing {newest}. This "
+            "says nothing about whether generation is healthy."
+        )
+        return 4
+
+    if manifest is None:
+        # A briefing id with no manifest: audio written, the run died
+        # before the manifest. `check` reports that shape properly.
+        log.info("newest briefing %s has no manifest; leaving it to `check`", newest)
+        return 0
+
+    generated = manifest.generated_at
+    if generated.tzinfo is None:
+        # Naive timestamps have cost this project four bugs. The manifest
+        # is written with UTC, so assume it rather than raising on the
+        # subtraction — an alarm that dies on a date bug is no alarm.
+        generated = generated.replace(tzinfo=UTC)
+    age_hours = (datetime.now(UTC) - generated).total_seconds() / 3600
+
+    if age_hours < -1:
+        # A briefing from the future is clock skew, and a negative age
+        # passes every floor silently and forever.
+        log.warning(
+            "newest briefing %s is stamped %.1fh in the FUTURE; freshness "
+            "cannot mean anything until that is fixed", newest, -age_hours,
+        )
+        return 0
+
+    if age_hours > max_age_hours:
+        print(
+            f"::error::The newest briefing anywhere is {newest}, "
+            f"{age_hours:.1f} hours old, past the {max_age_hours:g}-hour "
+            "floor. Generation has stopped producing new ones.\n"
+            "1. `gh run list --workflow=briefing.yml` — did the later runs "
+            "happen at all? A DROPPED run leaves no record, and the answer "
+            "is simply to re-run the workflow.\n"
+            "2. If they ran and FAILED, read the newest failure before "
+            "re-running: on 2026-09-20 the Gemini project hit its monthly "
+            "spend cap and every run after 20:44 failed with 429, so "
+            "re-running would have changed nothing."
+        )
+        log.error(
+            "newest briefing %s is %.1fh old, past the %.1fh floor",
+            newest, age_hours, max_age_hours,
+        )
+        return 5
+
+    log.info(
+        "newest briefing %s is %.1fh old, inside the %.1fh floor",
+        newest, age_hours, max_age_hours,
+    )
+    return 0
+
+
+def _check(briefing_id: str) -> int:
     """Is there a briefing for this id the phone could actually play?
 
     Deliberately does NOT stop at "the manifest exists". Two real failure
@@ -239,26 +350,6 @@ def _check(briefing_id: str, max_age_hours: float | None = None) -> int:
     Both look exactly like success from the Actions log. So this asks for the
     audio too, and calls a zero-turn briefing what it is.
 
-    `max_age_hours` adds the question none of the above asks: is it still
-    FRESH? ROADMAP task 31. Present and playable is not the same as
-    current, and the gap is not hypothetical:
-
-      - a briefing exists for today and every later run has failed, so
-        the phone is served something that describes an inbox which has
-        moved on. On 2026-09-20 the last good briefing was 20:05 and the
-        two runs after it failed on a Gemini spend cap.
-      - a run that is DROPPED rather than failed leaves no record and no
-        email (see `briefing-watchdog.yml`), so storage is the only place
-        the absence is visible — and "present" was the only question
-        being asked of it.
-
-    What this floor does NOT catch, despite an earlier version of this
-    docstring claiming it: the `00:12` case. A briefing generated just
-    after midnight is 5.7 hours old at the 05:52 checkpoint and passes
-    any floor loose enough not to cry wolf at a scheduler that routinely
-    runs hours late. "Does this cover the morning?" is a different
-    question from "has generation stopped?", and it belongs in the
-    Worker's `dayState`, which can ask about the `-HHMM` directly.
     """
     from app.synthesis.storage import MIN_PLAYABLE_AUDIO_BYTES, build_storage
 
@@ -338,45 +429,6 @@ def _check(briefing_id: str, max_age_hours: float | None = None) -> int:
             "upload did not finish. Re-run with force=true."
         )
         return 1
-
-    # Freshness LAST, so the more specific failures above keep their own
-    # exit codes and messages. A stale briefing that is also empty should
-    # be reported as empty.
-    if max_age_hours is not None:
-        generated = manifest.generated_at
-        if generated.tzinfo is None:
-            # Naive timestamps have cost this project three bugs; the
-            # manifest is written with UTC, so assume it rather than
-            # raising on the subtraction.
-            generated = generated.replace(tzinfo=UTC)
-        age_hours = (datetime.now(UTC) - generated).total_seconds() / 3600
-        if age_hours < -1:
-            # A briefing from the future is clock skew between the runner
-            # and whatever wrote the manifest, and a negative age passes
-            # every floor silently and forever. Reported rather than
-            # failed: the briefing itself is fine, and an alarm nobody
-            # can act on is the kind this file exists to avoid.
-            log.warning(
-                "briefing %s is stamped %.1fh in the FUTURE; the freshness "
-                "floor cannot mean anything until that is fixed",
-                briefing_id, -age_hours,
-            )
-        if age_hours > max_age_hours:
-            print(
-                f"::error::Briefing {briefing_id} is playable but "
-                f"{age_hours:.1f} hours old, past the {max_age_hours:g}-hour "
-                "floor. It is being served while describing an inbox that "
-                "has moved on. Do NOT regenerate blindly — there IS a "
-                "briefing; find out why the runs after it did not happen. "
-                "Check `gh run list --workflow=briefing.yml`."
-            )
-            log.error(
-                "briefing %s is %.1fh old, past the %.1fh floor",
-                briefing_id, age_hours, max_age_hours,
-            )
-            return 5
-        log.info("briefing %s is %.1fh old, inside the floor",
-                 briefing_id, age_hours)
 
     log.info(
         "briefing %s is present and playable: %d turns, %.0fs of audio",
@@ -800,14 +852,19 @@ def main(argv: list[str] | None = None) -> int:
         help="verify a briefing exists and is playable; exit 1 if it is not",
     )
     chk.add_argument("--briefing-id", default=None, help="defaults to today, local")
-    chk.add_argument(
+
+    fresh = sub.add_parser(
+        "freshness",
+        help="exit 5 if the newest briefing ANYWHERE is older than the floor",
+    )
+    fresh.add_argument(
         "--max-age-hours",
         type=float,
-        default=None,
+        required=True,
         help=(
-            "also fail if the briefing is older than this many hours. "
-            "Present and playable is not the same as current — see "
-            "ROADMAP task 31."
+            "how old the newest briefing may be before generation counts "
+            "as stopped. Day-independent, unlike `check` — see ROADMAP "
+            "task 31."
         ),
     )
 
@@ -833,6 +890,13 @@ def main(argv: list[str] | None = None) -> int:
     # uses the same answer — including prune, whose entire safety argument
     # rests on knowing which briefing is today's.
     today_id = _today_briefing_id(settings.user_timezone)
+
+    # Before any day resolution, deliberately. Freshness asks about the
+    # newest briefing ANYWHERE, so it needs no date — and routing it
+    # through the `--briefing-id` machinery below would reintroduce the
+    # wrong-day problem that made the first cut of this unreachable.
+    if args.command == "freshness":
+        return _freshness(args.max_age_hours)
 
     if args.command == "prune":
         return _prune(
@@ -883,7 +947,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.command == "check":
-        return _check(briefing_id, args.max_age_hours)
+        return _check(briefing_id)
 
     if args.command == "generate":
         raw_length = args.length or settings.briefing_length

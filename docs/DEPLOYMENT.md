@@ -159,13 +159,16 @@ you as GitHub's ordinary failed-run email:
 | 2 | Configuration is wrong | A secret is missing or malformed; the message names which |
 | 3 | The briefing shipped **without** the inbox or calendar | Usually the expired token above. The audio is in R2 and the phone will play it — the red tick is there to tell you, not to stop you |
 | 4 | Storage could not answer | A read failed or the stored manifest will not parse. This says **nothing** about whether the briefing exists — check the R2 secrets before regenerating anything |
-| 5 | `check --max-age-hours` found a briefing that is playable and **stale** | Do NOT start by regenerating; there IS a briefing. Find out why the later runs did not happen: `gh run list --workflow=briefing.yml` |
+| 5 | `app.cli freshness` found that the newest briefing **anywhere** is past the floor — generation has stopped | Do NOT start by regenerating. `gh run list --workflow=briefing.yml`: if the runs never happened, a re-run is the answer; if they ran and failed, read the newest failure first |
 
-Exit 5 exists because exit 1 sends you to regenerate, and that is the wrong
-move — and an expensive one — when a briefing is already there and merely old.
-On 2026-09-20 the last good briefing was 20:05 and every run after it failed
-on a Gemini monthly spend cap; regenerating would have spent nothing but time,
-because the cap was the thing to fix.
+`freshness` is a separate command from `check` because they ask different
+questions. `check` is day-scoped: it resolves today's id and asks whether that
+briefing plays. `freshness` asks how long it has been since ANY briefing was
+produced, which is the question "has generation stopped" — and a day-scoped
+check cannot answer it. On 2026-09-20 the last good briefing was 20:05 and
+every run after it failed on a Gemini monthly spend cap; by the next morning
+there was no briefing for that day at all, so `check` reported "no briefing"
+and sent the operator to regenerate into the same cap.
 
 Exit 3 is the one that used to be exit 0. A briefing that shipped without the
 user's actual day exited successfully, so Actions went green and no email was

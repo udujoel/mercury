@@ -96,10 +96,18 @@ def test_every_scheduled_watchdog_entry_reaches_the_check(cron, zone, date):
 
 
 def test_the_freshness_floor_cannot_fire_on_a_healthy_morning():
-    """The other half of the coupling: a floor tighter than the real gap
-    between generation and the check cries wolf every day, and a watchdog
-    that is usually wrong stops being read — which this workflow's own
-    header says in as many words."""
+    """A floor tighter than the real gap between the newest generation
+    slot and the check cries wolf every day, and a watchdog that is
+    usually wrong stops being read — which this workflow's own header
+    says in as many words.
+
+    A punctual scheduler is the RIGHT model here, and that is worth
+    stating because review flagged the opposite for the earlier design.
+    `freshness` measures the newest briefing ANYWHERE, so a generation
+    run that lands LATE makes the newest briefing fresher at check time,
+    never staler. Lateness cannot cause a false alarm; only a slot that
+    does not happen at all can, and that is a true alarm.
+    """
     floor = re.search(r"--max-age-hours (\d+)", WATCHDOG.read_text())
     assert floor, "the watchdog no longer passes a freshness floor"
     floor_hours = int(floor.group(1))
@@ -118,6 +126,27 @@ def test_the_freshness_floor_cannot_fire_on_a_healthy_morning():
         f"a healthy system reaches {worst:.1f}h at some checkpoint, past "
         f"the {floor_hours}h floor — this fires every day on a working "
         "pipeline"
+    )
+
+
+def test_the_floor_is_below_a_single_dropped_slot():
+    """Loose is not the same as useless. One missed generation slot must
+    still be visible, or the floor only catches catastrophes."""
+    floor = int(re.search(r"--max-age-hours (\d+)", WATCHDOG.read_text()).group(1))
+    gen = sorted(_utc_hour_minute(c)[0] for c in _crons(BRIEFING))
+    checks = sorted(
+        h + m / 60 for h, m in (_utc_hour_minute(c) for c in _crons(WATCHDOG))
+    )
+    earliest_check = checks[0]
+    # The newest slot at or before the check, and the one before THAT —
+    # which is what the check sees when the nearest slot is dropped.
+    before = [g for g in gen if g <= earliest_check]
+    prior = before[-2] if len(before) >= 2 else max(gen) - 24
+    dropped_age = earliest_check - prior
+    assert dropped_age > floor, (
+        f"a single dropped slot leaves the newest briefing "
+        f"{dropped_age:.1f}h old at the {earliest_check:.2f} check, inside "
+        f"the {floor}h floor — one missed run would be invisible"
     )
 
 

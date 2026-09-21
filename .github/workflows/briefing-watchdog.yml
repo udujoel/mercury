@@ -163,32 +163,14 @@ jobs:
           # the four minutes.
           for attempt in 1 2 3; do
             set +e
-            # 9 hours, on the two morning checks that actually run.
-            #
-            # Healthy at 05:52 UTC the newest briefing is the 00:12 run,
-            # 5.7 hours old, and at 06:56 it is 6.7 — so 9 leaves room for
-            # a scheduler this project has measured running hours late,
-            # which is the condition the watchdog exists to survive rather
-            # than to alarm about.
-            #
-            # What it catches that "does a briefing exist" does not: a
-            # briefing that exists for today and is the ONLY one, because
-            # every run after it failed. On 2026-09-20 the last good
-            # briefing was 20:05 and the two runs after it failed; by the
-            # 05:52 check that is 9.8 hours, and this fires.
-            python -m app.cli check "${args[@]}" --max-age-hours 9
+            python -m app.cli check "${args[@]}"
             status=$?
             set -e
             if [ "$status" -eq 0 ]; then exit 0; fi
             # 2 (misconfigured) and 4 (storage could not answer — a 403, or a
             # manifest object that will not parse) are not states that waiting
             # improves. Only 1, "there is no playable briefing yet", is.
-            # 5 joins them: a briefing that is present, playable and old
-            # does not become newer in 120 seconds. Retrying it spent 240s
-            # of sleep and logged "no briefing yet" about a briefing that
-            # was right there.
-            if [ "$status" -eq 2 ] || [ "$status" -eq 4 ] \
-               || [ "$status" -eq 5 ]; then break; fi
+            if [ "$status" -eq 2 ] || [ "$status" -eq 4 ]; then break; fi
             if [ "$attempt" -lt 3 ]; then
               echo "no briefing yet; re-checking in 120s (attempt $attempt of 3)"
               sleep 120
@@ -235,15 +217,53 @@ jobs:
                  "after 7 days. See docs/DEPLOYMENT.md."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: There is a briefing and it is stale
-        # Exit 5, which is NOT exit 1. There IS a playable briefing, so
-        # "no usable briefing — go and regenerate" is both wrong and
-        # expensive: regenerating spends real Gemini and TTS budget on a
-        # briefing that already exists and plays.
-        if: failure() && steps.check.outputs.status == '5'
+      - name: Has generation stopped?
+        # A DIFFERENT QUESTION from the check above, and it runs in the
+        # same job so it costs no extra Actions minutes — which matters,
+        # because docs/REVIEW-2026-09-14.md prices this repo at
+        # ~1,950-2,000 charged minutes against a 2,000 cap and notes that
+        # when they run out this watchdog stops too.
+        #
+        # `check` is day-scoped: it resolves today's id. That makes it
+        # structurally unable to notice a pipeline that stopped yesterday
+        # — the first cut of task 31 bolted a `--max-age-hours` flag onto
+        # it and the floor was mathematically unreachable, because a
+        # briefing filed under today can never be older than the time
+        # since local midnight.
+        #
+        # `always()`, so a red `check` does not hide this. The two
+        # failures have different remedies and the operator should see
+        # both.
+        #
+        # 8 hours: healthy is 5.7h at 05:52 and 6.7h at 06:56 (the 00:12
+        # run), so there is over an hour of margin; the 2026-09-20 stall
+        # is 9.8h and fires; a dropped 00:12 with an on-time 18:12 is
+        # 11.7h and fires.
+        id: freshness
+        if: always() && steps.check.outputs.status != '2'
+        env:
+          AWS_EC2_METADATA_DISABLED: "true"
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ (secrets.R2_READONLY_ACCESS_KEY_ID && secrets.R2_READONLY_SECRET_ACCESS_KEY) && secrets.R2_READONLY_ACCESS_KEY_ID || secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ (secrets.R2_READONLY_ACCESS_KEY_ID && secrets.R2_READONLY_SECRET_ACCESS_KEY) && secrets.R2_READONLY_SECRET_ACCESS_KEY || secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          STORAGE_BACKEND: r2
+        run: |
+          set +e
+          python -m app.cli freshness --max-age-hours 8
+          status=$?
+          set -e
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit "$status"
+
+      - name: Generation has stopped
+        # Exit 5 from the FRESHNESS step, which is not the same event as
+        # the check failing. There may well be a perfectly good briefing
+        # for today; what there is not is a recent one.
+        if: always() && steps.freshness.outputs.status == '5'
         run: |
           {
-            echo "## The briefing is playable, and stale"
+            echo "## Generation has stopped"
             echo
             echo "\`app.cli check\` found a briefing that plays, and that is" \
                  "older than the freshness floor. Generation has stopped" \
@@ -267,9 +287,7 @@ jobs:
         # a missing or wrong R2 secret (`check` exit 2). None of these are
         # evidence about the briefing, and reporting them as "no briefing"
         # sends the user to regenerate something that may be perfectly fine.
-        if: >-
-          failure() && steps.check.outputs.status != '1'
-          && steps.check.outputs.status != '5'
+        if: failure() && steps.check.outputs.status != '1'
         env:
           CHECK_STATUS: ${{ steps.check.outputs.status }}
         run: |

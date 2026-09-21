@@ -825,13 +825,20 @@ produced, ranked by what they buy per hour spent.
       and no check — the 2026-09-13 evening run died with a segfault and
       nothing reported it. Add `--max-age-hours` to `app.cli check`.
 
-      DONE: the freshness floor, on the two morning checks. `app.cli
-      check --max-age-hours 9` catches the case "a briefing exists for
-      today and every run after it failed" — the 2026-09-20 shape, where
-      the last good briefing was 20:05 and the two runs after it failed
-      on a Gemini spend cap. That is 9.8 hours by the 05:52 check.
-      Staleness gets exit code 5 rather than 1, because 1 sends the
-      operator to regenerate and there is already a briefing.
+      DONE: `app.cli freshness --max-age-hours 8`, run as a second step
+      of the existing watchdog job so it costs no extra Actions minutes.
+      It asks about the newest briefing ANYWHERE, which is the question
+      "has generation stopped"; exit 5, distinct from `check`'s exit 1.
+
+      Two earlier cuts were inert and both are worth remembering. A
+      `--max-age-hours` flag on `check` could not fire at all, because
+      `check` is day-scoped and a briefing filed under today can never be
+      older than the time since local midnight — at most 6.9h at the
+      05:52 checkpoint, so any floor loose enough for a healthy morning
+      was unreachable. And on the morning after the 09-20 stall there was
+      no briefing for the new day, so `check` returned 1 and the floor was
+      never evaluated. One question answered by a command scoped to a
+      different one.
 
       NOT DONE, and the first cut got this badly wrong: extending the
       watchdog to the other three generation slots. It added crons at
