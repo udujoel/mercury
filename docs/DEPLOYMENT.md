@@ -150,14 +150,22 @@ the app is the mitigation; the loud error is only the smoke alarm.
 
 ## When a run goes red
 
-Three distinct failures, three different exit codes from `app.cli`, all of them
-reaching you as GitHub's ordinary failed-run email:
+Distinct failures, distinct exit codes from `app.cli`, all of them reaching
+you as GitHub's ordinary failed-run email:
 
 | Exit | Meaning | What to do |
 |---|---|---|
 | 1 | Generation failed, or produced nothing playable | Read the log. If it says NO AUDIBLE TURNS, check Google TTS credentials and quota — nothing was stored, so a re-run needs no `force` |
 | 2 | Configuration is wrong | A secret is missing or malformed; the message names which |
 | 3 | The briefing shipped **without** the inbox or calendar | Usually the expired token above. The audio is in R2 and the phone will play it — the red tick is there to tell you, not to stop you |
+| 4 | Storage could not answer | A read failed or the stored manifest will not parse. This says **nothing** about whether the briefing exists — check the R2 secrets before regenerating anything |
+| 5 | `check --max-age-hours` found a briefing that is playable and **stale** | Do NOT start by regenerating; there IS a briefing. Find out why the later runs did not happen: `gh run list --workflow=briefing.yml` |
+
+Exit 5 exists because exit 1 sends you to regenerate, and that is the wrong
+move — and an expensive one — when a briefing is already there and merely old.
+On 2026-09-20 the last good briefing was 20:05 and every run after it failed
+on a Gemini monthly spend cap; regenerating would have spent nothing but time,
+because the cap was the thing to fix.
 
 Exit 3 is the one that used to be exit 0. A briefing that shipped without the
 user's actual day exited successfully, so Actions went green and no email was

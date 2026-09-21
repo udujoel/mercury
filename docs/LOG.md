@@ -883,15 +883,29 @@ So task 31's two halves, and only one of them is done.
 **Done: the freshness floor.** `app.cli check --max-age-hours` asks the
 question none of the existing assertions do. Everything in `_check` asks
 whether a briefing EXISTS and can be PLAYED; none asks whether it is
-still worth playing. The floor is 7 hours, just over the six-hourly
-cadence, so a MISSED SLOT is caught: if the 12:12 run fails, the 13:42
-check finds a 06:12 briefing 7.5 hours old and says so. Looser and a
-whole slot vanishes silently; tighter and a run delayed by GitHub's
-scheduler — documented, routine, and the reason the watchdog exists —
-cries wolf.
+still worth playing. On the two morning checks, with a 9-hour floor: the
+20:05 briefing is 9.8 hours old at 05:52, so the 09-20 shape fires.
 
-The watchdog now runs at 13:42, 19:42 and 01:42 UTC as well, each ~90
-minutes after its generation slot.
+**Withdrawn, and this is the part worth recording.** The first cut also
+added watchdog crons at 13:42, 19:42 and 01:42 UTC. Every one of them
+would have stood down. `briefing-watchdog.yml` has a guard that exits 0
+for any SCHEDULED run whose local hour is outside 03:00-12:00, written
+for the morning backstops and correct for them — and a scheduled run
+never carries a `briefing_id`, so it catches every entry. A sweep of all
+598 IANA zones found NO timezone in which all three of those crons run;
+the three-way intersection of passing UTC offsets is empty.
+
+So the change titled "a watchdog for every slot" shipped a watchdog for
+the same one slot as before, silently, green. **Built and never called,
+in the commit written to detect built-and-never-called.** Five
+independent review dimensions found it; I had not.
+
+The lesson is narrower than "test your workflows". The guard was correct
+code that encoded an assumption about WHEN it would run, and I added
+callers at other times without reading it. A precondition living in a
+guard is invisible to the person adding a caller unless something
+asserts the coupling — which is the same shape as the Worker's
+`SETTINGS_FIELDS` whitelist two PRs ago.
 
 **Still open: the `dayState` half.** A 00:12 briefing is 5.7 hours old at
 the 05:52 checkpoint, so it passes a 7-hour floor while not covering the

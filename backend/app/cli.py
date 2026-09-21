@@ -21,6 +21,12 @@ the whole schedule exists to prevent:
        corrupt. NOT the same as 1: the watchdog gates its "go and regenerate"
        instructions on 1, and a 403 or an unparseable object is not evidence
        about the briefing at all.
+    5  a briefing is present and playable but STALE, past `--max-age-hours`.
+       Distinct from 1 for the same reason 4 is: 1 means "there is nothing to
+       play", and the watchdog answers that by retrying and then telling the
+       operator to regenerate. Neither response fits a briefing that exists,
+       plays, and is simply old — retrying cannot make it newer, and the
+       remedy is to find out why the later runs did not happen.
 
 `check` is the other half of ADR-010. GitHub's scheduler is documented as
 best-effort ("some queued jobs may be dropped"), and a dropped run leaves no
@@ -237,17 +243,22 @@ def _check(briefing_id: str, max_age_hours: float | None = None) -> int:
     FRESH? ROADMAP task 31. Present and playable is not the same as
     current, and the gap is not hypothetical:
 
-      - the `00:12` cron generates a briefing named for the NEW day, so
-        every one of the Worker's morning checkpoints sees "this date has
-        a playable briefing" and stands down — the 05:40 alarm included.
-        The listener wakes to a briefing assembled from an inbox six
-        hours stale, and nothing anywhere reports a problem.
-      - on 2026-09-20 two runs failed at 20:44 and 20:48 on a Gemini
-        spend cap, and the last good briefing was 2.5 hours old with
-        nothing to say so. The watchdog had last run at 11:51.
+      - a briefing exists for today and every later run has failed, so
+        the phone is served something that describes an inbox which has
+        moved on. On 2026-09-20 the last good briefing was 20:05 and the
+        two runs after it failed on a Gemini spend cap.
+      - a run that is DROPPED rather than failed leaves no record and no
+        email (see `briefing-watchdog.yml`), so storage is the only place
+        the absence is visible — and "present" was the only question
+        being asked of it.
 
-    Both are "the pipeline stopped and the check still passed", which is
-    the failure this whole file exists to make impossible.
+    What this floor does NOT catch, despite an earlier version of this
+    docstring claiming it: the `00:12` case. A briefing generated just
+    after midnight is 5.7 hours old at the 05:52 checkpoint and passes
+    any floor loose enough not to cry wolf at a scheduler that routinely
+    runs hours late. "Does this cover the morning?" is a different
+    question from "has generation stopped?", and it belongs in the
+    Worker's `dayState`, which can ask about the `-HHMM` directly.
     """
     from app.synthesis.storage import MIN_PLAYABLE_AUDIO_BYTES, build_storage
 
@@ -339,19 +350,31 @@ def _check(briefing_id: str, max_age_hours: float | None = None) -> int:
             # raising on the subtraction.
             generated = generated.replace(tzinfo=UTC)
         age_hours = (datetime.now(UTC) - generated).total_seconds() / 3600
+        if age_hours < -1:
+            # A briefing from the future is clock skew between the runner
+            # and whatever wrote the manifest, and a negative age passes
+            # every floor silently and forever. Reported rather than
+            # failed: the briefing itself is fine, and an alarm nobody
+            # can act on is the kind this file exists to avoid.
+            log.warning(
+                "briefing %s is stamped %.1fh in the FUTURE; the freshness "
+                "floor cannot mean anything until that is fixed",
+                briefing_id, -age_hours,
+            )
         if age_hours > max_age_hours:
             print(
                 f"::error::Briefing {briefing_id} is playable but "
                 f"{age_hours:.1f} hours old, past the {max_age_hours:g}-hour "
-                "floor. It is being served as today's while describing an "
-                "inbox that has moved on. Generation has stopped, or the "
-                "only run that succeeded was the one just after midnight."
+                "floor. It is being served while describing an inbox that "
+                "has moved on. Do NOT regenerate blindly — there IS a "
+                "briefing; find out why the runs after it did not happen. "
+                "Check `gh run list --workflow=briefing.yml`."
             )
             log.error(
                 "briefing %s is %.1fh old, past the %.1fh floor",
                 briefing_id, age_hours, max_age_hours,
             )
-            return 1
+            return 5
         log.info("briefing %s is %.1fh old, inside the floor",
                  briefing_id, age_hours)
 

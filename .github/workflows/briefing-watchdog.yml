@@ -33,24 +33,22 @@ on:
     # the last generation dispatch, and still an hour before the 07:00 wake.
     - cron: "52 5 * * *"
     - cron: "56 6 * * *"
-    # ROADMAP task 31. Generation runs FOUR times a day (06:12, 12:12,
-    # 18:12, 00:12 UTC) and only the morning had a watchdog, so three of
-    # the four slots had no retry and no check at all. Two real
-    # consequences, both observed:
+    # NOT extended to the other three generation slots, though task 31
+    # asks for it and an earlier cut of this change did exactly that.
     #
-    #   - the 2026-09-13 evening run died with a segfault and nothing
-    #     reported it;
-    #   - on 2026-09-20 two runs failed at 20:44 and 20:48 on a Gemini
-    #     spend cap, and the last watchdog had run at 11:51.
+    # Two reasons, both measured. The entries would not have RUN: the
+    # stand-down guard below fires outside 03:00-12:00 local, and 13:42,
+    # 19:42 and 01:42 UTC are outside it in every timezone on earth — a
+    # sweep of all 598 IANA zones found none where all three execute. And
+    # they cannot be afforded: docs/REVIEW-2026-09-14.md prices this repo
+    # at ~1,950-2,000 charged minutes against a 2,000 cap, and its own
+    # finding is that "when Actions minutes run out, briefing-watchdog.yml
+    # stops too". Buying evening coverage by risking the alarm AND
+    # generation is the worst trade available.
     #
-    # Each of these sits ~90 minutes after its generation slot — the same
-    # margin the morning entries use, for the same reason: an Actions
-    # queue only has to be slow once for a watchdog to look before the
-    # run has written anything, and crying wolf is how an alarm stops
-    # being read.
-    - cron: "42 13 * * *"
-    - cron: "42 19 * * *"
-    - cron: "42 1 * * *"
+    # Same-day detection of an evening failure needs either the cadence
+    # cut of task 28 or a deliberate decision to spend the minutes. Both
+    # are the owner's call, not a thing to slip into a robustness fix.
   workflow_dispatch:
     inputs:
       briefing_id:
@@ -130,6 +128,12 @@ jobs:
           # arrive with none, and outside the morning window it is watching a
           # morning that has not happened yet. There is nothing to alarm
           # about, so it stands down rather than inventing a date.
+          # Scoped to the morning entries by the hour test below, and that
+          # is load-bearing rather than incidental: a scheduled entry added
+          # at any other hour inherits this stand-down and exits 0 without
+          # ever running `check`. An earlier cut of task 31 added three and
+          # every one of them was silently inert. If you add a cron here,
+          # add a case to `test_watchdog_schedule.py` in the same change.
           if [ "$EVENT_NAME" = "schedule" ] && [ -z "$BRIEFING_ID" ]; then
             local_hour=$(TZ="${USER_TIMEZONE:-UTC}" date +%-H)
             if [ "$local_hour" -lt 3 ] || [ "$local_hour" -ge 12 ]; then
@@ -159,21 +163,32 @@ jobs:
           # the four minutes.
           for attempt in 1 2 3; do
             set +e
-            # 7, which is just over the six-hourly cadence. Sized so that
-            # a MISSED SLOT is caught: if the 12:12 run fails, the 13:42
-            # check finds a 06:12 briefing 7.5 hours old and says so.
-            # Looser than that and a whole slot can vanish silently, which
-            # is what happened on 2026-09-20; tighter and a run delayed by
-            # GitHub's scheduler — documented, routine, and the reason
-            # this watchdog exists — would cry wolf.
-            python -m app.cli check "${args[@]}" --max-age-hours 7
+            # 9 hours, on the two morning checks that actually run.
+            #
+            # Healthy at 05:52 UTC the newest briefing is the 00:12 run,
+            # 5.7 hours old, and at 06:56 it is 6.7 — so 9 leaves room for
+            # a scheduler this project has measured running hours late,
+            # which is the condition the watchdog exists to survive rather
+            # than to alarm about.
+            #
+            # What it catches that "does a briefing exist" does not: a
+            # briefing that exists for today and is the ONLY one, because
+            # every run after it failed. On 2026-09-20 the last good
+            # briefing was 20:05 and the two runs after it failed; by the
+            # 05:52 check that is 9.8 hours, and this fires.
+            python -m app.cli check "${args[@]}" --max-age-hours 9
             status=$?
             set -e
             if [ "$status" -eq 0 ]; then exit 0; fi
             # 2 (misconfigured) and 4 (storage could not answer — a 403, or a
             # manifest object that will not parse) are not states that waiting
             # improves. Only 1, "there is no playable briefing yet", is.
-            if [ "$status" -eq 2 ] || [ "$status" -eq 4 ]; then break; fi
+            # 5 joins them: a briefing that is present, playable and old
+            # does not become newer in 120 seconds. Retrying it spent 240s
+            # of sleep and logged "no briefing yet" about a briefing that
+            # was right there.
+            if [ "$status" -eq 2 ] || [ "$status" -eq 4 ] \
+               || [ "$status" -eq 5 ]; then break; fi
             if [ "$attempt" -lt 3 ]; then
               echo "no briefing yet; re-checking in 120s (attempt $attempt of 3)"
               sleep 120
@@ -220,12 +235,41 @@ jobs:
                  "after 7 days. See docs/DEPLOYMENT.md."
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: There is a briefing and it is stale
+        # Exit 5, which is NOT exit 1. There IS a playable briefing, so
+        # "no usable briefing — go and regenerate" is both wrong and
+        # expensive: regenerating spends real Gemini and TTS budget on a
+        # briefing that already exists and plays.
+        if: failure() && steps.check.outputs.status == '5'
+        run: |
+          {
+            echo "## The briefing is playable, and stale"
+            echo
+            echo "\`app.cli check\` found a briefing that plays, and that is" \
+                 "older than the freshness floor. Generation has stopped" \
+                 "producing newer ones."
+            echo
+            echo "Do NOT start by regenerating — there is a briefing, and" \
+                 "the runs that should have replaced it are the question."
+            echo
+            echo "1. \`gh run list --workflow=briefing.yml\` — did the later" \
+                 "slots run at all? A DROPPED run leaves no record."
+            echo "2. If they ran and failed, read the newest failure. A" \
+                 "provider quota is the likeliest cause: on 2026-09-20 the" \
+                 "Gemini project hit its monthly spend cap and every run" \
+                 "after 20:44 failed with 429 ResourceExhausted."
+            echo "3. Only once the cause is fixed, Actions -> **daily" \
+                 "briefing** -> Run workflow."
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: The watchdog could not answer the question
         # Everything else that can fail: checkout, setup-python, pip install,
         # a missing or wrong R2 secret (`check` exit 2). None of these are
         # evidence about the briefing, and reporting them as "no briefing"
         # sends the user to regenerate something that may be perfectly fine.
-        if: failure() && steps.check.outputs.status != '1'
+        if: >-
+          failure() && steps.check.outputs.status != '1'
+          && steps.check.outputs.status != '5'
         env:
           CHECK_STATUS: ${{ steps.check.outputs.status }}
         run: |

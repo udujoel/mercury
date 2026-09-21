@@ -71,11 +71,20 @@ def test_a_fresh_briefing_passes(storage):
     assert _check("2026-09-20", max_age_hours=7) == 0
 
 
-def test_a_stale_briefing_fails(storage, capsys):
-    """The 00:12 case: generated just after midnight, checked at 06:00."""
-    storage(_playable(5.8))
-    assert _check("2026-09-20", max_age_hours=5) == 1
-    assert "hours old" in capsys.readouterr().out
+def test_a_stale_briefing_gets_its_own_exit_code(storage, capsys):
+    """5, not 1, and the distinction is load-bearing.
+
+    Exit 1 means "there is nothing to play", and the watchdog answers it
+    by retrying three times and then telling the operator to regenerate.
+    Neither response fits a briefing that exists, plays and is merely
+    old: retrying cannot make it newer, and regenerating spends real
+    Gemini and TTS budget on a briefing that is already there.
+    """
+    storage(_playable(9.8))
+    assert _check("2026-09-20", max_age_hours=9) == 5
+    out = capsys.readouterr().out
+    assert "hours old" in out
+    assert "Do NOT regenerate blindly" in out
 
 
 def test_without_the_flag_nothing_changes(storage):
@@ -123,3 +132,41 @@ def test_the_flag_reaches_check_from_the_command_line(monkeypatch):
         "--max-age-hours never reached _check; the flag parses and does "
         "nothing, which is this project's signature bug"
     )
+
+
+def test_a_briefing_from_the_future_is_reported_not_silently_accepted(
+    storage, caplog
+):
+    """Clock skew between the runner and whatever wrote the manifest gives
+    a NEGATIVE age, which passes every floor silently and forever — the
+    freshness check quietly stops meaning anything.
+
+    Reported rather than failed: the briefing itself plays, and an alarm
+    nobody can act on is the kind this workflow exists to avoid.
+    """
+    import logging
+
+    m = _playable(1.0)
+    m.generated_at = m.generated_at + timedelta(hours=6)
+    storage(m)
+
+    with caplog.at_level(logging.WARNING):
+        assert _check("2026-09-20", max_age_hours=9) == 0
+    assert "FUTURE" in caplog.text
+
+
+def test_the_boundary_falls_on_the_forgiving_side(storage):
+    """Just inside passes, just outside fails.
+
+    Deliberately NOT tested at exactly 9.0: the age is computed against a
+    live clock, so microseconds elapse between building the timestamp and
+    measuring it and a briefing "exactly at" the floor is really a hair
+    past it. Asserting on that measures the test harness, not the code —
+    and a test that fails for a reason the code cannot control is one
+    somebody eventually deletes.
+    """
+    storage(_playable(8.9))
+    assert _check("2026-09-20", max_age_hours=9) == 0
+
+    storage(_playable(9.1))
+    assert _check("2026-09-20", max_age_hours=9) == 5

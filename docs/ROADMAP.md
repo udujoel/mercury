@@ -825,17 +825,34 @@ produced, ranked by what they buy per hour spent.
       and no check — the 2026-09-13 evening run died with a segfault and
       nothing reported it. Add `--max-age-hours` to `app.cli check`.
 
-      DONE: the watchdog half. `app.cli check --max-age-hours` exists and
-      the watchdog runs at 13:42, 19:42 and 01:42 UTC as well as the two
-      morning entries, each ~90 minutes after its generation slot. The
-      floor is 7 hours, just over the six-hourly cadence, so a MISSED
-      SLOT is caught: if the 12:12 run fails, the 13:42 check finds a
-      06:12 briefing 7.5 hours old and says so.
+      DONE: the freshness floor, on the two morning checks. `app.cli
+      check --max-age-hours 9` catches the case "a briefing exists for
+      today and every run after it failed" — the 2026-09-20 shape, where
+      the last good briefing was 20:05 and the two runs after it failed
+      on a Gemini spend cap. That is 9.8 hours by the 05:52 check.
+      Staleness gets exit code 5 rather than 1, because 1 sends the
+      operator to regenerate and there is already a briefing.
 
-      Prompted by a live failure: on 2026-09-20 two runs failed at 20:44
-      and 20:48 on a Gemini spend cap, the last good briefing was 2.5
-      hours old, `check` would have passed on it, and the watchdog had
-      last run at 11:51.
+      NOT DONE, and the first cut got this badly wrong: extending the
+      watchdog to the other three generation slots. It added crons at
+      13:42, 19:42 and 01:42 UTC, and every one of them would have stood
+      down at the 03:00-12:00-local guard and exited 0 GREEN without
+      running the check — a sweep of all 598 IANA zones found none where
+      all three execute. "A watchdog for every slot" that was a watchdog
+      for the same one slot as before; built and never called, in the
+      change written to catch that.
+
+      And they cannot be afforded anyway. `docs/REVIEW-2026-09-14.md`
+      prices this repo at ~1,950-2,000 charged minutes against a 2,000
+      cap, and its own finding is that when Actions minutes run out the
+      watchdog stops too. Buying evening coverage by risking the alarm
+      AND generation is the worst trade available; that needs task 28's
+      cadence cut first.
+
+      `test_watchdog_schedule.py` now fails if a cron is added that the
+      guard would stand down, and if the floor is tightened to where a
+      healthy morning trips it or loosened to where the incident does
+      not.
 
       STILL OPEN: the `dayState` half. A 00:12 briefing is 5.7 hours old
       at the 05:52 checkpoint, so it passes a 7-hour floor while not
