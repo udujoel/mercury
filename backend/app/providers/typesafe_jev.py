@@ -17,12 +17,16 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from app.core.providers import EmailJudgment
+from app.core.providers import Claim, EmailJudgment
 
 log = logging.getLogger(__name__)
 
 # Four criteria, so the returned score runs 0.0-3.0 as a position on this
 # index. Order matters: `app.pipeline.triage` thresholds against it.
+# Claims per request. 100 was measured fine; this bounds blast radius,
+# not the API.
+CLAIMS_PER_REQUEST = 40
+
 CONSEQUENCE_LEVELS = [
     "Nothing - bulk mail, marketing, or an automated notice needing no action",
     "Minor - useful to know eventually, but nothing turns on it and no date attached",
@@ -102,6 +106,66 @@ class JevJudgmentProvider:
         # Phase 1 already spends 71s of. A hung provider would not fail the
         # briefing, it would make it miss the morning.
         self._budget = settings.judgment_total_budget_seconds
+
+    async def judge_claims(
+        self, state: dict, claims: list[Claim], *, timeout: float = 20.0
+    ) -> dict[str, float | None]:
+        """See `JudgmentProvider.judge_claims`.
+
+        Chunked at CLAIMS_PER_REQUEST. 100 claims in one request was
+        measured working on 2026-09-21, so the chunk is not a limit the API
+        imposes — it is a bound on how much one failure costs, since a
+        request that fails takes every claim in it down with it.
+        """
+        if not claims:
+            return {}
+
+        from typesafe_sdk import AsyncTypeSafeClient, Noul
+
+        out: dict[str, float | None] = {c.key: None for c in claims}
+        chunks = [
+            claims[i : i + CLAIMS_PER_REQUEST]
+            for i in range(0, len(claims), CLAIMS_PER_REQUEST)
+        ]
+        semaphore = asyncio.Semaphore(self._concurrency)
+
+        async with AsyncTypeSafeClient(api_key=self._api_key) as client:
+
+            async def ask(chunk: list[Claim]) -> None:
+                # Positional ids, not `Claim.key`: the key is the caller's
+                # and may contain anything. Mapped back below.
+                questions = {
+                    f"c{i}": Noul(instructions=c.instructions)
+                    for i, c in enumerate(chunk)
+                }
+                async with semaphore:
+                    try:
+                        response = await asyncio.wait_for(
+                            client.system_one(state=state, questions=questions),
+                            timeout=timeout,
+                        )
+                    except Exception as exc:
+                        log.warning(
+                            "jev: %d claim(s) went unjudged: %s", len(chunk), exc
+                        )
+                        return
+                for i, claim in enumerate(chunk):
+                    answer = response.nouls.get(f"c{i}")
+                    if answer is not None:
+                        out[claim.key] = float(answer.noul)
+
+            tasks = [asyncio.create_task(ask(c)) for c in chunks]
+            _, pending = await asyncio.wait(tasks, timeout=self._budget)
+            if pending:
+                for task in pending:
+                    task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
+                log.warning(
+                    "jev: %d claim chunk(s) did not finish within the %.0fs "
+                    "budget and were cancelled",
+                    len(pending), self._budget,
+                )
+        return out
 
     async def triage_emails(
         self, states: list[dict], *, timeout: float = 20.0

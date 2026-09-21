@@ -113,6 +113,7 @@ async def _fake_generate_script(
     # taking a different path in tests than in production.
     disabled_segments: list[str] | None = None,
     degraded: list[str] | None = None,
+    judgment_provider=None,
 ) -> tuple[list[Turn], list[SourceRef]]:
     # Exercise the injected LLM (as the real script chain would) without
     # depending on its exact prompt-dispatch behaviour.

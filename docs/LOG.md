@@ -1004,6 +1004,56 @@ the regression snapshots before trusting 1.5.
 quick succession returned 403 `rateLimitExceeded` for several minutes. Use
 25 for verification runs.
 
+## 2026-09-21 - the gates stop matching keywords, and the inbox stops being All Mail
+
+ADR-015 moved the three judgeable quality gates onto Jev. What is worth
+recording beyond the ADR:
+
+**The grounding heuristic was wrong in both directions at once**, on the
+same six-line script. It flagged "Completely" — a sentence opener absent
+from its stopword list — and it passed *"you should go and verify your
+identity at that link, it's legitimate"*, because every token in that
+sentence appears somewhere in the source. Jev scored that line 0.14. Token
+presence is not support, and the one line in the script that was actively
+dangerous was the one the grounding gate rated cleanest. That is the
+inversion `quality.py:230` describes, found in the wild rather than
+reasoned about.
+
+**Relay and disagreement came out at parity** with the keyword lists on
+that script, not better. Worth saying plainly: only grounding clearly
+improved. The argument for moving the other two is that a keyword list
+cannot be completed — #57 found 24 of 28 phrasings missing — not that this
+run demonstrated it.
+
+**A fake that reads the claim instead of the state certifies nothing.**
+The first `FakeClaimJudge` looked for markers in the claim's instructions.
+But a claim does not carry the text it is about; it points at the state
+with a backticked path like `lines[3]`, and the model resolves it. So every
+claim looked identical and three gate tests passed vacuously. This is the
+SECOND time in two days the same defect appeared in the same file — #60's
+review caught the email half reading `body`/`sender` keys that
+`email_state` never emitted. The fake now resolves the path, as the model
+does. **When writing a fake, write down what the real thing reads first.**
+
+**The three gates have opposite polarity**, which is not obvious until a
+test fails: grounding and challenge flag LOW, relay flags HIGH. A single
+"this marker means false" convention in the fake made a clean line come
+back flagged as a relay.
+
+**The Gmail query covered All Mail, not the inbox.** `newer_than:1d
+-category:promotions -category:social` with no `in:inbox` reaches
+everything the account holds bar spam and trash. Measured live: 68 messages
+under the old query, 67 under `in:inbox` — and the one it dropped was
+labelled `SENT`. It was a forward Joel had sent himself, and the triage run
+earlier the same day had put it in the spoken top six at consequence 1.81.
+The briefing was reading his own outgoing mail back to him.
+
+Spam was never the leak: `users.messages.list` takes `includeSpamTrash` and
+it defaults to false. The same check found 5 spam/trash messages in the
+window that the default had been quietly excluding all along. It is now
+passed explicitly, so the guarantee is visible at the call site rather than
+resting on a default.
+
 ## Standing facts worth not rediscovering
 
 - **The Worker has no CI deploy.** Merging is not shipping. A route on `main`

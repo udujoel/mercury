@@ -326,6 +326,21 @@ class Settings(BaseSettings):
     # and keeps the heuristic's verdict.
     judgment_total_budget_seconds: float = 25.0
 
+    # Semantic quality gates (ADR-015). Probabilities from Jev, so these are
+    # ordinary 0-1 thresholds — unlike the consequence Score above, which is
+    # a level index.
+    #
+    # Flag a line when P(supported by the source) falls below this.
+    quality_grounding_threshold: float = 0.5
+    # Flag a segment when P(one host challenges the other) falls below this.
+    quality_challenge_threshold: float = 0.5
+    # Flag a line when P(the hosts relay a sender's instruction) rises above
+    # this. Deliberately far lower than the other two, because the cost is
+    # asymmetric and quality.py already says so in its own words: "a miss
+    # ships a phishing instruction in a trusted voice, and a false positive
+    # costs one line of the script being rewritten."
+    quality_relay_threshold: float = 0.3
+
 
 @lru_cache
 def get_settings() -> Settings:

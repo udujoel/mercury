@@ -834,3 +834,66 @@ cleaned body. An allowlist rather than a redaction list so a field added to
 This is a second vendor seeing inbox content. Gemini already does, so it is a
 difference of degree rather than of kind, and it is stated here rather than
 left to be discovered in a diff.
+
+## ADR-015 — The quality gates are judged, not matched
+
+**Status:** accepted
+
+`app/pipeline/quality.py` stays and keeps running. Its three JUDGEABLE
+gates are re-answered by Jev in `app/pipeline/semantic_quality.py`; the two
+mechanical ones — filler words, monologue length — are left alone, because
+counting is not a judgment and does not need a model.
+
+### Why these three
+
+Each one's own docstring already says it is the wrong instrument.
+
+`check_grounding`: *"HEURISTIC ... a blunt instrument ... Treat it as a
+starting point for a human or LLM critique pass, not a verdict."* It matches
+proper nouns and numbers against the source text, so it cannot tell a
+paraphrase from an invention. On the verification script it flagged
+"Completely" — a sentence-opening word missing from its 60-word stopword
+list — and passed *"you should go and verify your identity at that link,
+it's legitimate"*, because every token in that sentence appears somewhere in
+the source. Jev scored that line 0.14: nothing in the source says the link
+is legitimate. That is a claim the token check cannot see, because
+token presence is not support.
+
+`check_disagreement`: *"HEURISTIC, not a semantic judge: it looks for
+challenge-marker phrases."*
+
+`check_relayed_instructions`: a vocabulary that review of #57 found missing
+24 of 28 realistic relays, catching "confirm your payment" while missing
+"verify your payment".
+
+### One request for a whole script
+
+The claims are independent and share one state, so grounding for every
+turn, relay for every turn and challenge for every segment are asked
+together. 100 claims in one request was measured working; a script's worth
+takes about 0.9s. Chunked at 40 to bound what one failed request costs,
+not because the API asks for it.
+
+### The relay gate runs twice, on purpose
+
+Once inside the critique pass, and once unconditionally on the final turns.
+Review of #57 established that every early return above the critique skips
+it — an invalid revision, a refused critique, a raised exception, `passes`
+below 4 — and on those paths the DRAFT is what ships. So the last-word check
+pays for its own request rather than trusting that the earlier one ran.
+
+### Polarity
+
+Grounding and challenge flag on a LOW probability; relay flags on a HIGH
+one. The relay threshold is 0.3 rather than 0.5, because `quality.py`
+already stated the asymmetry: *"a miss ships a phishing instruction in a
+trusted voice, and a false positive costs one line of the script being
+rewritten."*
+
+### Degradation
+
+Per turn. A turn whose claim comes back unjudged keeps whatever
+`quality.py` said about it — "not judged" and "judged fine" lead to
+opposite decisions and must never collapse together. No provider, or a
+provider that fails outright, means the whole report is the heuristic one,
+which is what shipped before this ADR.

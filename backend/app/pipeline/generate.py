@@ -361,6 +361,11 @@ async def generate_briefing(
             )
         turns, sources = await generate_script(
             llm=llm,
+            # The same provider that triaged the inbox now judges the
+            # script (ADR-015). Threaded rather than rebuilt so one run
+            # means one provider, and so a test that injects a fake for
+            # triage gets the same fake in the gates.
+            judgment_provider=judgment_provider,
             # THIS run's degradation list, handed in so the script chain can add
             # to it. A model that refuses the news drops the world segment, and
             # that has to reach the manifest rather than only the log — it is
