@@ -338,6 +338,14 @@ class Settings(BaseSettings):
     # "the life of the instance" and "one briefing" are the same thing.
     judgment_briefing_budget_seconds: float = 20.0
 
+    # A cluster member is pulled back out when P(same underlying event as
+    # the canonical) falls below this (ADR-016). 0.5 is the natural cut and
+    # the observed margin is large: on 2026-09-21 the seven-pair probe
+    # answered 0.94-0.96 for genuine same-event pairs and 0.01-0.04 for
+    # everything else, including the SpaceX/Rocket Lab pair this repo
+    # records at cosine 0.6908 and two editions of one daily newsletter.
+    cluster_verify_threshold: float = 0.5
+
     # Semantic quality gates (ADR-015). Probabilities from Jev, so these are
     # ordinary 0-1 thresholds — unlike the consequence Score above, which is
     # a level index.

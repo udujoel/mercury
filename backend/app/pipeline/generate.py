@@ -45,6 +45,7 @@ from app.core.schemas import (
     Story,
 )
 from app.pipeline.census import RunCensus
+from app.pipeline.cluster_verify import verify_stories
 from app.pipeline.dedup import build_stories
 from app.pipeline.digest import (
     attach_research,
@@ -257,7 +258,10 @@ async def generate_briefing(
         degraded=degraded,
     ) as census:
         _LAST_CENSUS_STAGES.clear()
+        if judgment_provider is _UNSET:
+            judgment_provider = _real_build_judgment()
         world_stories, inbox_emails, all_stories = await _build_world_stories(
+            judgment_provider=judgment_provider,
             emails=emails,
             articles=articles,
             events=events,
@@ -270,8 +274,9 @@ async def generate_briefing(
         # Semantic triage before ordering (ADR-014). Runs on `inbox_emails`
         # rather than `emails` so it judges only what can still be spoken —
         # newsletters already absorbed into a world story are not paid for.
-        if judgment_provider is _UNSET:
-            judgment_provider = _real_build_judgment()
+        # Already resolved above, before clustering — one provider instance
+        # per briefing, so the judgment budget in ADR-015 is shared by
+        # cluster verification, triage and the quality gates alike.
         if _real_triage_emails is not None and judgment_provider is not None:
             inbox_emails = await _real_triage_emails(inbox_emails, judgment_provider)
 
@@ -890,6 +895,7 @@ async def _build_world_stories(
     length: BriefingLength,
     interests: list[str] | None = None,
     followed_entities: list[str] | None = None,
+    judgment_provider: Any = None,
 ) -> tuple[list[Story], list[Item], list[Story]]:
     """Cluster the day's news and decide what the world segment gets.
 
@@ -931,6 +937,10 @@ async def _build_world_stories(
         return [], emails, []
 
     stories = await build_stories(clusterable, embeddings=embeddings)
+    # A second opinion on what the 0.78 threshold merged (ADR-016).
+    # Split direction only: pulling a member back out costs a duplicate,
+    # which ADR-003 calls the cheaper error by a wide margin.
+    stories = await verify_stories(stories, judgment_provider)
     # The WHOLE fetch window, not the briefing day. `select_for_briefing`
     # narrows events to today because the calendar segment is "the day walked
     # chronologically" and the cold open is an observation "about the day

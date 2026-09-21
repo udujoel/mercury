@@ -99,7 +99,12 @@ def judge_state(state: dict) -> EmailJudgment:
 # is the same defect review found in this file's email half on #60 (a fake
 # reading keys the real state never had), so it is worth saying plainly:
 # a fake has to read what the real thing reads, or it certifies nothing.
-_PATH_RE = re.compile(r"`(lines\[\d+\]|segments\.[A-Za-z_][A-Za-z0-9_]*)`")
+_PATH_RE = re.compile(
+    r"`(lines\[\d+\]"
+    r"|segments\.[A-Za-z_][A-Za-z0-9_]*"
+    r"|clusters\[\d+\]\.canonical"
+    r"|clusters\[\d+\]\.members\[\d+\])`"
+)
 
 def _resolve(state: dict, path: str) -> str:
     """`lines[3]` / `segments.inbox` -> that piece of the state, or ""."""
@@ -111,7 +116,27 @@ def _resolve(state: dict, path: str) -> str:
     match = re.fullmatch(r"segments\.(.+)", path)
     if match:
         return str((state.get("segments") or {}).get(match.group(1), ""))
+    match = re.fullmatch(r"clusters\[(\d+)\]\.canonical", path)
+    if match:
+        return _flatten(_cluster(state, int(match.group(1))).get("canonical"))
+    match = re.fullmatch(r"clusters\[(\d+)\]\.members\[(\d+)\]", path)
+    if match:
+        members = _cluster(state, int(match.group(1))).get("members") or []
+        index = int(match.group(2))
+        return _flatten(members[index]) if index < len(members) else ""
     return ""
+
+
+def _cluster(state: dict, index: int) -> dict:
+    clusters = state.get("clusters") or []
+    return clusters[index] if index < len(clusters) else {}
+
+
+def _flatten(summary) -> str:
+    """A cluster member's summary dict as one searchable string."""
+    if not isinstance(summary, dict):
+        return str(summary or "")
+    return " ".join(str(v) for v in summary.values())
 
 
 # The three gates have OPPOSITE polarity: grounding and challenge flag on a
@@ -124,11 +149,12 @@ def _resolve(state: dict, path: str) -> str:
 #
 # `_NORMAL` is what each family looks like when nothing is wrong;
 # `_FLIP` is the marker a test puts in a turn to make that family abnormal.
-_NORMAL = {"ground": 0.98, "relay": 0.02, "challenge": 0.98}
+_NORMAL = {"ground": 0.98, "relay": 0.02, "challenge": 0.98, "cluster": 0.98}
 _FLIP = {
     "ground": "__UNGROUNDED__",
     "relay": "__RELAYS__",
     "challenge": "__NO_CHALLENGE__",
+    "cluster": "__DIFFERENT_EVENT__",
 }
 
 
