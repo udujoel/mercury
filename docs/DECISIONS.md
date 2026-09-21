@@ -753,3 +753,84 @@ shows may vote for it.
 - **Capping how many stories appear.** That is the one thing the feature is
   for. Bounding the enrichment costs a summary; bounding the desk costs the
   answer to the question that was asked.
+
+## ADR-014 — Jev judges what goes in the inbox segment; the heuristic is the floor
+
+**Status:** accepted
+
+Email triage moves from `classify_priority` — four lines of keyword and
+header matching — to a TypeSafe Jev System One judgment. The heuristic is
+not deleted. It keeps running at ingestion and its verdict stands wherever a
+judgment does not arrive.
+
+### Why the heuristic had to go
+
+Not because the rules were badly chosen. Because *"does this matter to Joel
+this morning"* is a semantic question, and every patch to a keyword
+approximation of a semantic question fights an earlier patch.
+
+The file says so itself. `is_urgent` exists, ahead of the newsletter floor,
+because a bank's account-restriction warning was pinned LOW — `List-Unsubscribe`
+made it a newsletter, and it sorted below a gym mailer by arrival time (#55).
+`"?" in body` marks any marketing "Ready to upgrade?" as a question aimed at
+the user. `_is_an_order`, the same technique one module over, was found by
+review of #57 to miss 24 of 28 realistic phrasings and to catch "confirm your
+payment" while missing "verify your payment".
+
+### Three judgments, not one label
+
+The root fault in `classify_priority` is arity. It returns one tuple from one
+rule chain, so it cannot say *bulk **and** serious* — which is precisely what
+the bank alert is. The fix had to be an ordering between branches.
+
+Jev is asked three independent questions over the same state, in one request:
+
+| | primitive | why |
+| --- | --- | --- |
+| `consequence` | `Score`, 4 levels | a rankable position, so ties break on what matters rather than on arrival time |
+| `awaiting_reply` | `Noul` | maps onto `Item.requires_response`, which `"?" in body` was guessing |
+| `bulk` | `Noul` | replaces the `List-Unsubscribe` check, and is free to disagree with `consequence` |
+
+Held separately the contradiction does not arise and no branch needs to be
+ordered ahead of another.
+
+### The scale is a level index, not a fraction
+
+`Score` returns a position on the criteria index. With four levels it runs
+0.0–3.0. Measured against real mail on 2026-09-21:
+
+```
+bank account-restriction warning   consequence 3.00  awaiting 0.23  bulk 0.57
+colleague's dated request          consequence 1.99  awaiting 0.86  bulk 0.05
+"Ready to upgrade?" marketing      consequence 0.00  awaiting 0.12  bulk 0.85
+```
+
+The first draft thresholded HIGH at 2.5, having assumed a normalised 0–1
+scale. That demotes every *a person is waiting* email — they land at ~2.0 —
+to MEDIUM. The cut is 1.5. No fixture would have caught this, because a
+fixture written under the wrong assumption agrees with itself.
+
+### Degradation
+
+Per-item. A judgment that fails leaves that email carrying the heuristic's
+verdict and a null `consequence`, which sorts it by recency within its tier —
+the pre-ADR behaviour, for that one item. A pass that fails entirely, or a
+missing `TYPESAFE_API_KEY`, leaves every email that way, which is the
+pre-ADR behaviour exactly.
+
+A provider returning the wrong NUMBER of judgments is the one case that is
+refused outright rather than degraded: zipping a short list onto the items
+hands each email its neighbour's verdict, and a briefing wrong in a way
+nobody can see is worse than one wrong in a way the log names.
+
+### Rule 5
+
+`app/pipeline/triage.py::email_state` is the only place an `Item` becomes a
+payload, and it sends a fixed allowlist — sender, subject, recipients,
+`List-Unsubscribe` presence, timestamp, and the first 500 characters of the
+cleaned body. An allowlist rather than a redaction list so a field added to
+`Item` later cannot silently start leaving the machine.
+
+This is a second vendor seeing inbox content. Gemini already does, so it is a
+difference of degree rather than of kind, and it is stated here rather than
+left to be discovered in a diff.

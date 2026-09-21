@@ -105,6 +105,15 @@ except ImportError:
     _real_fetch_articles = None
 
 try:
+    from app.core.providers import build_judgment_provider as _real_build_judgment
+    from app.pipeline.triage import triage_emails as _real_triage_emails
+except ImportError:  # pragma: no cover - the provider is optional
+    _real_triage_emails = None
+
+    def _real_build_judgment():
+        return None
+
+try:
     from app.pipeline.script_chain import generate_script as _real_generate_script
 except ImportError:
     _real_generate_script = None
@@ -122,6 +131,7 @@ async def generate_briefing(
     fetch_events: Any = _real_fetch_events,
     fetch_weather: Any = _real_fetch_weather,
     fetch_articles: Any = _real_fetch_articles,
+    judgment_provider: Any = _UNSET,
     score_emails: Any = _real_score_emails,
     select_for_briefing: Any = _real_select_for_briefing,
     generate_script: Any = _real_generate_script,
@@ -208,7 +218,7 @@ async def generate_briefing(
     # `all_emails` keeps everything that arrived. Muting suppresses the
     # READ-ALOUD, not the record: the desk still shows that a newsletter
     # came in, which is the promise the settings screen makes and the whole
-    # reason the digest exists (ADR-013). Filtering `emails` alone made a
+    # reason the digest exists (ADR-014). Filtering `emails` alone made a
     # muted publication vanish from both, so the user could not tell muted
     # from never-arrived.
     all_emails = emails
@@ -256,6 +266,14 @@ async def generate_briefing(
             interests=interests,
             followed_entities=followed_entities,
         )
+
+        # Semantic triage before ordering (ADR-014). Runs on `inbox_emails`
+        # rather than `emails` so it judges only what can still be spoken —
+        # newsletters already absorbed into a world story are not paid for.
+        if judgment_provider is _UNSET:
+            judgment_provider = _real_build_judgment()
+        if _real_triage_emails is not None and judgment_provider is not None:
+            inbox_emails = await _real_triage_emails(inbox_emails, judgment_provider)
 
         scored_emails = _score_emails(score_emails, inbox_emails, events)
 
