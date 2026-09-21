@@ -857,6 +857,94 @@ on a Ukrainian train by six minutes — is a recency sort behaving exactly
 as written.
 
 
+## 2026-09-20 — two runs failed and nothing said so, for two hours
+
+Checked the run history again at 22:36 UTC and found the state worse than
+the earlier entry recorded:
+
+```
+2026-09-20T20:48:09Z  failure
+2026-09-20T20:44:42Z  failure
+2026-09-20T20:05:04Z  success      <- last good briefing, 2.5h earlier
+...
+watchdog, most recent:  2026-09-20T11:51:31Z   <- eleven hours earlier
+```
+
+The Gemini spend cap is the proximate cause and only the owner can lift
+it. The interesting failure is the second one: **nothing reported that
+generation had stopped.** `app.cli check` would have passed — a briefing
+for today exists and is playable — and the watchdog, which runs only at
+05:52 and 06:56 UTC, was not going to look again until morning.
+
+Generation runs FOUR times a day. One of the four had a watchdog.
+
+So task 31's two halves, and only one of them is done.
+
+**Done, on the third attempt: `app.cli freshness`.** The first two cuts
+were inert, and the reason is the same mistake in two costumes.
+
+Cut one bolted `--max-age-hours` onto `check`. But `check` is DAY-SCOPED
+— it resolves today's id — and a briefing filed under today can never be
+older than the time since local midnight: at most 6.9 hours at the 05:52
+checkpoint. Any floor loose enough to survive a healthy morning was
+mathematically unreachable. Worse, on the morning after the 09-20 stall
+there was no briefing for the new day at all, so `check` returned 1 and
+the floor was never even evaluated.
+
+So the flag was dead twice over, in the change written to stop things
+being dead. `freshness` is its own command: newest briefing ANYWHERE, no
+date to resolve, exit 5. It runs as a second step of the existing
+watchdog job, so it costs no extra Actions minutes — which matters,
+because this repo is priced at ~1,950-2,000 charged minutes against a
+2,000 cap and the same review notes that when they run out the watchdog
+stops too.
+
+**Withdrawn, and this is the part worth recording.** The first cut also
+added watchdog crons at 13:42, 19:42 and 01:42 UTC. Every one of them
+would have stood down. `briefing-watchdog.yml` has a guard that exits 0
+for any SCHEDULED run whose local hour is outside 03:00-12:00, written
+for the morning backstops and correct for them — and a scheduled run
+never carries a `briefing_id`, so it catches every entry. A sweep of all
+598 IANA zones found NO timezone in which all three of those crons run;
+the three-way intersection of passing UTC offsets is empty.
+
+So the change titled "a watchdog for every slot" shipped a watchdog for
+the same one slot as before, silently, green. **Built and never called,
+in the commit written to detect built-and-never-called.** Five
+independent review dimensions found it; I had not.
+
+The lesson is narrower than "test your workflows". The guard was correct
+code that encoded an assumption about WHEN it would run, and I added
+callers at other times without reading it. A precondition living in a
+guard is invisible to the person adding a caller unless something
+asserts the coupling — which is the same shape as the Worker's
+`SETTINGS_FIELDS` whitelist two PRs ago.
+
+**And one about the tooling.** Mid-review a mutation sweep reported five
+kills and then a restored tree with four failures. The code was right;
+`__pycache__` was not. Restoring a file with `cp` can leave bytecode
+whose mtime and size still satisfy Python's staleness check, so the
+interpreter runs the mutant against the restored source. Every mutation
+result in that sweep was untrustworthy. Clear `__pycache__` between
+mutations, or the sweep measures the cache.
+
+Worth adding to the same list: two review agents mutating one working
+tree at once produced a `SyntaxError` neither of them wrote. Give a
+mutation-testing agent a copy, not the tree.
+
+**Still open: the `dayState` half.** A 00:12 briefing is 5.7 hours old at
+the 05:52 checkpoint, so it passes a 7-hour floor while not covering the
+morning at all. That is a DIFFERENT question — "does this cover the
+morning?" rather than "has generation stopped?" — and conflating them is
+how one number ends up answering two questions, which is the mistake
+three separate reviews caught this session. It belongs in the Worker.
+
+Worth noting for anyone verifying this locally: R2 credentials live only
+in GitHub secrets, so `STORAGE_BACKEND=r2 python -m app.cli check` exits
+2 on a developer machine. That is the correct "storage is not configured"
+branch, not a failure of the check.
+
+
 ---
 
 ## Standing facts worth not rediscovering

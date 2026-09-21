@@ -814,7 +814,7 @@ produced, ranked by what they buy per hour spent.
       field is missing from that whitelist; it catches `music_set`
       retroactively too.
 
-- [ ] 31. **A freshness floor, and a watchdog for all four slots.** The
+- [~] 31. **A freshness floor, and a watchdog for all four slots.** HALF DONE (#59). The
       `00:12` cron generates a briefing named for the NEW day, so all five of
       the Worker's morning checkpoints see "this date has a playable
       briefing" and stand down, the 05:40 alarm included. Masked today only
@@ -824,6 +824,49 @@ produced, ranked by what they buy per hour spent.
       ~03:00 local. Separately, three of the four daily slots have no retry
       and no check — the 2026-09-13 evening run died with a segfault and
       nothing reported it. Add `--max-age-hours` to `app.cli check`.
+
+      DONE: `app.cli freshness --max-age-hours 8`, run as a second step
+      of the existing watchdog job so it costs no extra Actions minutes.
+      It asks about the newest briefing ANYWHERE, which is the question
+      "has generation stopped"; exit 5, distinct from `check`'s exit 1.
+
+      Two earlier cuts were inert and both are worth remembering. A
+      `--max-age-hours` flag on `check` could not fire at all, because
+      `check` is day-scoped and a briefing filed under today can never be
+      older than the time since local midnight — at most 6.9h at the
+      05:52 checkpoint, so any floor loose enough for a healthy morning
+      was unreachable. And on the morning after the 09-20 stall there was
+      no briefing for the new day, so `check` returned 1 and the floor was
+      never evaluated. One question answered by a command scoped to a
+      different one.
+
+      NOT DONE, and the first cut got this badly wrong: extending the
+      watchdog to the other three generation slots. It added crons at
+      13:42, 19:42 and 01:42 UTC, and every one of them would have stood
+      down at the 03:00-12:00-local guard and exited 0 GREEN without
+      running the check — a sweep of all 598 IANA zones found none where
+      all three execute. "A watchdog for every slot" that was a watchdog
+      for the same one slot as before; built and never called, in the
+      change written to catch that.
+
+      And they cannot be afforded anyway. `docs/REVIEW-2026-09-14.md`
+      prices this repo at ~1,950-2,000 charged minutes against a 2,000
+      cap, and its own finding is that when Actions minutes run out the
+      watchdog stops too. Buying evening coverage by risking the alarm
+      AND generation is the worst trade available; that needs task 28's
+      cadence cut first.
+
+      `test_watchdog_schedule.py` now fails if a cron is added that the
+      guard would stand down, and if the floor is tightened to where a
+      healthy morning trips it or loosened to where the incident does
+      not.
+
+      STILL OPEN: the `dayState` half. A 00:12 briefing is 5.7 hours old
+      at the 05:52 checkpoint, so it passes a 7-hour floor while not
+      covering the morning at all — that is a different question
+      ("does this cover the morning?") from the one the floor answers
+      ("has generation stopped?"), and it belongs in the Worker, where
+      `dayState` should require an `-HHMM` at or after ~03:00 local.
 
 - [x] 32. **The hosts must not relay a security instruction.** DONE (#57). The fence
       stops the model OBEYING an email; it does nothing about it faithfully

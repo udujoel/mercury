@@ -150,14 +150,25 @@ the app is the mitigation; the loud error is only the smoke alarm.
 
 ## When a run goes red
 
-Three distinct failures, three different exit codes from `app.cli`, all of them
-reaching you as GitHub's ordinary failed-run email:
+Distinct failures, distinct exit codes from `app.cli`, all of them reaching
+you as GitHub's ordinary failed-run email:
 
 | Exit | Meaning | What to do |
 |---|---|---|
 | 1 | Generation failed, or produced nothing playable | Read the log. If it says NO AUDIBLE TURNS, check Google TTS credentials and quota — nothing was stored, so a re-run needs no `force` |
 | 2 | Configuration is wrong | A secret is missing or malformed; the message names which |
 | 3 | The briefing shipped **without** the inbox or calendar | Usually the expired token above. The audio is in R2 and the phone will play it — the red tick is there to tell you, not to stop you |
+| 4 | Storage could not answer | A read failed or the stored manifest will not parse. This says **nothing** about whether the briefing exists — check the R2 secrets before regenerating anything |
+| 5 | `app.cli freshness` found that the newest briefing **anywhere** is past the floor — generation has stopped | Do NOT start by regenerating. `gh run list --workflow=briefing.yml`: if the runs never happened, a re-run is the answer; if they ran and failed, read the newest failure first |
+
+`freshness` is a separate command from `check` because they ask different
+questions. `check` is day-scoped: it resolves today's id and asks whether that
+briefing plays. `freshness` asks how long it has been since ANY briefing was
+produced, which is the question "has generation stopped" — and a day-scoped
+check cannot answer it. On 2026-09-20 the last good briefing was 20:05 and
+every run after it failed on a Gemini monthly spend cap; by the next morning
+there was no briefing for that day at all, so `check` reported "no briefing"
+and sent the operator to regenerate into the same cap.
 
 Exit 3 is the one that used to be exit 0. A briefing that shipped without the
 user's actual day exited successfully, so Actions went green and no email was

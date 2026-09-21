@@ -33,6 +33,22 @@ on:
     # the last generation dispatch, and still an hour before the 07:00 wake.
     - cron: "52 5 * * *"
     - cron: "56 6 * * *"
+    # NOT extended to the other three generation slots, though task 31
+    # asks for it and an earlier cut of this change did exactly that.
+    #
+    # Two reasons, both measured. The entries would not have RUN: the
+    # stand-down guard below fires outside 03:00-12:00 local, and 13:42,
+    # 19:42 and 01:42 UTC are outside it in every timezone on earth — a
+    # sweep of all 598 IANA zones found none where all three execute. And
+    # they cannot be afforded: docs/REVIEW-2026-09-14.md prices this repo
+    # at ~1,950-2,000 charged minutes against a 2,000 cap, and its own
+    # finding is that "when Actions minutes run out, briefing-watchdog.yml
+    # stops too". Buying evening coverage by risking the alarm AND
+    # generation is the worst trade available.
+    #
+    # Same-day detection of an evening failure needs either the cadence
+    # cut of task 28 or a deliberate decision to spend the minutes. Both
+    # are the owner's call, not a thing to slip into a robustness fix.
   workflow_dispatch:
     inputs:
       briefing_id:
@@ -112,6 +128,12 @@ jobs:
           # arrive with none, and outside the morning window it is watching a
           # morning that has not happened yet. There is nothing to alarm
           # about, so it stands down rather than inventing a date.
+          # Scoped to the morning entries by the hour test below, and that
+          # is load-bearing rather than incidental: a scheduled entry added
+          # at any other hour inherits this stand-down and exits 0 without
+          # ever running `check`. An earlier cut of task 31 added three and
+          # every one of them was silently inert. If you add a cron here,
+          # add a case to `test_watchdog_schedule.py` in the same change.
           if [ "$EVENT_NAME" = "schedule" ] && [ -z "$BRIEFING_ID" ]; then
             local_hour=$(TZ="${USER_TIMEZONE:-UTC}" date +%-H)
             if [ "$local_hour" -lt 3 ] || [ "$local_hour" -ge 12 ]; then
@@ -193,6 +215,71 @@ jobs:
             echo "- **The Google token expired.** The consent screen must be" \
                  "published, not in Testing — Testing expires refresh tokens" \
                  "after 7 days. See docs/DEPLOYMENT.md."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Has generation stopped?
+        # A DIFFERENT QUESTION from the check above, and it runs in the
+        # same job so it costs no extra Actions minutes — which matters,
+        # because docs/REVIEW-2026-09-14.md prices this repo at
+        # ~1,950-2,000 charged minutes against a 2,000 cap and notes that
+        # when they run out this watchdog stops too.
+        #
+        # `check` is day-scoped: it resolves today's id. That makes it
+        # structurally unable to notice a pipeline that stopped yesterday
+        # — the first cut of task 31 bolted a `--max-age-hours` flag onto
+        # it and the floor was mathematically unreachable, because a
+        # briefing filed under today can never be older than the time
+        # since local midnight.
+        #
+        # `always()`, so a red `check` does not hide this. The two
+        # failures have different remedies and the operator should see
+        # both.
+        #
+        # 8 hours: healthy is 5.7h at 05:52 and 6.7h at 06:56 (the 00:12
+        # run), so there is over an hour of margin; the 2026-09-20 stall
+        # is 9.8h and fires; a dropped 00:12 with an on-time 18:12 is
+        # 11.7h and fires.
+        id: freshness
+        if: always() && steps.check.outputs.status != '2'
+        env:
+          AWS_EC2_METADATA_DISABLED: "true"
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ (secrets.R2_READONLY_ACCESS_KEY_ID && secrets.R2_READONLY_SECRET_ACCESS_KEY) && secrets.R2_READONLY_ACCESS_KEY_ID || secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ (secrets.R2_READONLY_ACCESS_KEY_ID && secrets.R2_READONLY_SECRET_ACCESS_KEY) && secrets.R2_READONLY_SECRET_ACCESS_KEY || secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          STORAGE_BACKEND: r2
+        run: |
+          set +e
+          python -m app.cli freshness --max-age-hours 8
+          status=$?
+          set -e
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit "$status"
+
+      - name: Generation has stopped
+        # Exit 5 from the FRESHNESS step, which is not the same event as
+        # the check failing. There may well be a perfectly good briefing
+        # for today; what there is not is a recent one.
+        if: always() && steps.freshness.outputs.status == '5'
+        run: |
+          {
+            echo "## Generation has stopped"
+            echo
+            echo "\`app.cli check\` found a briefing that plays, and that is" \
+                 "older than the freshness floor. Generation has stopped" \
+                 "producing newer ones."
+            echo
+            echo "Do NOT start by regenerating — there is a briefing, and" \
+                 "the runs that should have replaced it are the question."
+            echo
+            echo "1. \`gh run list --workflow=briefing.yml\` — did the later" \
+                 "slots run at all? A DROPPED run leaves no record."
+            echo "2. If they ran and failed, read the newest failure. A" \
+                 "provider quota is the likeliest cause: on 2026-09-20 the" \
+                 "Gemini project hit its monthly spend cap and every run" \
+                 "after 20:44 failed with 429 ResourceExhausted."
+            echo "3. Only once the cause is fixed, Actions -> **daily" \
+                 "briefing** -> Run workflow."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: The watchdog could not answer the question
