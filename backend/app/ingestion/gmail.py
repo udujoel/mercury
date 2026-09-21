@@ -35,7 +35,20 @@ from app.ingestion.drops import drop_id, log_drop, report_drops
 
 log = logging.getLogger(__name__)
 
-GMAIL_QUERY = "newer_than:1d -category:promotions -category:social"
+# `in:inbox`, not all mail. Without it a Gmail search covers everything the
+# account holds bar spam and trash — so a message already archived, or one a
+# filter routed straight past the inbox into a label, was still fetched,
+# still judged, and still eligible to be read out. The briefing is meant to
+# be about what is sitting in front of you this morning; mail you have
+# already dealt with is not that.
+#
+# Spam and trash were never included: `users.messages.list` takes
+# `includeSpamTrash` and it defaults to false. It is passed explicitly at
+# the call site anyway, so the guarantee is visible where the query runs
+# rather than resting on an API default nobody can see.
+GMAIL_QUERY = (
+    "in:inbox newer_than:1d -category:promotions -category:social"
+)
 
 # app/core/config.py has no dedicated "user email" setting (user_name is a
 # display name, e.g. "Joel"), and the Gmail account address is whatever
@@ -616,7 +629,14 @@ def _fetch_live_messages(max_messages: int) -> list[dict[str, Any]]:
     resp = (
         service.users()
         .messages()
-        .list(userId="me", q=GMAIL_QUERY, maxResults=max_messages)
+        .list(
+            userId="me",
+            q=GMAIL_QUERY,
+            maxResults=max_messages,
+            # The API default, stated. Rule 4 is a structural
+            # promise and it should not rest on a default.
+            includeSpamTrash=False,
+        )
         .execute()
     )
     message_refs = resp.get("messages", [])

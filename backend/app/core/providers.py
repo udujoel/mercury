@@ -494,8 +494,42 @@ class EmailJudgment:
     bulk: float            # P(sent to a list rather than written personally)
 
 
+@dataclass(frozen=True)
+class Claim:
+    """A yes/no statement to be judged against some shared state.
+
+    `key` is for the caller to match the answer back onto whatever it asked
+    about; it is never sent to the model, so `instructions` has to carry the
+    whole meaning on its own.
+    """
+
+    key: str
+    instructions: str
+
+
 @runtime_checkable
 class JudgmentProvider(Protocol):
+    async def judge_claims(
+        self, state: dict, claims: list[Claim], *, timeout: float = 20.0
+    ) -> dict[str, float | None]:
+        """P(true) for each claim against one shared state, keyed by `Claim.key`.
+
+        Deliberately generic. The pipeline's three quality gates — is this
+        line grounded, does this segment contain a challenge, do the hosts
+        relay a sender's instruction — are all the same question shape, and
+        expressing that shape once keeps the protocol free of any particular
+        vendor's primitive types (rule 6).
+
+        One state, many claims: claims over the same state are independent
+        and answered together, so a whole script costs one request rather
+        than one per line.
+
+        A missing or unjudgeable claim maps to `None` rather than being
+        absent, so a caller can tell "judged false" from "not judged" —
+        they lead to opposite decisions in a gate.
+        """
+        ...
+
     async def triage_emails(
         self, states: list[dict], *, timeout: float = 20.0
     ) -> list[EmailJudgment | None]:

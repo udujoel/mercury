@@ -23,7 +23,9 @@ a live run is.
 
 from __future__ import annotations
 
-from app.core.providers import EmailJudgment
+import re
+
+from app.core.providers import Claim, EmailJudgment
 
 # Money, access, or a same-day obligation — the "Serious" level.
 _SERIOUS = (
@@ -84,14 +86,112 @@ def judge_state(state: dict) -> EmailJudgment:
     )
 
 
-class FakeJudgmentProvider:
+# ──────────────────────────────────────────────────────────────
+# Claims
+# ──────────────────────────────────────────────────────────────
+
+# A claim does not carry the text it is about — it POINTS at part of the
+# state with a backticked path like `lines[3]` or `segments.inbox`, and the
+# model resolves it. So this fake resolves it too.
+#
+# The first version read the claim's instructions and nothing else, which
+# made every claim look identical and every gate test pass vacuously. That
+# is the same defect review found in this file's email half on #60 (a fake
+# reading keys the real state never had), so it is worth saying plainly:
+# a fake has to read what the real thing reads, or it certifies nothing.
+_PATH_RE = re.compile(r"`(lines\[\d+\]|segments\.[A-Za-z_][A-Za-z0-9_]*)`")
+
+def _resolve(state: dict, path: str) -> str:
+    """`lines[3]` / `segments.inbox` -> that piece of the state, or ""."""
+    match = re.fullmatch(r"lines\[(\d+)\]", path)
+    if match:
+        lines = state.get("lines") or []
+        index = int(match.group(1))
+        return str(lines[index]) if index < len(lines) else ""
+    match = re.fullmatch(r"segments\.(.+)", path)
+    if match:
+        return str((state.get("segments") or {}).get(match.group(1), ""))
+    return ""
+
+
+# The three gates have OPPOSITE polarity: grounding and challenge flag on a
+# LOW probability ("this is not supported", "nobody pushed back"), relay
+# flags on a HIGH one ("the hosts did relay it"). So a single "this marker
+# means false" rule cannot serve all three — a clean line would come back
+# flagged as a relay. The fake therefore knows the three claim families by
+# their key prefix, which is a coupling to this pipeline and is the point:
+# it is this pipeline's test double, not a general-purpose stub.
+#
+# `_NORMAL` is what each family looks like when nothing is wrong;
+# `_FLIP` is the marker a test puts in a turn to make that family abnormal.
+_NORMAL = {"ground": 0.98, "relay": 0.02, "challenge": 0.98}
+_FLIP = {
+    "ground": "__UNGROUNDED__",
+    "relay": "__RELAYS__",
+    "challenge": "__NO_CHALLENGE__",
+}
+
+
+def judge_claim(claim: Claim, state: dict | None = None) -> float:
+    """Pure, deterministic (Claim, state) -> P(true).
+
+    Resolves every backticked path in the claim against the state, then
+    answers the family's normal value unless the referenced text carries
+    that family's flip marker. Tests put the marker in the turn they want
+    flagged, so the fake stays honest about WHICH line it was asked about
+    without pretending to understand English.
+    """
+    state = state or {}
+    referenced = " ".join(
+        _resolve(state, path) for path in _PATH_RE.findall(claim.instructions)
+    )
+    haystack = referenced or claim.instructions
+    family = claim.key.split(":", 1)[0]
+    normal = _NORMAL.get(family, 0.98)
+    marker = _FLIP.get(family)
+    if marker and marker in haystack:
+        return round(1.0 - normal, 2)
+    return normal
+
+
+class FakeClaimJudge:
+    """Offline `judge_claims` half of the provider protocol.
+
+    `unjudged_keys` forces `None` for those claims so a gate's
+    "not judged" path can be tested separately from its "judged false" one
+    — the two lead to opposite decisions.
+    """
+
+    def __init__(self, *, unjudged_keys: frozenset[str] | None = None) -> None:
+        self.unjudged_keys = unjudged_keys or frozenset()
+        self.claim_calls: list[tuple[dict, list[Claim]]] = []
+
+    async def judge_claims(
+        self, state: dict, claims: list[Claim], *, timeout: float = 20.0
+    ) -> dict[str, float | None]:
+        self.claim_calls.append((state, claims))
+        return {
+            c.key: (
+                None if c.key in self.unjudged_keys else judge_claim(c, state)
+            )
+            for c in claims
+        }
+
+
+class FakeJudgmentProvider(FakeClaimJudge):
     """Offline JudgmentProvider for tests and keyless development.
 
     `fail_indices` forces `None` at those positions so the per-item fallback
     to `classify_priority` can be tested without breaking a network.
     """
 
-    def __init__(self, *, fail_indices: frozenset[int] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        fail_indices: frozenset[int] | None = None,
+        unjudged_keys: frozenset[str] | None = None,
+    ) -> None:
+        super().__init__(unjudged_keys=unjudged_keys)
         self.fail_indices = fail_indices or frozenset()
         self.calls: list[list[dict]] = []
 

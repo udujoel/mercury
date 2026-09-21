@@ -325,6 +325,33 @@ class Settings(BaseSettings):
     # against a 90s budget. Whatever has not returned by then is cancelled
     # and keeps the heuristic's verdict.
     judgment_total_budget_seconds: float = 25.0
+    # A ceiling on ALL judgment work in one briefing, across every call.
+    #
+    # The per-call bound above is not enough on its own: production runs
+    # passes=4, so a briefing makes four calls (triage, gates on the draft,
+    # gates on the revision, the final relay check) and four 25s ceilings
+    # is 100s. Phase 1's real run already spends 71s of a 90s budget, and
+    # normal Jev work measures about 5s of that, so 20s here is four times
+    # the observed cost and still leaves the briefing inside its window.
+    #
+    # The provider instance is built once per briefing and threaded, so
+    # "the life of the instance" and "one briefing" are the same thing.
+    judgment_briefing_budget_seconds: float = 20.0
+
+    # Semantic quality gates (ADR-015). Probabilities from Jev, so these are
+    # ordinary 0-1 thresholds — unlike the consequence Score above, which is
+    # a level index.
+    #
+    # Flag a line when P(supported by the source) falls below this.
+    quality_grounding_threshold: float = 0.5
+    # Flag a segment when P(one host challenges the other) falls below this.
+    quality_challenge_threshold: float = 0.5
+    # Flag a line when P(the hosts relay a sender's instruction) rises above
+    # this. Deliberately far lower than the other two, because the cost is
+    # asymmetric and quality.py already says so in its own words: "a miss
+    # ships a phishing instruction in a trusted voice, and a false positive
+    # costs one line of the script being rewritten."
+    quality_relay_threshold: float = 0.3
 
 
 @lru_cache

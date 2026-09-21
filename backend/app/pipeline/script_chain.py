@@ -67,7 +67,11 @@ from app.pipeline.prompts import (  # noqa: F401
     _fence_untrusted,
     _strip_fence_markers,
 )
-from app.pipeline.quality import check_relayed_instructions, run_all_gates
+from app.pipeline.quality import run_all_gates
+from app.pipeline.semantic_quality import (
+    check_relayed_semantic,
+    run_all_gates_semantic,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1310,6 +1314,7 @@ async def _run_critique_and_revise(
     source_data: str,
     budget: int,
     segments: list[Segment] | None = None,
+    judgment_provider: Any = None,
 ) -> list[Turn]:
     """Passes 3 and 4: critique -> revise. Always returns a usable script —
     the draft itself, if anything along the way goes wrong or makes things
@@ -1388,8 +1393,29 @@ async def _run_critique_and_revise(
     # Guard against a revision that "fixes" the flagged issues but makes the
     # script worse overall. Run the same gates on both and only take the
     # revision if it does not regress.
-    draft_report = run_all_gates(draft_turns, source_data)
-    revised_report = run_all_gates(revised_turns, source_data)
+    draft_report = await run_all_gates_semantic(
+        draft_turns, source_data, judgment_provider
+    )
+    revised_report = await run_all_gates_semantic(
+        revised_turns, source_data, judgment_provider
+    )
+
+    # Both sides must be graded by the SAME grader before their scores are
+    # compared. Each call falls back to the heuristic independently, so a
+    # transient failure on one side alone would put a semantic count
+    # (Jev found 2) next to a heuristic one (the keyword pass found 3, one
+    # of them a false positive) and decide which script ships on the
+    # difference. Regrade both heuristically rather than compare scales.
+    if draft_report.get("semantic") != revised_report.get("semantic"):
+        logger.warning(
+            "quality gates graded the draft and the revision differently "
+            "(draft semantic=%s, revised semantic=%s) — re-scoring both with "
+            "the heuristics so the comparison is like for like",
+            draft_report.get("semantic", False),
+            revised_report.get("semantic", False),
+        )
+        draft_report = run_all_gates(draft_turns, source_data)
+        revised_report = run_all_gates(revised_turns, source_data)
 
     # A relayed security instruction is not a quality issue to be traded
     # off against the others, so it is decided BEFORE the score.
@@ -1475,6 +1501,9 @@ async def generate_script(
     passes: int = 2,
     disabled_segments: Iterable[str] | None = None,
     degraded: list[str] | None = None,
+    # None means "no semantic gates this run" and every gate falls back to
+    # the keyword heuristics in quality.py — the behaviour before ADR-015.
+    judgment_provider: Any = None,
 ) -> tuple[list[Turn], list[SourceRef]]:
     """The script chain, and a ladder down if the model refuses to write it.
 
@@ -1516,6 +1545,10 @@ async def generate_script(
     common = dict(
         llm=llm, events=events, background_events=background_events,
         weather=weather, length=length, date=date, passes=passes,
+        # Through `common` so every degradation rung keeps the gates. A rung
+        # is exactly when a script is most likely to be odd, and it would be
+        # the wrong moment to stop checking it.
+        judgment_provider=judgment_provider,
     )
 
     def _give_up(segments: tuple[Segment, ...]) -> None:
@@ -1634,6 +1667,7 @@ async def _generate_script_once(
     newsletter_remainder: int = 0,
     passes: int = 2,
     disabled_segments: Iterable[str] | None = None,
+    judgment_provider: Any = None,
 ) -> tuple[list[Turn], list[SourceRef]]:
     """Script chain: outline -> draft (2 passes, the default), or
     outline -> draft -> critique -> revise (4 passes) when `passes=4`.
@@ -1805,6 +1839,7 @@ async def _generate_script_once(
             source_data=source_data,
             budget=budget,
             segments=segments,
+            judgment_provider=judgment_provider,
         )
     else:
         final_turns = draft_turns
@@ -1828,7 +1863,9 @@ async def _generate_script_once(
     #
     # Logs only. Rule 7 — a briefing that names a suspicious message
     # badly still beats no briefing, and this is a heuristic.
-    shipped_relays = check_relayed_instructions(final_turns)
+    shipped_relays = await check_relayed_semantic(
+        final_turns, source_data, judgment_provider
+    )
     if shipped_relays:
         logger.error(
             "SHIPPING a script that relays %d security instruction(s): %s",

@@ -145,3 +145,40 @@ def test_malformed_message_is_skipped_not_raised(tmp_path):
 
     items = asyncio.run(gmail.fetch_emails(fixture=bad_fixture))
     assert items == []
+
+
+# ──────────────────────────────────────────────────────────────
+# What the query is allowed to reach (ADR-015)
+# ──────────────────────────────────────────────────────────────
+
+
+def test_the_query_is_scoped_to_the_inbox():
+    """Regression: the search covered All Mail, not the inbox.
+
+    Without `in:inbox` a Gmail search reaches everything the account holds
+    bar spam and trash, so archived mail, mail a filter routed past the
+    inbox, and the user's own SENT messages were all fetched and judged.
+    Measured on a live account 2026-09-21: the old query returned 68
+    messages in the window, the scoped one 67, and the message it dropped
+    was a forward the user had sent themselves — which the previous run had
+    read out at HIGH priority.
+    """
+    from app.ingestion.gmail import GMAIL_QUERY
+
+    assert "in:inbox" in GMAIL_QUERY
+
+
+def test_the_live_list_call_excludes_spam_and_trash():
+    """`includeSpamTrash` defaults to false, and is passed anyway.
+
+    Rule 4 makes a structural promise about what this app can reach. A
+    promise that rests on an API default is one nobody reading the call
+    site can verify, and the same live check found 5 spam/trash messages in
+    the window that the default had been silently keeping out.
+    """
+    import inspect
+
+    from app.ingestion import gmail
+
+    source = inspect.getsource(gmail._fetch_live_messages)
+    assert "includeSpamTrash=False" in source
