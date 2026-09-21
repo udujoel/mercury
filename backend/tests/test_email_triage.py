@@ -9,6 +9,7 @@ someone was asking Joel something.
 
 from __future__ import annotations
 
+import pathlib
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -59,7 +60,7 @@ def test_state_is_an_allowlist_not_the_whole_item():
     state = email_state(item)
     assert set(state) == {
         "sender_name", "sender_address", "subject", "to",
-        "has_list_unsubscribe", "received", "body_excerpt",
+        "looks_like_bulk_mail", "received", "body_excerpt",
     }
     assert "must-not-leave" not in str(state)
 
@@ -284,3 +285,137 @@ def test_no_key_means_no_provider_rather_than_a_broken_one(monkeypatch):
         "app.core.config.get_settings", lambda: Settings(typesafe_api_key="")
     )
     assert build_judgment_provider() is None
+
+
+# ── review findings (PR #60) ──────────────────────────────────────────
+
+
+def test_the_fake_reads_the_body():
+    """Regression: the fake read keys `email_state` has never emitted.
+
+    It looked for "body" and "sender"; the real state carries
+    "body_excerpt", "sender_name" and "sender_address". So it judged on the
+    subject line alone, and nine tests passed only because their subjects
+    happened to contain the keywords. A fake reading a state shape that
+    does not exist certifies nothing — the same failure `docs/LOG.md` lists
+    four times over.
+    """
+    from app.pipeline.triage import email_state
+    from app.providers.fake_judgment import judge_state
+
+    # Every signal is in the BODY. The subject is deliberately inert.
+    item = email(
+        subject="quick note",
+        body="Can you review the deck before Friday? Let me know.",
+    )
+    judgment = judge_state(email_state(item))
+    assert judgment.consequence == 2.0
+    assert judgment.awaiting_reply > 0.6
+
+
+def test_the_fake_agrees_with_email_state_about_bulk_mail():
+    from app.pipeline.triage import email_state
+    from app.providers.fake_judgment import judge_state
+
+    item = email(subject="Weekly roundup", body="stories", newsletter=True)
+    assert judge_state(email_state(item)).bulk > 0.5
+
+
+async def test_all_unjudged_is_reported_at_warning(caplog):
+    """Regression: a 401 on every request looked like a quiet morning.
+
+    The whole-batch `except` already warned. Reaching the same outcome one
+    item at a time logged at INFO, so a pass that judged nothing at all was
+    indistinguishable from a normal one in the Actions log.
+    """
+    import logging
+
+    items = [email(subject="a"), email(subject="b")]
+    provider = FakeJudgmentProvider(fail_indices=frozenset({0, 1}))
+    with caplog.at_level(logging.INFO, logger="app.pipeline.triage"):
+        await triage_emails(items, provider)
+    records = [r for r in caplog.records if "email triage:" in r.message]
+    assert records and records[-1].levelno == logging.WARNING
+
+
+async def test_partial_failure_stays_at_info(caplog):
+    import logging
+
+    items = [email(subject="Account suspended"), email(subject="b")]
+    provider = FakeJudgmentProvider(fail_indices=frozenset({1}))
+    with caplog.at_level(logging.INFO, logger="app.pipeline.triage"):
+        await triage_emails(items, provider)
+    records = [r for r in caplog.records if "email triage:" in r.message]
+    assert records and records[-1].levelno == logging.INFO
+
+
+class _HangingClient:
+    """A provider that accepts the request and never answers."""
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def system_one(self, *, state, questions):
+        import asyncio
+
+        await asyncio.sleep(3600)
+
+
+async def test_a_hung_provider_is_bounded_by_the_total_budget(monkeypatch):
+    """Regression: per-request timeouts left the PASS unbounded.
+
+    With 60 emails at concurrency 8 and a 20s per-request timeout, a
+    provider that hangs rather than refusing takes 8 waves x 20s = 160s —
+    against a 90s briefing budget already 71s spent. The briefing would not
+    fail; it would miss the morning.
+    """
+    import time
+
+    import typesafe_sdk
+
+    from app.core.config import Settings
+    from app.providers import typesafe_jev
+
+    monkeypatch.setattr(
+        "app.core.config.get_settings",
+        lambda: Settings(
+            typesafe_api_key="k",
+            judgment_concurrency=2,
+            judgment_timeout_seconds=30.0,   # per-request: far beyond the budget
+            judgment_total_budget_seconds=0.3,
+        ),
+    )
+    monkeypatch.setattr(typesafe_sdk, "AsyncTypeSafeClient", _HangingClient)
+    monkeypatch.setattr(typesafe_jev, "_questions", lambda: {})
+
+    provider = typesafe_jev.JevJudgmentProvider()
+    started = time.perf_counter()
+    result = await provider.triage_emails([{"subject": str(i)} for i in range(8)])
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 3.0, f"budget not enforced: took {elapsed:.1f}s"
+    assert result == [None] * 8
+
+
+def test_the_production_workflow_passes_the_key():
+    """Regression: the feature was inert on merge.
+
+    `build_judgment_provider` returns None on an empty key and logs at INFO,
+    so a missing secret in the workflow ships a dead feature that looks
+    merged and green. That is the `music_set` whitelist and the un-deployed
+    Worker routes, twice already in docs/LOG.md.
+
+    Asserted against the YAML rather than trusted to review, because the one
+    caller that is a config file is the one a reader of Python does not see.
+    """
+    workflow = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / ".github/workflows/briefing.yml"
+    ).read_text()
+    assert "TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}" in workflow

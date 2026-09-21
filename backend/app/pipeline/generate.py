@@ -218,7 +218,7 @@ async def generate_briefing(
     # `all_emails` keeps everything that arrived. Muting suppresses the
     # READ-ALOUD, not the record: the desk still shows that a newsletter
     # came in, which is the promise the settings screen makes and the whole
-    # reason the digest exists (ADR-014). Filtering `emails` alone made a
+    # reason the digest exists (ADR-013). Filtering `emails` alone made a
     # muted publication vanish from both, so the user could not tell muted
     # from never-arrived.
     all_emails = emails

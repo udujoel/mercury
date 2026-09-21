@@ -320,6 +320,11 @@ class Settings(BaseSettings):
     # request per email; 3 concurrent measured at 829ms total on 2026-09-21.
     judgment_concurrency: int = 8
     judgment_timeout_seconds: float = 20.0
+    # A ceiling on the whole triage pass. Per-request timeouts alone leave
+    # the worst case at ceil(n/concurrency) * timeout = 160s at 60 emails,
+    # against a 90s budget. Whatever has not returned by then is cancelled
+    # and keeps the heuristic's verdict.
+    judgment_total_budget_seconds: float = 25.0
 
 
 @lru_cache

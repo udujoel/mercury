@@ -41,7 +41,12 @@ def email_state(item: Item) -> dict:
         "sender_address": item.author or "",
         "subject": item.title,
         "to": raw.get("to", []),
-        "has_list_unsubscribe": bool(raw.get("is_newsletter")),
+        # NOT named has_list_unsubscribe: `detect_newsletter` sets this
+        # from several signals and returns a `signal` string naming which
+        # one fired, so claiming the header is present would be telling the
+        # model a fact that is often not true — and biasing the `bulk` Noul
+        # back toward the header check it exists to replace.
+        "looks_like_bulk_mail": bool(raw.get("is_newsletter")),
         "received": item.timestamp.isoformat(),
         "body_excerpt": item.body[:BODY_CHARS],
     }
@@ -117,7 +122,12 @@ async def triage_emails(
         item.requires_response = requires_response
         item.consequence = judgment.consequence
 
-    log.info(
+    # WARNING when nothing was judged at all. The whole-batch `except`
+    # above already warns; reaching the same outcome one item at a time is
+    # the same event and has to be as loud, or a 401 on every request looks
+    # exactly like a quiet morning in the Actions log.
+    report = log.warning if unjudged == len(items) else log.info
+    report(
         "email triage: %d judged, %d fell back to the heuristic, %d priority "
         "change(s) against the heuristic",
         len(items) - unjudged, unjudged, changed,

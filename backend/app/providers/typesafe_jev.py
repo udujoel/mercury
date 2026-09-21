@@ -96,6 +96,12 @@ class JevJudgmentProvider:
         if concurrency is None:
             concurrency = settings.judgment_concurrency
         self._concurrency = max(1, concurrency)
+        # A ceiling on the PASS, not on one request. Without it the worst
+        # case is ceil(n/concurrency) waves of `timeout` each — 160s for 60
+        # emails at the defaults, against a 90-second briefing budget that
+        # Phase 1 already spends 71s of. A hung provider would not fail the
+        # briefing, it would make it miss the morning.
+        self._budget = settings.judgment_total_budget_seconds
 
     async def triage_emails(
         self, states: list[dict], *, timeout: float = 20.0
@@ -107,38 +113,44 @@ class JevJudgmentProvider:
 
         questions = _questions()
         semaphore = asyncio.Semaphore(self._concurrency)
+        # Written into by index rather than collected from `gather`, so a
+        # judgment that landed before the deadline survives the deadline.
+        out: list[EmailJudgment | None] = [None] * len(states)
 
         async with AsyncTypeSafeClient(api_key=self._api_key) as client:
 
-            async def judge(state: dict) -> EmailJudgment | None:
+            async def judge(index: int, state: dict) -> None:
                 async with semaphore:
                     try:
                         response = await asyncio.wait_for(
                             client.system_one(state=state, questions=questions),
                             timeout=timeout,
                         )
+                        out[index] = _to_judgment(response)
                     except Exception as exc:
                         # Per-item, per the protocol: one unjudged email
                         # costs that email its semantic priority, not the
-                        # morning's briefing (rule 7).
+                        # morning's briefing (rule 7). `Exception` and not
+                        # BaseException, so the cancellation below is not
+                        # swallowed and reported as a judgment failure.
                         log.warning("jev: judgment failed for one email: %s", exc)
-                        return None
-                    return _to_judgment(response)
 
-            # return_exceptions so a bug in `_to_judgment` degrades the same
-            # way a network failure does, instead of cancelling siblings and
-            # taking the whole pass down with it.
-            results = await asyncio.gather(
-                *(judge(s) for s in states), return_exceptions=True
-            )
+            tasks = [asyncio.create_task(judge(i, s)) for i, s in enumerate(states)]
+            _, pending = await asyncio.wait(tasks, timeout=self._budget)
+            if pending:
+                for task in pending:
+                    task.cancel()
+                # Awaited, not just cancelled: an un-awaited cancelled task
+                # leaves the HTTP connection open past the `async with` that
+                # is about to close the client underneath it.
+                await asyncio.gather(*pending, return_exceptions=True)
+                log.warning(
+                    "jev: %d of %d judgment(s) did not finish within the %.0fs "
+                    "budget and were cancelled — those emails keep the "
+                    "classify_priority heuristic",
+                    len(pending), len(states), self._budget,
+                )
 
-        out: list[EmailJudgment | None] = []
-        for result in results:
-            if isinstance(result, BaseException):
-                log.warning("jev: judgment raised: %s", result)
-                out.append(None)
-            else:
-                out.append(result)
         return out
 
 

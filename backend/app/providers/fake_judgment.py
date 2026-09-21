@@ -43,16 +43,23 @@ _MARKETING = (
 )
 
 
+# EXACTLY the keys `app.pipeline.triage.email_state` emits. The first
+# version of this read "body" and "sender", which that function has never
+# produced — it emits "body_excerpt", "sender_name" and "sender_address" —
+# so the fake silently judged on the subject line alone and the tests passed
+# only because their subjects happened to carry the keywords.
+# `test_the_fake_reads_the_body` fails if these drift apart again.
+_STATE_TEXT_KEYS = ("subject", "body_excerpt", "sender_name", "sender_address")
+
+
 def _hay(state: dict) -> str:
-    return " ".join(
-        str(state.get(k, "")) for k in ("subject", "body", "sender")
-    ).lower()
+    return " ".join(str(state.get(k, "")) for k in _STATE_TEXT_KEYS).lower()
 
 
 def judge_state(state: dict) -> EmailJudgment:
     """Pure, deterministic state -> EmailJudgment."""
     hay = _hay(state)
-    listish = bool(state.get("has_list_unsubscribe"))
+    listish = bool(state.get("looks_like_bulk_mail"))
     marketing = sum(t in hay for t in _MARKETING)
     serious = sum(t in hay for t in _SERIOUS)
     real = sum(t in hay for t in _REAL)
