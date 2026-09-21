@@ -23,6 +23,12 @@ CREDENTIAL_ENV_VARS = (
     "GOOGLE_TTS_CREDENTIALS",
     "GOOGLE_APPLICATION_CREDENTIALS",
     "ELEVENLABS_API_KEY",
+    # Without this every test that reaches generate_briefing builds a real
+    # JevJudgmentProvider and triages the fixture inbox against the live
+    # TypeSafe API — ~100 requests per suite run, sending fixture email
+    # content to a vendor, and degrading silently so nothing failed. Exactly
+    # the hazard this file's docstring describes, one provider later.
+    "TYPESAFE_API_KEY",
 )
 
 # Google's OAuth helper resolves these to real files at the repo root once the

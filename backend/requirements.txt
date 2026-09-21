@@ -4,7 +4,8 @@
 # transitive pin; pip-audit did.
 fastapi==0.141.1
 uvicorn[standard]==0.34.0
-pydantic==2.10.4
+# >=2.12 required by typesafe-sdk (ADR-014).
+pydantic==2.13.5
 pydantic-settings==2.7.0
 httpx==0.28.1
 # >=1.2.2: symlink following in set_key allowed arbitrary file overwrite.
@@ -57,3 +58,6 @@ pytest-asyncio==1.4.0
 ruff==0.8.4
 # S3 client for Cloudflare R2 (ADR-008).
 boto3==1.40.14
+# Jev System One judgments for email triage (ADR-014). Pulls httpx2
+# and tenacity transitively, and forces the pydantic pin above.
+typesafe-sdk==0.7.1

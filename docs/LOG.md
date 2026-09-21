@@ -947,6 +947,63 @@ branch, not a failure of the check.
 
 ---
 
+## 2026-09-21 - Jev triages the inbox, and two silent failures on the way
+
+Email triage moved from `classify_priority` to a TypeSafe Jev judgment
+(ADR-014). The reasoning is in the ADR. What is here is what the repo cannot
+tell you afterwards.
+
+**The Score scale is a level index, not a fraction.** Four criteria means
+0.0-3.0. Measured against real mail: a bank account-restriction warning 3.00,
+a colleague's dated request 1.99, a "Ready to upgrade?" marketing mail 0.00.
+The first draft put the HIGH cut at 2.5 on the assumption of a 0-1 scale,
+which demotes every "a person is waiting" email to MEDIUM. Nothing in a
+fixture could have caught this: a fixture written under the wrong assumption
+agrees with itself. The cut is 1.5.
+
+**The key was configured and never used.** `build_judgment_provider` checks
+`settings.typesafe_api_key`, which pydantic-settings reads from
+`backend/.env`. The SDK's client reads `os.environ`, which `.env` is never
+exported into. So the provider constructed, every request failed auth, and
+triage degraded to the heuristic - with the suite green and the lint clean.
+Rule 7 worked perfectly and that is exactly why it was invisible: the
+fallback is silent by design. Found by running it; nothing else would have.
+Same shape as the xcconfig that truncated a URL.
+`test_the_configured_key_is_passed_to_the_client` now fails if the key stops
+reaching the client.
+
+**The suite then started calling TypeSafe ~100 times per run.** Six test
+files reach `generate_briefing`, none injected a provider, so each one built
+a real one from the developer's `.env` and triaged the fixture inbox against
+the live API - sending fixture email content to a vendor on every `pytest`.
+It did not fail anything, because triage degrades. `conftest.py` already had
+the mechanism (`CREDENTIAL_ENV_VARS`) and its docstring already described
+this exact hazard for Gemini and TTS; the new key simply was not in the
+tuple. **Any new provider key must be added there in the same commit that
+introduces it.**
+
+**What it does to a real inbox.** 25 real emails, 1.82s, 13 priority changes.
+The heuristic's spoken top-6 was five near-identical Mercor recruiting blasts
+plus an O'Reilly "Verify your email" - they were direct-addressed and
+contained a question mark, and nothing in `classify_priority` can notice that
+five emails are the same email. Jev put them at 0.29-0.35, below every
+newsletter. A water bill went MEDIUM -> HIGH at 2.55, and a GitHub Actions
+"Run failed: daily briefing" LOW -> MEDIUM.
+
+**The open one:** a SHEIN "Order Delivered Notification" scored 1.61, just
+over the HIGH cut. Defensible - it is a dated event - but it is the weakest
+call in the run, and the threshold was deliberately NOT tuned to hide it.
+One inbox on one morning is not a calibration set. Worth re-checking against
+the regression snapshots before trusting 1.5.
+
+**`typesafe-sdk` forces `pydantic>=2.12`.** The pin was `==2.10.4`; it is now
+`==2.13.5`, verified against the full suite. It also pulls `httpx2` and
+`tenacity`.
+
+**Gmail's per-minute quota trips easily.** Two `max_messages=60` fetches in
+quick succession returned 403 `rateLimitExceeded` for several minutes. Use
+25 for verification runs.
+
 ## Standing facts worth not rediscovering
 
 - **The Worker has no CI deploy.** Merging is not shipping. A route on `main`

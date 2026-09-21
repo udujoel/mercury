@@ -460,3 +460,86 @@ def build_embedding_provider() -> EmbeddingProvider | None:
             exc,
         )
         return None
+
+
+# ──────────────────────────────────────────────────────────────
+# Judgment — semantic triage decisions (ADR-014)
+# ──────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class EmailJudgment:
+    """What a System One model concluded about one email.
+
+    Three INDEPENDENT judgments, deliberately not collapsed into a single
+    priority. `classify_priority` returns one tuple from one rule chain, so
+    it structurally cannot say "this is bulk mail AND it is serious" — which
+    is exactly the bank account-restriction warning from #55, pinned LOW
+    because `List-Unsubscribe` made it a newsletter. The fix there was an
+    `is_urgent` branch jumped in front of the newsletter floor. Held as
+    separate values the contradiction simply does not arise, and no branch
+    has to be ordered ahead of another.
+    """
+
+    # Position on the consequence LEVEL INDEX, not a 0-1 fraction: with four
+    # criteria the scale runs 0.0-3.0 and a value can land between levels.
+    # Worth stating because the first draft of this integration thresholded
+    # it as though it were normalised, which demoted every "a person is
+    # waiting" email (they score ~2.0) to MEDIUM.
+    consequence: float
+    # How concentrated the consequence distribution was. Low means the model
+    # spread its probability across levels, not that the email is unimportant.
+    confidence: float
+    awaiting_reply: float  # P(a specific person is waiting for a reply)
+    bulk: float            # P(sent to a list rather than written personally)
+
+
+@runtime_checkable
+class JudgmentProvider(Protocol):
+    async def triage_emails(
+        self, states: list[dict], *, timeout: float = 20.0
+    ) -> list[EmailJudgment | None]:
+        """Judge each email. Returns one entry per input, IN INPUT ORDER.
+
+        Same order-preservation contract as `EmbeddingProvider.embed`, for
+        the same reason: the caller zips the results back onto the items it
+        sent, and a provider that reorders silently reassigns every
+        judgment to the wrong email.
+
+        `None` in a slot means that one email could not be judged. It is not
+        an error the caller must handle specially — the caller falls back to
+        `classify_priority` for that item (rule 7). Must never raise for a
+        per-item failure; may raise only if the whole call is impossible,
+        which the caller treats as "no judgment pass this morning".
+        """
+        ...
+
+
+def build_judgment_provider() -> JudgmentProvider | None:
+    """The provider, or None when semantic triage cannot run.
+
+    None rather than a raising stub, matching `build_research_provider`:
+    every caller has to handle "no judgment this morning" anyway because the
+    network can fail, so making the absent case identical to the failed case
+    leaves one code path instead of two.
+    """
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    if not settings.typesafe_api_key:
+        logging.getLogger(__name__).info(
+            "semantic email triage disabled: no TYPESAFE_API_KEY — falling "
+            "back to the classify_priority heuristic"
+        )
+        return None
+    try:
+        from app.providers.typesafe_jev import JevJudgmentProvider
+
+        return JevJudgmentProvider()
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "no judgment provider (%s) — email triage falls back to the "
+            "classify_priority heuristic",
+            exc,
+        )
+        return None

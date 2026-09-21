@@ -295,6 +295,37 @@ class Settings(BaseSettings):
     w_cluster: float = 0.12
     w_recency: float = 0.08
 
+    # Semantic email triage (ADR-014). Empty key disables the pass entirely
+    # and `classify_priority` stays in charge — see build_judgment_provider.
+    typesafe_api_key: str = ""
+
+    # Thresholds on Jev's consequence Score. The scale is a POSITION ON THE
+    # LEVEL INDEX, so with four criteria it runs 0.0-3.0 — it is not a 0-1
+    # fraction, and the first draft of this integration thresholded it as
+    # though it were. Measured on 2026-09-21: a bank account-restriction
+    # warning scores 3.00, a colleague's dated request 1.99, a "Ready to
+    # upgrade?" marketing mail 0.00.
+    #
+    # 1.5 therefore means "level 2 (a person is waiting, or a dated
+    # commitment) and above is HIGH". A cut at 2.5 would have demoted every
+    # genuine waiting-on-you email to MEDIUM.
+    judgment_high_threshold: float = 1.5
+    judgment_medium_threshold: float = 0.5
+    # P(a specific person is waiting) above which requires_response is set.
+    # 0.6 rather than 0.5 because the cost is asymmetric in the same
+    # direction script_chain already assumes: a false "they are waiting"
+    # puts a nonexistent obligation in the listener's morning.
+    judgment_awaiting_threshold: float = 0.6
+    # Concurrent Jev requests. Each email is its own state, so this is one
+    # request per email; 3 concurrent measured at 829ms total on 2026-09-21.
+    judgment_concurrency: int = 8
+    judgment_timeout_seconds: float = 20.0
+    # A ceiling on the whole triage pass. Per-request timeouts alone leave
+    # the worst case at ceil(n/concurrency) * timeout = 160s at 60 emails,
+    # against a 90s budget. Whatever has not returned by then is cancelled
+    # and keeps the heuristic's verdict.
+    judgment_total_budget_seconds: float = 25.0
+
 
 @lru_cache
 def get_settings() -> Settings:

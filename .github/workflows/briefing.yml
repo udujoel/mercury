@@ -208,6 +208,13 @@ jobs:
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
           ELEVENLABS_VOICE_A: ${{ secrets.ELEVENLABS_VOICE_A }}
           ELEVENLABS_VOICE_B: ${{ secrets.ELEVENLABS_VOICE_B }}
+          # Semantic email triage (ADR-014). Unset means the pass is
+          # skipped and `classify_priority` stays in charge — which is a
+          # correct degradation and therefore an invisible one, so its
+          # absence here would have shipped a dead feature that looked
+          # merged. `music_set` and the un-deployed Worker routes are the
+          # same story; this is the line that stops it being the third.
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
           GOOGLE_TOKEN_FILE: ${{ github.workspace }}/token.json
           MERCURY_API_TOKEN: ${{ secrets.MERCURY_API_TOKEN }}
           USER_EMAIL: ${{ secrets.USER_EMAIL }}

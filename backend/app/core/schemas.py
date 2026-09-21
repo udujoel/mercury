@@ -57,6 +57,12 @@ class Item(BaseModel):
 
     requires_response: bool = False
     priority: Priority = Priority.MEDIUM
+    # Jev's consequence Score (0.0-3.0, a position on the level index), or
+    # None when no judgment pass ran for this item. Carried so ranking can
+    # order WITHIN a priority tier by how much missing the item costs,
+    # rather than by arrival time — a gym mailer and a bank alert were
+    # otherwise separated only by which arrived later (#55).
+    consequence: float | None = None
 
     embedding: list[float] | None = None
     cluster_id: str | None = None

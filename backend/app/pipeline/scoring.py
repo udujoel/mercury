@@ -40,13 +40,34 @@ def score_emails(items: list[Item]) -> list[Item]:
     sorted high -> low priority, most recent first within a priority tier.
 
     Ingestion (`app/ingestion/gmail.py`) already runs `classify_priority`
-    per message, so this function's real job is ordering: high priority
-    first, then medium, then low; within a tier, most recent first so a
-    fresher item of equal priority surfaces before a stale one.
+    per message, and `app/pipeline/triage.py` may then have overwritten that
+    verdict with a Jev judgment, so this function's real job is ordering:
+    high priority first, then medium, then low; within a tier, by how much
+    missing the item costs, and only then by recency.
     """
-    return sorted(
-        items,
-        key=lambda item: (_PRIORITY_RANK[item.priority], -item.timestamp.timestamp()),
+    return sorted(items, key=_sort_key)
+
+
+# Sorts after every judged item in the same tier. Reached when Jev judged
+# some emails and failed on others; when NO pass ran, every item takes this
+# value and the ordering collapses to pure recency — exactly the behaviour
+# before ADR-014, which is what the fallback is supposed to restore.
+_UNJUDGED = -1.0
+
+
+def _sort_key(item: Item) -> tuple[int, float, float]:
+    """Priority tier, then consequence, then recency.
+
+    Consequence sits ahead of recency because recency alone is what put a
+    bank's account-restriction warning below a gym mailer (#55): once both
+    land in the same tier, "which arrived later" is not a statement about
+    which one matters.
+    """
+    consequence = item.consequence if item.consequence is not None else _UNJUDGED
+    return (
+        _PRIORITY_RANK[item.priority],
+        -consequence,
+        -item.timestamp.timestamp(),
     )
 
 
