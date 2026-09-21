@@ -67,6 +67,7 @@ from app.pipeline.prompts import (  # noqa: F401
     _fence_untrusted,
     _strip_fence_markers,
 )
+from app.pipeline.quality import run_all_gates
 from app.pipeline.semantic_quality import (
     check_relayed_semantic,
     run_all_gates_semantic,
@@ -1398,6 +1399,23 @@ async def _run_critique_and_revise(
     revised_report = await run_all_gates_semantic(
         revised_turns, source_data, judgment_provider
     )
+
+    # Both sides must be graded by the SAME grader before their scores are
+    # compared. Each call falls back to the heuristic independently, so a
+    # transient failure on one side alone would put a semantic count
+    # (Jev found 2) next to a heuristic one (the keyword pass found 3, one
+    # of them a false positive) and decide which script ships on the
+    # difference. Regrade both heuristically rather than compare scales.
+    if draft_report.get("semantic") != revised_report.get("semantic"):
+        logger.warning(
+            "quality gates graded the draft and the revision differently "
+            "(draft semantic=%s, revised semantic=%s) — re-scoring both with "
+            "the heuristics so the comparison is like for like",
+            draft_report.get("semantic", False),
+            revised_report.get("semantic", False),
+        )
+        draft_report = run_all_gates(draft_turns, source_data)
+        revised_report = run_all_gates(revised_turns, source_data)
 
     # A relayed security instruction is not a quality issue to be traded
     # off against the others, so it is decided BEFORE the score.

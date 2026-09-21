@@ -178,3 +178,166 @@ async def test_an_empty_script_makes_no_call():
 @pytest.mark.parametrize("key", ["ground:0", "relay:3", "challenge:world"])
 def test_claim_keys_round_trip(key):
     assert Claim(key=key, instructions="x").key == key
+
+
+# ── review findings (PR #61) ──────────────────────────────────────────
+
+
+async def test_the_briefing_budget_is_shared_across_calls():
+    """Regression: the ceiling bounded one call, and a briefing makes four.
+
+    Production runs passes=4, so triage, the gates on the draft, the gates
+    on the revision and the final relay check are four separate calls. Four
+    25s ceilings is 100s against a 90s budget. The provider is built once
+    per briefing, so the budget lives on the instance.
+    """
+    import time
+
+    import typesafe_sdk
+
+    from app.core.config import Settings
+    from app.providers import typesafe_jev
+
+    class _Hanging:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *e): return False
+        async def system_one(self, *, state, questions):
+            import asyncio
+            await asyncio.sleep(3600)
+
+    import pytest as _pytest
+    monkeypatch = _pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(
+            "app.core.config.get_settings",
+            lambda: Settings(
+                typesafe_api_key="k",
+                judgment_concurrency=2,
+                judgment_timeout_seconds=30.0,
+                judgment_total_budget_seconds=30.0,   # per call: generous
+                judgment_briefing_budget_seconds=0.4,  # per briefing: tight
+            ),
+        )
+        monkeypatch.setattr(typesafe_sdk, "AsyncTypeSafeClient", _Hanging)
+        monkeypatch.setattr(typesafe_jev, "_questions", lambda: {})
+        provider = typesafe_jev.JevJudgmentProvider()
+
+        started = time.perf_counter()
+        # Four calls, as a real briefing makes. Without a shared budget each
+        # would wait out its own 30s ceiling.
+        await provider.triage_emails([{"subject": "a"}])
+        for _ in range(3):
+            await provider.judge_claims({"lines": ["x"]}, [Claim("k", "i")])
+        elapsed = time.perf_counter() - started
+
+        assert elapsed < 3.0, f"briefing budget not shared: took {elapsed:.1f}s"
+    finally:
+        monkeypatch.undo()
+
+
+async def test_a_spent_budget_returns_unjudged_rather_than_waiting():
+    """A spent budget must SHORT-CIRCUIT, not merely fail.
+
+    Asserting only on the `None` result is not enough: a blocked network
+    produces the same `None`, so the first version of this test passed with
+    the guard reverted. The client is therefore replaced with one that
+    raises if it is constructed at all — the point is that no request is
+    attempted once the budget is gone.
+    """
+    import typesafe_sdk
+
+    from app.core.config import Settings
+    from app.providers import typesafe_jev
+
+    class _Forbidden:
+        def __init__(self, *a, **k):
+            raise AssertionError(
+                "a client was built although the briefing budget was spent"
+            )
+
+    import pytest as _pytest
+    monkeypatch = _pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(
+            "app.core.config.get_settings",
+            lambda: Settings(
+                typesafe_api_key="k", judgment_briefing_budget_seconds=-1.0
+            ),
+        )
+        monkeypatch.setattr(typesafe_sdk, "AsyncTypeSafeClient", _Forbidden)
+        provider = typesafe_jev.JevJudgmentProvider()
+        got = await provider.judge_claims({"lines": ["x"]}, [Claim("a", "i")])
+        assert got == {"a": None}
+        assert await provider.triage_emails([{"subject": "s"}]) == [None]
+    finally:
+        monkeypatch.undo()
+
+
+async def test_a_judged_report_is_distinguishable_from_a_fallback_one():
+    """The signal the draft/revision comparison keys on.
+
+    If a fallback report were indistinguishable from a judged one, the
+    comparison in `_run_critique_and_revise` could not tell that the two
+    sides were scored on different scales.
+    """
+    turns = [turn("A line.", Segment.INBOX)]
+    judged = await run_all_gates_semantic(turns, SOURCE, FakeClaimJudge())
+    fell_back = await run_all_gates_semantic(turns, SOURCE, None)
+    assert judged.get("semantic") is True
+    assert fell_back.get("semantic") is None
+
+
+async def test_a_one_sided_failure_regrades_both_with_the_heuristic(caplog):
+    """Regression: a semantic count was compared against a heuristic one.
+
+    Each gate call falls back independently, so a transient failure on the
+    revision alone put Jev's flag count (2 on the verification script) next
+    to the keyword pass's (3, one a false positive) and decided which
+    script ships on the difference.
+    """
+    import json
+
+    from app.pipeline.script_chain import (
+        _parse_draft_turns,
+        _run_critique_and_revise,
+    )
+    from app.providers.fake import FakeLLMProvider, _draft_json
+
+    class _SucceedsThenFails:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def judge_claims(self, state, claims, *, timeout=20.0):
+            self.calls += 1
+            if self.calls == 1:
+                return {c.key: 0.98 for c in claims}
+            raise RuntimeError("transient failure on the revision")
+
+    # The known-good draft the fake LLM produces a VALID revision for. A
+    # hand-rolled two-line draft returns early on "revision invalid" and
+    # never reaches the comparison this test is about.
+    draft_turns = _parse_draft_turns(json.loads(_draft_json()))
+    budget = sum(len(t.text.split()) for t in draft_turns)
+    with caplog.at_level(logging.WARNING, logger="app.pipeline.script_chain"):
+        await _run_critique_and_revise(
+            llm=FakeLLMProvider(),
+            draft_turns=draft_turns,
+            source_data="source",
+            budget=budget,
+            judgment_provider=_SucceedsThenFails(),
+        )
+    assert any(
+        "graded the draft and the revision differently" in r.message
+        for r in caplog.records
+    )
+
+
+def test_a_gate_with_no_polarity_is_refused():
+    """Latent: `probability > None` from inside a never-raises function."""
+    from app.pipeline.semantic_quality import _regrade_per_turn
+
+    with pytest.raises(ValueError, match="exactly one of flag_when_below"):
+        _regrade_per_turn(
+            [turn("x")], {"ground:0": 0.5}, [], "ground", kind="k",
+        )

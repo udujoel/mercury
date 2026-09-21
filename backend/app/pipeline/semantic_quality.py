@@ -198,6 +198,18 @@ def _regrade_per_turn(
     that turn rather than being treated as clean — "not judged" and "judged
     fine" lead to opposite decisions and must not collapse together.
     """
+    if (flag_when_below is None) == (flag_when_above is None):
+        # Not defensive padding: polarity is the thing most easily got
+        # wrong here (grounding and challenge flag LOW, relay flags HIGH)
+        # and it already cost a debugging round in the fake. Without this
+        # a missing threshold surfaces as `float > None` from inside a
+        # function whose contract is that gate failures never escape.
+        raise ValueError(
+            "_regrade_per_turn needs exactly one of flag_when_below / "
+            f"flag_when_above (got below={flag_when_below!r}, "
+            f"above={flag_when_above!r})"
+        )
+
     by_turn: dict[int, list[dict]] = {}
     for flag in heuristic_flags:
         by_turn.setdefault(flag.get("turn_index", -1), []).append(flag)

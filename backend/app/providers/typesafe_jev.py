@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 from app.core.providers import Claim, EmailJudgment
 
@@ -106,6 +107,27 @@ class JevJudgmentProvider:
         # Phase 1 already spends 71s of. A hung provider would not fail the
         # briefing, it would make it miss the morning.
         self._budget = settings.judgment_total_budget_seconds
+        # Shared across every call on this instance — see
+        # judgment_briefing_budget_seconds. Started lazily on first use so
+        # building the provider early does not spend the budget.
+        self._briefing_budget = settings.judgment_briefing_budget_seconds
+        self._started_at: float | None = None
+
+    def _remaining(self) -> float:
+        """Seconds of judgment budget left for this briefing.
+
+        Starts the clock on first use. Zero or less means every remaining
+        call returns immediately and its callers fall back to the
+        heuristics, which is the intended behaviour rather than a failure.
+        """
+        now = time.monotonic()
+        if self._started_at is None:
+            self._started_at = now
+        return self._briefing_budget - (now - self._started_at)
+
+    def _deadline(self) -> float:
+        """The effective ceiling for ONE call: whichever bound bites first."""
+        return min(self._budget, self._remaining())
 
     async def judge_claims(
         self, state: dict, claims: list[Claim], *, timeout: float = 20.0
@@ -119,6 +141,15 @@ class JevJudgmentProvider:
         """
         if not claims:
             return {}
+
+        deadline = self._deadline()
+        if deadline <= 0:
+            log.warning(
+                "jev: the %.0fs briefing judgment budget is spent — %d claim(s) "
+                "go unjudged and their gates fall back to the heuristics",
+                self._briefing_budget, len(claims),
+            )
+            return {c.key: None for c in claims}
 
         from typesafe_sdk import AsyncTypeSafeClient, Noul
 
@@ -155,15 +186,15 @@ class JevJudgmentProvider:
                         out[claim.key] = float(answer.noul)
 
             tasks = [asyncio.create_task(ask(c)) for c in chunks]
-            _, pending = await asyncio.wait(tasks, timeout=self._budget)
+            _, pending = await asyncio.wait(tasks, timeout=deadline)
             if pending:
                 for task in pending:
                     task.cancel()
                 await asyncio.gather(*pending, return_exceptions=True)
                 log.warning(
                     "jev: %d claim chunk(s) did not finish within the %.0fs "
-                    "budget and were cancelled",
-                    len(pending), self._budget,
+                    "remaining budget and were cancelled",
+                    len(pending), deadline,
                 )
         return out
 
@@ -172,6 +203,15 @@ class JevJudgmentProvider:
     ) -> list[EmailJudgment | None]:
         if not states:
             return []
+
+        deadline = self._deadline()
+        if deadline <= 0:
+            log.warning(
+                "jev: the %.0fs briefing judgment budget is spent before "
+                "triage — all %d email(s) keep the classify_priority heuristic",
+                self._briefing_budget, len(states),
+            )
+            return [None] * len(states)
 
         from typesafe_sdk import AsyncTypeSafeClient
 
@@ -200,7 +240,7 @@ class JevJudgmentProvider:
                         log.warning("jev: judgment failed for one email: %s", exc)
 
             tasks = [asyncio.create_task(judge(i, s)) for i, s in enumerate(states)]
-            _, pending = await asyncio.wait(tasks, timeout=self._budget)
+            _, pending = await asyncio.wait(tasks, timeout=deadline)
             if pending:
                 for task in pending:
                     task.cancel()
@@ -210,9 +250,9 @@ class JevJudgmentProvider:
                 await asyncio.gather(*pending, return_exceptions=True)
                 log.warning(
                     "jev: %d of %d judgment(s) did not finish within the %.0fs "
-                    "budget and were cancelled — those emails keep the "
-                    "classify_priority heuristic",
-                    len(pending), len(states), self._budget,
+                    "remaining budget and were cancelled — those emails keep "
+                    "the classify_priority heuristic",
+                    len(pending), len(states), deadline,
                 )
 
         return out
