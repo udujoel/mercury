@@ -109,14 +109,20 @@ async def verify_stories(
 
 def _build(
     candidates: list[tuple[int, Story]],
-) -> tuple[dict, list[Claim], dict[str, Item]]:
-    """One state carrying every cluster, one claim per non-canonical member."""
+) -> tuple[dict, list[Claim], dict[str, tuple[int, Item]]]:
+    """One state carrying every cluster, one claim per non-canonical member.
+
+    `addressed` maps each claim key to (index into the ORIGINAL stories
+    list, the member object itself). Both halves matter: the index scopes
+    the ejection to the cluster that was actually judged, and the object —
+    not `Item.id` — is what identifies the member. See `_apply`.
+    """
     clusters = []
     claims: list[Claim] = []
-    addressed: dict[str, Item] = {}
+    addressed: dict[str, tuple[int, Item]] = {}
 
-    for position, (_, story) in enumerate(candidates):
-        others = [m for m in story.members if m.id != story.canonical.id]
+    for position, (story_index, story) in enumerate(candidates):
+        others = [m for m in story.members if m is not story.canonical]
         clusters.append({
             "canonical": _summarise(story.canonical),
             "members": [_summarise(m) for m in others],
@@ -124,31 +130,49 @@ def _build(
         for member_position, member in enumerate(others):
             claim = _claim(position, member_position)
             claims.append(claim)
-            addressed[claim.key] = member
+            addressed[claim.key] = (story_index, member)
 
     return {"clusters": clusters}, claims, addressed
 
 
 def _apply(
     stories: list[Story],
-    addressed: dict[str, Item],
+    addressed: dict[str, tuple[int, Item]],
     answers: dict[str, float | None],
     settings,
 ) -> list[Story]:
-    """Rebuild the story list with rejected members pulled out."""
-    # An unjudged member STAYS in its cluster. "Not judged" is not evidence
-    # of a bad merge, and treating it as one would let a network blip
-    # shatter a correct cluster — the failure mode this module exists to
-    # prevent, arriving by the other door.
-    ejected: dict[str, Item] = {}
+    """Rebuild the story list with rejected members pulled out.
+
+    Scoped to the cluster that was judged, and matched on OBJECT IDENTITY
+    rather than `Item.id`.
+
+    `Item.id` is a content hash — `model_post_init` seeds it from
+    (source_name, url-or-title, timestamp) — and it is not unique. Every
+    Gmail item is built with `url=None`, so two messages from one sender
+    with one subject at one timestamp collide however different their
+    bodies. `generate._build_world_stories` already keys its `absorbed` set
+    on object identity for exactly this reason.
+
+    The first version of this function collected ejections into one set
+    keyed on `Item.id` and filtered EVERY story by it. Reproduced: a
+    cluster that was never judged came back with `members == []` and a
+    canonical absent from its own members list, while an approved member of
+    the judged cluster was pulled out alongside its id-twin. A verifier
+    whose whole purpose is to avoid the ADR-003 harm was causing it, in a
+    cluster it had never been asked about.
+    """
+    # story index -> the member objects ejected from THAT story.
+    ejected: dict[int, list[Item]] = {}
     unjudged = 0
-    for key, member in addressed.items():
+    for key, (story_index, member) in addressed.items():
         probability = answers.get(key)
         if probability is None:
+            # "Not judged" is not evidence of a bad merge. Treating it as
+            # one would let a network blip shatter a correct cluster.
             unjudged += 1
             continue
         if probability < settings.cluster_verify_threshold:
-            ejected[member.id] = member
+            ejected.setdefault(story_index, []).append(member)
             log.info(
                 "cluster verify: ejecting %r (%s) — p(same event)=%.2f",
                 member.title[:60], member.source_name, probability,
@@ -162,46 +186,44 @@ def _apply(
         return stories
 
     out: list[Story] = []
-    narrowed = 0
-    for story in stories:
-        kept = [m for m in story.members if m.id not in ejected]
-        removed = [m for m in story.members if m.id in ejected]
+    for index, story in enumerate(stories):
+        removed = ejected.get(index)
         if not removed:
             out.append(story)
             continue
-        narrowed += 1
-        # The canonical is never a candidate, so `kept` is never empty.
+        removed_ids = {id(m) for m in removed}
+        kept = [m for m in story.members if id(m) not in removed_ids]
+        # The canonical is never a candidate (`_build` filters it out by
+        # identity), so `kept` always still contains it.
         out.append(Story(
             cluster_id=story.cluster_id,
             canonical=story.canonical,
             members=kept,
             score=story.score,
         ))
-        out.extend(_ejected_story(story, m) for m in removed)
+        out.extend(
+            _ejected_story(story, m, position)
+            for position, m in enumerate(removed)
+        )
 
-    # `narrowed` counted directly, not derived from the change in list
-    # length. The first version computed it as
-    # len(set(out ids)) - len(stories) + 1, which reports 2 when one
-    # cluster loses one member — a number that looks like a fact and is
-    # not. #56 is the standing lesson: an alarm that names the wrong cause
-    # costs more than no alarm.
     log.warning(
         "cluster verify: undid %d merge(s) in %d clustered story(ies) that "
         "the %.2f similarity threshold had made — %d claim(s), %d unjudged",
-        len(ejected), narrowed,
+        sum(len(v) for v in ejected.values()), len(ejected),
         settings.cluster_similarity_threshold, len(addressed), unjudged,
     )
     return out
 
 
-def _ejected_story(parent: Story, member: Item) -> Story:
+def _ejected_story(parent: Story, member: Item, position: int) -> Story:
     """A member pulled out of `parent`, as its own story.
 
-    The cluster id is derived from the parent's rather than reusing it, so a
-    reader of the digest can see where the item came from and nothing
-    downstream joins the two on a shared id.
+    The id carries `position` as well as the member's hash, because two
+    ejected members of one cluster can share an `Item.id` and would
+    otherwise be handed the same cluster_id — which is precisely what this
+    docstring used to promise did not happen.
     """
-    member.cluster_id = f"{parent.cluster_id}-split-{member.id[:8]}"
+    member.cluster_id = f"{parent.cluster_id}-split-{position}-{member.id[:8]}"
     return Story(
         cluster_id=member.cluster_id, canonical=member, members=[member]
     )

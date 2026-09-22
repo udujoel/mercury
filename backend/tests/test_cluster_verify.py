@@ -192,3 +192,79 @@ async def test_the_log_counts_clusters_narrowed_not_list_growth(caplog):
         await verify_stories([one_cluster], FakeClaimJudge())
     line = next(r.getMessage() for r in caplog.records if "undid" in r.getMessage())
     assert "undid 2 merge(s) in 1 clustered story(ies)" in line
+
+
+# ── Item.id is a content hash, not a key (review of PR #62) ───────────
+
+
+def colliding(title="Your daily brief", body="body"):
+    """Two of these share an `Item.id`.
+
+    `model_post_init` seeds the id from (source_name, url or title,
+    timestamp), and `ingestion/gmail.py` builds EVERY email Item with
+    url=None — so two messages from one sender with one subject at one
+    timestamp collide however different their bodies.
+    `generate._build_world_stories` already keys its `absorbed` set on
+    object identity for this exact reason.
+    """
+    return Item(
+        source_type=SourceType.EMAIL, source_name="Morning Brew",
+        title=title, body=body, url=None, timestamp=NOW,
+    )
+
+
+async def test_a_cluster_that_was_never_judged_is_not_touched():
+    """Regression: ejection was global and keyed on Item.id.
+
+    Reproduced before the fix: one claim was issued, about a member of c0,
+    and c9 — never sent for judgment — came back with members == [] and a
+    canonical absent from its own members list. A verifier whose purpose is
+    to avoid the ADR-003 harm was causing it in a cluster nobody asked it
+    about.
+    """
+    twin_a, twin_b = colliding(body="edition one"), colliding(body="edition two")
+    assert twin_a.id == twin_b.id, "fixture must actually collide"
+
+    canonical = item("TechCorp acquires DataFlow")
+    judged = story(canonical, twin_a)
+    untouched = Story(cluster_id="c9", canonical=twin_b, members=[twin_b])
+
+    result = await verify_stories(
+        [judged, untouched], _RejectEverything()
+    )
+    survivor = next(s for s in result if s.cluster_id == "c9")
+    assert survivor.members == [twin_b]
+    assert any(m is survivor.canonical for m in survivor.members)
+
+
+async def test_an_approved_member_is_not_ejected_by_its_id_twin():
+    twin_a, twin_b = colliding(body="edition one"), colliding(body="edition two")
+    canonical = item("TechCorp acquires DataFlow")
+
+    class _RejectFirstOnly:
+        async def judge_claims(self, state, claims, *, timeout=20.0):
+            return {c.key: (0.02 if i == 0 else 0.98)
+                    for i, c in enumerate(claims)}
+
+    result = await verify_stories(
+        [story(canonical, twin_a, twin_b)], _RejectFirstOnly()
+    )
+    narrowed = next(s for s in result if s.cluster_id == "c1")
+    assert any(m is twin_b for m in narrowed.members), (
+        "the approved twin was ejected because its id-twin was rejected"
+    )
+
+
+async def test_two_ejected_id_twins_get_distinct_cluster_ids():
+    twin_a, twin_b = colliding(body="edition one"), colliding(body="edition two")
+    canonical = item("TechCorp acquires DataFlow")
+    result = await verify_stories(
+        [story(canonical, twin_a, twin_b)], _RejectEverything()
+    )
+    ids = [s.cluster_id for s in result]
+    assert len(ids) == len(set(ids)), f"cluster_id collision: {ids}"
+
+
+class _RejectEverything:
+    async def judge_claims(self, state, claims, *, timeout=20.0):
+        return {c.key: 0.02 for c in claims}
