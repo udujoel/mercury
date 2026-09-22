@@ -950,6 +950,18 @@ with Stratechery and Platformer writing about it, plus a same-company
 different-event intruder — the intruder was ejected and the three real
 members stayed, in 999ms.
 
+### Egress
+
+The payload is an allowlist — source, title, and 300 characters of body —
+and it **includes email**. `_build_world_stories` puts newsletters and
+articles into one `build_stories` call by design, which is what lets a
+newsletter and a news article about the same event deduplicate, so a
+cluster member judged here can be an inbox message.
+
+That is the egress ADR-014 already established (triage sends 500
+characters of every message to the same vendor), not a new one. Recorded
+because this ADR's payload reads as "news only" and it is not.
+
 ### Degradation
 
 An unjudged member **stays in its cluster**. Treating "not judged" as

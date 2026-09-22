@@ -268,3 +268,22 @@ async def test_two_ejected_id_twins_get_distinct_cluster_ids():
 class _RejectEverything:
     async def judge_claims(self, state, claims, *, timeout=20.0):
         return {c.key: 0.02 for c in claims}
+
+
+async def test_an_email_member_is_truncated_like_any_other():
+    """Emails DO reach this payload — `clusterable = emails + articles`.
+
+    Same egress ADR-014 established for triage, but it is easy to read this
+    module's payload as news-only, so the email path is pinned explicitly.
+    """
+    canonical = item("TechCorp acquires DataFlow")
+    newsletter = Item(
+        source_type=SourceType.EMAIL, source_name="Stratechery",
+        title="The DataFlow deal", body="y" * 5000, url=None, timestamp=NOW,
+    )
+    judge = FakeClaimJudge()
+    await verify_stories([story(canonical, newsletter)], judge)
+    state, _ = judge.claim_calls[0]
+    sent = state["clusters"][0]["members"][0]
+    assert set(sent) == {"source", "title", "excerpt"}
+    assert len(sent["excerpt"]) == BODY_CHARS

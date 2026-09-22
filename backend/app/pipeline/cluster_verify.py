@@ -44,6 +44,18 @@ def _summarise(item: Item) -> dict:
 
     An allowlist, like `triage.email_state`, and for the same reason: a
     field added to `Item` later must not silently start leaving the machine.
+
+    **This includes EMAIL.** `generate._build_world_stories` puts
+    newsletters and articles into ONE `build_stories` call on purpose —
+    that is what lets an email newsletter and a news article about the same
+    event deduplicate against each other — so a cluster member here can be
+    an email, and BODY_CHARS of its body goes to TypeSafe.
+
+    That is the same egress ADR-014 established for triage (which sends 500
+    characters of every inbox message), not a new one. It is written down
+    here because ADR-016's payload is easy to read as "news only", and the
+    person who approved the triage egress should not have to rediscover
+    that clustering shares it.
     """
     return {
         "source": item.source_name,
