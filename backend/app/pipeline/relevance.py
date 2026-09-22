@@ -84,12 +84,24 @@ async def judge_personal_relevance(
     followed_entities: list[str] | None,
     interests: list[str] | None,
     provider: JudgmentProvider | None,
-) -> dict[str, float]:
-    """P(this story matters to this person today), by `cluster_id`.
+) -> dict[int, float]:
+    """P(this story matters to this person today), keyed by `id(story)`.
+
+    **Object identity, not `cluster_id`.** `clustering._singleton` sets
+    `cluster_id = f"s{item.id}"`, and `Item.id` is a content hash seeded on
+    (source_name, url-or-title, timestamp) — every Gmail item is built with
+    `url=None`, so two messages from one sender with one subject at one
+    timestamp share it. Keyed on `cluster_id`, two such singletons collapse
+    to ONE map entry and the second verdict silently overwrites the first:
+    measured, a story judged 0.95 took a colliding story's 0.03 and both
+    ranked as though neither mattered.
+
+    The caller must therefore pass the SAME Story objects to
+    `score_stories` that it passed here. It does, and a test pins it.
 
     A story missing from the returned map has no judgment and must keep its
-    lexical score — the caller treats absence as "no opinion", never as
-    "not relevant". Never raises.
+    lexical score — absence is "no opinion", never "not relevant". Never
+    raises.
     """
     if provider is None or not stories:
         return {}
@@ -144,11 +156,11 @@ async def judge_personal_relevance(
         )
         return {}
 
-    out: dict[str, float] = {}
+    out: dict[int, float] = {}
     for index, story in enumerate(judged):
         probability = answers.get(f"relevance:{index}")
         if probability is not None:
-            out[story.cluster_id] = probability
+            out[id(story)] = probability
 
     unjudged = len(judged) - len(out)
     (log.warning if out == {} else log.info)(

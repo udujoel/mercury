@@ -26,12 +26,18 @@ def score_stories(
 ) -> list[Story]:
     """Score every story and return sorted descending.
 
-    `judged_personal` maps `cluster_id` to P(this matters to this person
+    `judged_personal` maps `id(story)` to P(this matters to this person
     today), from `app.pipeline.relevance` (ADR-017). Where a story has an
     entry, it REPLACES the lexical personal term — same weight, same
     [0, 1] range, nothing else about the formula moves. A story with no
     entry keeps the lexical score, so an absent or failed judgment leaves
     ranking exactly as it was (rule 7).
+
+    Keyed on OBJECT IDENTITY rather than `cluster_id`, so the Story objects
+    handed to `judge_personal_relevance` must be the ones handed here.
+    `cluster_id` is not unique: `clustering._singleton` derives it from
+    `Item.id`, which is a content hash that collides for two emails sharing
+    a sender, subject and timestamp.
     """
     s = get_settings()
     now = datetime.now(UTC)
@@ -76,7 +82,7 @@ def score_stories(
         # `is not None`, not `or`: a judged 0.0 is a real verdict — "this
         # is not about your day" — and must not fall through to the
         # lexical branches that would then score it 0.5 for being email.
-        if (verdict := judged.get(story.cluster_id)) is not None:
+        if (verdict := judged.get(id(story))) is not None:
             personal = verdict
         elif any(name and name in haystack for name in attendee_names):
             personal = 1.0

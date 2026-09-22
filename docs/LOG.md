@@ -1104,6 +1104,25 @@ touch the false negatives, because a substring match has no way to know
 that Jev is TypeSafe's model or that priya@aveiro.test works at Aveiro
 Labs. The fix that made it safe also made it silent.
 
+**`Item.id` is not a key, and this is the THIRD time it has bitten.** The
+relevance map was keyed on `Story.cluster_id`. `clustering._singleton` sets
+`cluster_id = f"s{item.id}"`, so two unembeddable emails sharing a sender,
+subject and timestamp produce two Stories with ONE cluster_id — the map
+held one entry for two stories and the second verdict overwrote the first.
+Measured: a story judged 0.95 took a colliding story's 0.03 and both ranked
+as though neither mattered.
+
+Same defect as `cluster_verify` on #62, three commits earlier, in a
+different module. And `_build_world_stories` had already switched its
+`absorbed` set to object identity for the same reason before either.
+
+**Standing rule: never key a dict, set or lookup on `Item.id`, or on
+anything derived from it, when the values must be distinct per object.**
+Use `id(obj)`. `Item.id` is a content hash seeded on (source_name,
+url-or-title, timestamp), every Gmail item is built with `url=None`, and a
+live RSS run recorded 187 items with 186 distinct ids. It is a
+deduplication hint, not an identity.
+
 **`or` versus `is not None` decided whether the change could work at all.**
 Written as `personal = judged.get(cid) or lexical`, a judged 0.0 — a real
 "not about your day" — is falsy and falls through to the branch that gives

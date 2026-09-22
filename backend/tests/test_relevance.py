@@ -89,9 +89,9 @@ async def test_an_empty_story_list_makes_no_call():
 
 def test_a_judgment_replaces_the_lexical_personal_term():
     s = story("Anything at all")
-    score_stories([s], calendar_events=[], judged_personal={s.cluster_id: 1.0})
+    score_stories([s], calendar_events=[], judged_personal={id(s): 1.0})
     high = s.score
-    score_stories([s], calendar_events=[], judged_personal={s.cluster_id: 0.0})
+    score_stories([s], calendar_events=[], judged_personal={id(s): 0.0})
     assert high > s.score
 
 
@@ -104,7 +104,7 @@ def test_a_judged_zero_does_not_fall_through_to_the_email_default():
     through to that 0.5, so the judgment could only ever RAISE a score.
     """
     mail = story("A newsletter", kind=SourceType.EMAIL)
-    score_stories([mail], calendar_events=[], judged_personal={mail.cluster_id: 0.0})
+    score_stories([mail], calendar_events=[], judged_personal={id(mail): 0.0})
     judged_zero = mail.score
     score_stories([mail], calendar_events=[], judged_personal=None)
     assert judged_zero < mail.score, "a judged 0.0 fell through to the 0.5 default"
@@ -112,7 +112,7 @@ def test_a_judged_zero_does_not_fall_through_to_the_email_default():
 
 def test_an_unjudged_story_keeps_its_lexical_score():
     mail = story("A newsletter", kind=SourceType.EMAIL)
-    score_stories([mail], calendar_events=[], judged_personal={"other": 1.0})
+    score_stories([mail], calendar_events=[], judged_personal={-1: 1.0})
     with_map = mail.score
     score_stories([mail], calendar_events=[], judged_personal=None)
     assert with_map == mail.score
@@ -175,3 +175,52 @@ async def test_a_cap_on_the_pass_is_said_out_loud(caplog, monkeypatch):
     assert len(got) == 2
     assert any("over the 2 this pass budgets for" in r.getMessage()
                for r in caplog.records)
+
+
+# ── cluster_id is not a key (review of PR #63) ────────────────────────
+
+
+async def test_two_stories_with_a_colliding_cluster_id_get_their_own_verdict():
+    """Regression: the map was keyed on `cluster_id`.
+
+    `clustering._singleton` sets `cluster_id = f"s{item.id}"`, and
+    `Item.id` is a content hash — every Gmail item is built with
+    `url=None`, so two messages from one sender with one subject at one
+    timestamp share it. Keyed on cluster_id the two collapsed to ONE map
+    entry and the second verdict overwrote the first: measured, a story
+    judged 0.95 took a colliding story's 0.03 and both ranked as though
+    neither mattered.
+
+    This is the same defect review found in `cluster_verify` on #62, in a
+    different module, three commits later.
+    """
+    def mail(body):
+        return Item(
+            source_type=SourceType.EMAIL, source_name="Morning Brew",
+            title="Your daily brief", body=body, url=None, timestamp=NOW,
+        )
+
+    a, b = mail("Aveiro Labs raised a Series A."), mail("Arsenal beat Spurs.")
+    assert a.id == b.id, "fixture must actually collide"
+    for it in (a, b):
+        it.cluster_id = f"s{it.id}"
+    sa = Story(cluster_id=a.cluster_id, canonical=a, members=[a])
+    sb = Story(cluster_id=b.cluster_id, canonical=b, members=[b])
+    assert sa.cluster_id == sb.cluster_id
+
+    class _PerStory:
+        async def judge_claims(self, state, claims, *, timeout=20.0):
+            return {
+                c.key: (0.95 if "Aveiro" in state["stories"][i]["excerpt"] else 0.03)
+                for i, c in enumerate(claims)
+            }
+
+    judged = await judge_personal_relevance(
+        [sa, sb], events=[event()], followed_entities=["TypeSafe"],
+        interests=None, provider=_PerStory(),
+    )
+    assert len(judged) == 2, "two stories collapsed into one verdict"
+
+    ranked = score_stories([sa, sb], calendar_events=[], judged_personal=judged)
+    assert ranked[0] is sa, "the relevant story took the other's verdict"
+    assert ranked[0].score > ranked[1].score
