@@ -1158,6 +1158,36 @@ exists to prevent. A false keep costs only the behaviour that shipped
 before. So uncertainty keeps the item and only a confident rejection drops
 it.
 
+## 2026-09-22 - two mistakes made twice, in the same week
+
+Both of these were found by review, fixed, and then made again in code
+written AFTER the fix. Recording them as rules rather than as four more war
+stories.
+
+**Wrap the work, not the await.** A `try` around only the network call
+leaves the state building and the response handling outside it. A provider
+that returns the wrong SHAPE rather than raising — a list, None, anything
+without `.get` — then takes an AttributeError out of a function whose
+docstring promises it never raises. Happened in `cluster_verify._apply`
+(#62) and again in `newsletter_items.verify_extracted` (#64). Rule 7 is
+about what the briefing survives, and "the provider answered strangely" has
+to degrade exactly the way "the provider timed out" does. **When a function
+documents that it never raises, put everything fallible inside the try and
+say so in a comment.**
+
+**Never key on `Item.id`.** Already written up above for the relevance map.
+It also reached `cluster_verify._apply` (#62) and `NewsletterItem.email_id`,
+which `_parse` now avoids by keeping the index pairing. Four places in one
+codebase. It is a content hash seeded on (source_name, url-or-title,
+timestamp), every Gmail item has `url=None`, and a live RSS run recorded 187
+items with 186 distinct ids.
+
+The common shape is worth naming: **both are invisible on the happy path and
+in every fixture.** A green suite cannot distinguish "wrapped correctly"
+from "never had a malformed response", or "keyed correctly" from "the
+fixture gave everything distinct ids". Both need a test that constructs the
+bad case on purpose.
+
 ## Standing facts worth not rediscovering
 
 - **The Worker has no CI deploy.** Merging is not shipping. A route on `main`
