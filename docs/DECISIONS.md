@@ -969,6 +969,91 @@ An unjudged member **stays in its cluster**. Treating "not judged" as
 is the failure this module exists to prevent arriving by the other door. A
 failed pass leaves clustering's own decision standing (rule 7).
 
+### Amendment, 2026-09-22 — the other direction, as a log and nothing else
+
+The follow-up named above now exists: `cluster_verify.probe_threshold`.
+It reads cross-cluster pairs whose similarity falls just short of 0.78,
+asks the same "same underlying event" question, and **logs** the pairs the
+judgment says are the same event. It merges nothing.
+
+The split direction remains the only one that acts. This is the missing
+evidence, not a second opinion with teeth — moving 0.78 is a decision a
+human makes after reading a week of mornings, because it is the direction
+where a mistake is expensive (ADR-003) and no amount of per-pair
+confidence changes who should make it.
+
+**Observe-only is structural.** `probe_threshold` returns `None` and
+mutates no `Story`. There is no value a caller could thread back into
+clustering by mistake, which is a stronger guarantee than a docstring —
+and this repo has four cases of a docstring's promise outliving the code
+that kept it.
+
+**Average linkage, because that is the quantity 0.78 cuts on.**
+`cluster_items` uses `linkage="average"`, so what gets compared against
+the threshold is the MEAN pairwise cosine between two clusters. Reporting
+the closest pair instead would produce a number that cannot be read back
+as a threshold: "should 0.78 move to 0.70" is only answerable in the
+units 0.78 is expressed in. A consequence worth stating is that nothing
+the probe finds can sit at or above the threshold — average linkage stops
+merging exactly when every surviving pair is further apart than that.
+
+**The band is [0.65, 0.78), and 0.65 was chosen by one pair.** SpaceX
+Starlink against Rocket Lab Electron sits at cosine 0.6908: the tightest
+non-merge this repo has measured, and the entire justification for 0.78. A
+band that could not reach it would be collecting tuning data with the
+deciding case filtered out — worse than collecting none, because it would
+read as evidence that nothing sits near the threshold.
+
+**Capped at 20 pairs, nearest the threshold first, and it says when it
+truncates.** Pairs are quadratic in items — a 200-item morning has 19,900
+before filtering. 20 is under `CLAIMS_PER_REQUEST` (40), so the whole probe
+is one request. When the cap bites, the pairs kept are the ones that would
+flip first if the threshold moved a hundredth rather than a tenth. Silent
+truncation would read as "covered everything", which is the one thing a
+tuning log must never imply.
+
+**The cosine is not in the payload.** It is the quantity being evaluated.
+Telling the judgment that a pair scores 0.77 gives it every reason to lean
+"same event", and the inflation would land at the top of the band — where
+a disagreement carries the most weight for moving the threshold. The
+second reading has to be independent of the number it is read against, so
+the similarity appears only in the log. (It is also why the tests assert
+on the log line rather than the request.)
+
+**It is fifth in a queue of five, deliberately last.** Triage, cluster
+verification, personal relevance and the quality gates share
+`judgment_briefing_budget_seconds` and all change what the listener hears.
+This one changes nothing, so it runs after them — after the script chain,
+before `_scrub_email_bodies` — and takes what is left. If the budget is
+already spent every claim returns `None` and the pass reports that it
+learned nothing. A diagnostic does not get to starve the product, and the
+ordering is asserted by a test rather than described in a comment.
+
+**Egress widens, within the envelope already approved.** The split
+direction only ever sent items clustering had already merged. This sends
+the canonical of each near-miss pair, which can be a newsletter that did
+NOT merge with anything. Same allowlist (source, title, 300 characters)
+and same vendor, bounded at 40 items a morning by the cap — against
+ADR-014's existing 500 characters of *every* inbox message. It is a wider
+selection, not a wider field or a new destination. Recorded because the
+ADR-016 egress note reads as "cluster members only" and this amendment
+makes that untrue.
+
+**Measured, 2026-09-22.** Local cost, 768-dimension vectors: 3.6ms at 200
+stories, 8.6ms at 400, 19ms at 800. The first cut looped in Python over
+cluster pairs and cost 473ms at 400 — half a second of a 90-second budget
+on a diagnostic — so the block means are one matmul now. Network cost is
+zero or one request; on the cross-source fixture corpus at its calibrated
+threshold the band is empty and the probe makes no call at all. The cost
+is a function of how crowded the band is, not of how large the morning was.
+
+### Still open after this
+
+The threshold is still unproven. This ships the instrument, not the
+reading. What it cannot tell anyone yet: whether real newsletters cluster,
+and whether 0.78 is right for Gemini embeddings on live feeds. Both need
+mornings of real data through this log.
+
 
 ## ADR-017 — Personal relevance is asked, not matched
 

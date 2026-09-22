@@ -1188,6 +1188,79 @@ from "never had a malformed response", or "keyed correctly" from "the
 fixture gave everything distinct ids". Both need a test that constructs the
 bad case on purpose.
 
+## 2026-09-22 - the threshold gets an instrument, not a verdict
+
+ADR-016's amendment. The part worth keeping is what the measuring
+decisions turned out to depend on.
+
+**The band's units are the threshold's units, and that was not obvious.**
+The first instinct is to report the closest pair of items across two
+clusters — it is the most alarming number and the easiest to compute. It is
+also unusable. `cluster_items` runs `linkage="average"`, so 0.78 cuts on the
+MEAN pairwise cosine between clusters; a log full of max-linkage numbers
+cannot be read back as "0.78 should be 0.70" because it is denominated in
+something else. Average linkage also hands over a free guarantee: the
+algorithm stops merging exactly when every surviving cluster pair is further
+apart than the threshold, so nothing the probe finds can be at or above it.
+The half-open band is belt and braces for input that did not come from
+`cluster_items`.
+
+**The floor was chosen by one pair, on purpose.** 0.65 exists because
+SpaceX Starlink against Rocket Lab Electron sits at 0.6908. That is the
+tightest non-merge this repo has measured and the whole reason 0.78 was
+picked, so a band that could not reach it would be collecting evidence with
+the deciding case filtered out — which is worse than collecting none,
+because an empty log would read as "nothing sits near the threshold" rather
+than "I did not look there".
+
+**The quadratic cost was in Python, not in the arithmetic.** 400 stories is
+79,800 pairs, and reading each block out of the similarity matrix with
+`np.ix_` cost 473ms — half a second of a 90-second briefing, spent on a
+diagnostic nobody is waiting for. As one matmul (`assignᵀ · S · assign`,
+divided by the outer product of the cluster sizes) the same answer takes
+8.6ms, and 19ms at 800 stories. Worth remembering as a shape: the numpy was
+never the problem, the per-pair Python round trip into numpy was.
+
+**And the float32 that came with it.** Summing float32 similarities across a
+cluster and rounding leaves the result a float32, and the nearest float32 to
+0.69 widens to 0.6899999976158142. A tuning log whose numbers read as
+rounding bugs is a tuning log nobody trusts. The similarity matrix stays
+float32 (clustering's own precision); the averaging is float64.
+
+**The first payload shipped the cosine to the model, and that was a
+measurement bug, not a privacy one.** It read as helpful context. It is
+the quantity under evaluation: told a pair scores 0.77, a model leans
+"same event", and the inflation lands at the TOP of the band, where a
+disagreement counts most toward moving the threshold. An instrument that
+tells the sensor what it expects to read is not an instrument. The
+similarity now appears only in the log, which also means the tests assert
+on the log line rather than the request — the right place anyway, since
+the log is the deliverable.
+
+**Ordering is the only real defence against starving the other four calls,
+so it is a test.** The probe is the fifth call against one shared
+`judgment_briefing_budget_seconds`. It runs last — after triage, cluster
+verification, personal relevance and the quality gates, and after the script
+chain, but before `_scrub_email_bodies`, because the payload needs the
+bodies. If the budget is gone its claims come back `None` and the briefing
+is bit-for-bit what it would have been. A comment saying "runs last" is
+exactly the kind of claim this repo has watched rot four times, so
+`_OrderRecordingJudge` asserts the family order in a real `generate_briefing`
+run instead.
+
+**The measured cost of the fifth call is usually zero.** On the cross-source
+fixture corpus at its calibrated threshold the band is EMPTY — the two
+controls are nowhere near it — so the probe makes no request at all. The
+cost tracks how crowded the band is, not how large the morning was. That is
+also why the ordering test has to widen the band deliberately: at the
+default there is nothing to order.
+
+**What this does not do, stated plainly because the file it lives in
+splits clusters.** It merges nothing and returns `None`. The threshold is
+no better proven today than it was yesterday; what exists now is the
+instrument, and the reading takes a week of real mornings.
+
+
 ## Standing facts worth not rediscovering
 
 - **The Worker has no CI deploy.** Merging is not shipping. A route on `main`

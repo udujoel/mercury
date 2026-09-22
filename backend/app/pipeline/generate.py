@@ -45,7 +45,7 @@ from app.core.schemas import (
     Story,
 )
 from app.pipeline.census import RunCensus
-from app.pipeline.cluster_verify import verify_stories
+from app.pipeline.cluster_verify import probe_threshold, verify_stories
 from app.pipeline.dedup import build_stories
 from app.pipeline.digest import (
     attach_research,
@@ -405,6 +405,24 @@ async def generate_briefing(
             date=briefing_date,
             disabled_segments=disabled_segments,
         )
+
+        # ADR-016's other half, and it runs HERE for two reasons.
+        #
+        # Last in the judgment queue: the shared
+        # `judgment_briefing_budget_seconds` covers triage, cluster
+        # verification, personal relevance and the quality gates — four
+        # calls that all change what the listener hears. This fifth one
+        # changes nothing; it logs cross-cluster pairs that fell just short
+        # of 0.78 so the threshold can be tuned against real mornings. A
+        # diagnostic does not get to spend budget the product needs, so it
+        # goes after them and takes what is left. If the budget is already
+        # gone it reports that it learned nothing and the briefing is
+        # unaffected.
+        #
+        # And before `_scrub_email_bodies`: the payload carries 300
+        # characters of body, and a newsletter that nearly merged with an
+        # article is exactly the pair worth looking at.
+        await probe_threshold(all_stories, judgment_provider)
 
         # The LAST read of any body in this run, and it happens BEFORE the scrub
         # below on purpose. `build_enrichment_prompt` flattens the source text

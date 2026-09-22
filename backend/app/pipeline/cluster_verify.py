@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import logging
 
+import numpy as np
+
 from app.core.config import get_settings
 from app.core.providers import Claim, JudgmentProvider
 from app.core.schemas import Item, Story
@@ -64,17 +66,31 @@ def _summarise(item: Item) -> dict:
     }
 
 
+# The definition of "the same event", shared by both directions of ADR-016.
+#
+# One constant rather than two copies because the split direction and the
+# threshold probe are meant to be read against each other: the verifier
+# says what 0.78 wrongly merged and the probe says what it wrongly missed,
+# and those two answers are only comparable if the question is identical.
+# Two copies of a sentence this long drift on the first edit, and the
+# symptom — a week of tuning data collected under a slightly different
+# definition than the one that ships — is not something either module's
+# tests would notice.
+SAME_EVENT_RULE = (
+    "report the SAME underlying news event. One being original reporting "
+    "and the other being commentary about it still counts as the same "
+    "event. Two different events at the same organisation, two different "
+    "launches or releases, and two editions of the same recurring "
+    "publication do NOT count as the same event."
+)
+
+
 def _claim(story_index: int, member_index: int) -> Claim:
     return Claim(
         key=f"cluster:{story_index}:{member_index}",
         instructions=(
             f"`clusters[{story_index}].members[{member_index}]` and "
-            f"`clusters[{story_index}].canonical` report the SAME underlying "
-            "news event. One being original reporting and the other being "
-            "commentary about it still counts as the same event. Two "
-            "different events at the same organisation, two different "
-            "launches or releases, and two editions of the same recurring "
-            "publication do NOT count as the same event."
+            f"`clusters[{story_index}].canonical` {SAME_EVENT_RULE}"
         ),
     )
 
@@ -246,4 +262,258 @@ def _ejected_story(parent: Story, member: Item, position: int) -> Story:
     )
 
 
-__all__ = ["verify_stories"]
+# ──────────────────────────────────────────────────────────────
+# The other direction: what the threshold MISSED (ADR-016 follow-up)
+# ──────────────────────────────────────────────────────────────
+
+
+def _pair_claim(index: int) -> Claim:
+    return Claim(
+        key=f"probe:{index}",
+        instructions=f"`pairs[{index}].a` and `pairs[{index}].b` "
+                     f"{SAME_EVENT_RULE}",
+    )
+
+
+def _is_evidence(probability: float, settings) -> bool:
+    """Is this answer worth putting in front of a human as tuning data?
+
+    Deliberately the SAME cut the split direction uses, not a stricter one,
+    and the reasoning is worth stating because the obvious argument runs
+    the other way.
+
+    That argument: a logged pair is a nudge toward LOWERING 0.78, and
+    lowering it makes more merges, which is ADR-003's expensive direction —
+    so the bar for evidence should be higher than the bar for ejecting.
+
+    It does not hold, because **this log does not act.** A pair recorded
+    here changes nothing until a human reads a week of mornings and edits
+    a number. The cost of a marginal answer is one line Joel decides is
+    marginal; the cost of hiding it is a threshold tuned on a filtered
+    sample, with the filter chosen by the same guess the tuning is meant
+    to replace. Under-reporting is the error that cannot be seen later.
+
+    The 2026-09-21 probe found no marginal answers at all — 0.94-0.96
+    against 0.01-0.04 across seven pairs — so on the measured evidence
+    this cut and a stricter one select the same pairs anyway.
+    """
+    return probability >= settings.cluster_verify_threshold
+
+
+def _near_threshold_pairs(
+    stories: list[Story], floor: float, ceiling: float
+) -> list[tuple[Story, Story, float]]:
+    """Cross-cluster story pairs whose similarity lands in [floor, ceiling).
+
+    **Average linkage, because that is the quantity the threshold cuts
+    on.** `cluster_items` runs AgglomerativeClustering with
+    `linkage="average"`, so what gets compared against 0.78 is the MEAN
+    pairwise cosine between two clusters — not the closest pair and not
+    canonical-to-canonical. Reporting anything else would answer a
+    question nobody asked: "should 0.78 move to 0.70" is only answerable
+    in the units 0.78 is expressed in.
+
+    It also follows that nothing here can come back at or above the
+    ceiling. Average linkage stops merging when every remaining cluster
+    pair is further apart than the threshold, so a surviving pair is
+    below it by construction. The half-open band is belt and braces for
+    input that did not come from `cluster_items`.
+
+    Recomputed from `Item.embedding` rather than plumbed out of
+    clustering. Clustering is the expensive, well-tested pass and this is
+    a diagnostic; a diagnostic does not get to change the signature of the
+    thing it observes.
+
+    Returned nearest-the-threshold first, which is the order the cap
+    truncates in. A pair at 0.77 flips if 0.78 moves by a hundredth; one
+    at 0.65 needs it to move by a tenth.
+    """
+    vectors: list[list[float]] = []
+    owner: list[int] = []
+    for index, story in enumerate(stories):
+        for member in story.members:
+            if member.embedding:
+                vectors.append(member.embedding)
+                owner.append(index)
+
+    rows: dict[int, list[int]] = {}
+    for position, index in enumerate(owner):
+        rows.setdefault(index, []).append(position)
+    if len(rows) < 2:
+        return []
+
+    matrix = np.array(vectors, dtype=np.float32)
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    # `dedup.build_stories` already drops zero-norm vectors, so this guard
+    # is for input that reached here another way. A zero vector has no
+    # direction and its cosine is undefined; dividing by 1.0 leaves it at
+    # the origin, similar to nothing, which is the honest reading.
+    matrix = matrix / np.where(norms == 0.0, 1.0, norms)
+    similarities = matrix @ matrix.T
+
+    present = sorted(rows)
+    sizes = np.array([len(rows[index]) for index in present], dtype=np.float64)
+
+    # Every cluster-pair average in one matmul, rather than a Python loop
+    # reading one-element blocks out of `similarities`. The loop version
+    # was measured at 473ms on 400 stories — 79,800 fancy-index reads, and
+    # half a second of a 90-second briefing spent on a diagnostic. `assign`
+    # is the one-hot item->cluster matrix, so `assignᵀ · S · assign` is the
+    # block SUM and dividing by the outer product of the sizes makes it the
+    # mean.
+    assign = np.zeros((len(vectors), len(present)), dtype=np.float32)
+    for column, index in enumerate(present):
+        assign[rows[index], column] = 1.0
+    # The averaging is float64 even though the similarities are float32
+    # (clustering's own precision): summing float32 across a cluster and
+    # then rounding leaves the result a float32, and the nearest float32 to
+    # 0.69 widens to 0.6899999976158142 — a log line that reads as a
+    # rounding bug to the person reading a week of them.
+    block = np.asarray(assign.T @ similarities @ assign, dtype=np.float64)
+    block /= np.outer(sizes, sizes)
+
+    # Rounded BEFORE the band test, not after, so the number in the log is
+    # the number that was filtered on. A pair reported at 0.7800 that was
+    # admitted as 0.77996 would read as a contradiction of the half-open
+    # band by whoever is tuning against these lines.
+    block = np.round(block, 4)
+    keep = np.triu(np.ones_like(block, dtype=bool), k=1)
+    keep &= (block >= floor) & (block < ceiling)
+
+    found = [
+        (stories[present[left]], stories[present[right]],
+         float(block[left, right]))
+        for left, right in zip(*np.nonzero(keep), strict=True)
+    ]
+    found.sort(key=lambda row: row[2], reverse=True)
+    return found
+
+
+async def probe_threshold(
+    stories: list[Story], provider: JudgmentProvider | None
+) -> None:
+    """Log cross-cluster pairs the threshold missed. Merges NOTHING.
+
+    The open half of ADR-016. `verify_stories` re-reads the merges 0.78
+    MADE; this reads the merges it did not make, and says which of them a
+    semantic reading calls the same event. CLAUDE.md's standing unknown is
+    that 0.78 "is tuned for Gemini embeddings and has still never run
+    against real feeds" — a week of these lines is the evidence for moving
+    it, or for leaving it alone.
+
+    **Observe-only is structural, not a promise.** It returns None. There
+    is no value a caller could thread back into clustering by mistake, and
+    the story objects are never mutated. Acting on this direction is where
+    a mistake is expensive (ADR-003), and it stays out of scope until a
+    human has read the data.
+
+    Never raises, and holds nothing to degrade: a failed probe costs a log
+    line nobody gets to read (rule 7).
+
+    **It is last in the judgment queue on purpose.** The shared
+    `judgment_briefing_budget_seconds` covers triage, cluster verification,
+    personal relevance and the quality gates, all of which change what the
+    listener hears. This one changes nothing, so it runs after them and
+    takes what is left; if the budget is already spent every claim comes
+    back None and the pass reports that it learned nothing. Diagnostics do
+    not get to starve the product.
+    """
+    if provider is None or len(stories) < 2:
+        return
+
+    settings = get_settings()
+    ceiling = settings.cluster_similarity_threshold
+    floor = ceiling - settings.threshold_probe_band
+
+    # Everything fallible is inside the try, including the state building
+    # and the response handling — not just the await. A provider that
+    # returns the wrong SHAPE rather than raising takes an AttributeError
+    # out of `answers.get`, which a try around the network call alone does
+    # not cover. That exact mistake shipped twice in one week (#62, #64).
+    try:
+        candidates = _near_threshold_pairs(stories, floor, ceiling)
+        if not candidates:
+            # Said out loud. A pass that logs nothing is indistinguishable
+            # from a pass that never ran, which is this project's most
+            # repeated failure — four features certified by a green suite
+            # and called by nothing.
+            log.info(
+                "threshold probe: 0 near-threshold pair(s) in [%.2f, %.2f) "
+                "across %d stories — nothing to ask",
+                floor, ceiling, len(stories),
+            )
+            return
+
+        cap = settings.threshold_probe_max_pairs
+        examined = candidates[:cap]
+        if len(candidates) > cap:
+            log.warning(
+                "threshold probe: %d near-threshold pair(s) found, capped at "
+                "%d — the %d nearest %.2f were examined and the remaining %d "
+                "were NOT. Today's line is a sample, not a census.",
+                len(candidates), cap, cap, ceiling, len(candidates) - cap,
+            )
+
+        # The canonical stands for its cluster. Sending every member of
+        # both sides would multiply the payload by the cluster sizes for a
+        # question the representatives already answer, and the canonical is
+        # what `authority_sorted` picked as the cluster's best account of
+        # the event.
+        # The cosine is deliberately NOT in the payload. It is the thing
+        # being evaluated, and handing it to the judgment anchors the
+        # answer: told that a pair scores 0.77, a model has every reason to
+        # lean "same event", and the disagreements would inflate exactly at
+        # the top of the band where they carry the most weight. The reading
+        # has to be independent of the number it is being read against.
+        state = {
+            "pairs": [
+                {
+                    "a": _summarise(left.canonical),
+                    "b": _summarise(right.canonical),
+                }
+                for left, right, _ in examined
+            ]
+        }
+        claims = [_pair_claim(index) for index in range(len(examined))]
+        answers = await provider.judge_claims(
+            state, claims, timeout=settings.judgment_timeout_seconds
+        )
+
+        missed = 0
+        unjudged = 0
+        for index, (left, right, similarity) in enumerate(examined):
+            probability = answers.get(f"probe:{index}")
+            # `is not None`, never a truthiness test. A judged 0.0 is a
+            # real "different event" and is falsy; `or` would fold it in
+            # with "not judged", and the two are opposite evidence.
+            if probability is None:
+                unjudged += 1
+                continue
+            if not _is_evidence(probability, settings):
+                continue
+            missed += 1
+            log.warning(
+                "threshold probe: MISSED merge at cosine %.4f (under the "
+                "%.2f threshold) — %r (%s) and %r (%s) report the same "
+                "event, p=%.2f. Observed only; nothing was merged.",
+                similarity, ceiling,
+                left.canonical.title[:80], left.canonical.source_name,
+                right.canonical.title[:80], right.canonical.source_name,
+                probability,
+            )
+
+        log.info(
+            "threshold probe: %d near-threshold pair(s) in [%.2f, %.2f) "
+            "examined, %d judged the same event, %d unjudged — observe "
+            "only, clustering unchanged",
+            len(examined), floor, ceiling, missed, unjudged,
+        )
+    except Exception as exc:
+        # Nothing to degrade: the probe holds no result the briefing wants.
+        log.warning(
+            "threshold probe failed (%s) — no threshold evidence from this "
+            "run; clustering is untouched either way", exc,
+        )
+
+
+__all__ = ["verify_stories", "probe_threshold", "SAME_EVENT_RULE"]

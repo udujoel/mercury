@@ -104,6 +104,7 @@ _PATH_RE = re.compile(
     r"|segments\.[A-Za-z_][A-Za-z0-9_]*"
     r"|clusters\[\d+\]\.canonical"
     r"|clusters\[\d+\]\.members\[\d+\]"
+    r"|pairs\[\d+\]\.[ab]"
     r"|extracted\[\d+\](?:\.[a-z_]+)?)`"
 )
 
@@ -128,6 +129,13 @@ def _resolve(state: dict, path: str) -> str:
         if field:
             return str(row.get(field, "")) if isinstance(row, dict) else ""
         return _flatten(row)
+    match = re.fullmatch(r"pairs\[(\d+)\]\.([ab])", path)
+    if match:
+        pairs = state.get("pairs") or []
+        index = int(match.group(1))
+        if index >= len(pairs):
+            return ""
+        return _flatten(pairs[index].get(match.group(2)))
     match = re.fullmatch(r"clusters\[(\d+)\]\.canonical", path)
     if match:
         return _flatten(_cluster(state, int(match.group(1))).get("canonical"))
@@ -164,6 +172,12 @@ def _flatten(summary) -> str:
 _NORMAL = {
     "ground": 0.98, "relay": 0.02, "challenge": 0.98,
     "cluster": 0.98, "support": 0.98,
+    # Inverted against `cluster`, and the same question. The probe asks
+    # about pairs the embeddings SEPARATED, so "nothing is wrong" means
+    # the threshold was right and they are different events — a low
+    # p(same). The abnormal case, the one worth a log line, is the merge
+    # 0.78 missed.
+    "probe": 0.02,
 }
 _FLIP = {
     "ground": "__UNGROUNDED__",
@@ -171,6 +185,7 @@ _FLIP = {
     "challenge": "__NO_CHALLENGE__",
     "cluster": "__DIFFERENT_EVENT__",
     "support": "__UNSUPPORTED__",
+    "probe": "__SAME_EVENT__",
 }
 
 
