@@ -1255,6 +1255,41 @@ cost tracks how crowded the band is, not how large the morning was. That is
 also why the ordering test has to widen the band deliberately: at the
 default there is nothing to order.
 
+**Review found the two halves of ADR-016 talking past each other (#65).**
+The probe receives the story list AFTER `verify_stories` has run, so an
+ejected member and its narrowed parent arrive as two ordinary stories —
+and their average linkage lands inside the band often enough to matter,
+because the ejection turned on a member-vs-canonical judgment that says
+nothing about where the cluster average sits once that member is gone.
+Reproduced at cosine 0.6696.
+
+The cost is not the wasted claim. The two directions ask in DIFFERENT
+framings — member against canonical there, canonical against canonical
+here — so they can disagree, and then the tuning log carries a `MISSED`
+merge arguing to LOWER 0.78 and re-make a merge this same run rejected.
+An entry pointing the wrong way is worse than no entry, and the direction
+it points is ADR-003's expensive one. Parent-to-child pairs are skipped
+now; **siblings are not**, because two members ejected from one cluster
+were each judged against the canonical and never against each other, so
+whether they are the same event is exactly the open question the probe is
+for. Both halves have a test — the easy over-correction here is to skip
+every pair touching a split child, which would quietly narrow coverage on
+precisely the mornings a cluster went wrong.
+
+Worth generalising: **when a pipeline stage feeds a second stage that asks
+the same question a different way, the second one needs to know what the
+first already ruled on.** Neither module is wrong read alone. The defect
+is at the seam, which is where #64's was too.
+
+**And the answer key was being rebuilt rather than read.**
+`answers.get(f"probe:{index}")` reconstructed the string `_pair_claim` had
+built, coupling them by a repeated literal. Change one and every lookup
+returns `None`, every pair counts as unjudged, and the summary line reads
+exactly like a spent budget — a failure nobody investigates. It zips
+against `claims` with `strict=True` now. `_apply` in the same file already
+did it that way; the second function in a module is where the first one's
+lesson goes missing.
+
 **What this does not do, stated plainly because the file it lives in
 splits clusters.** It merges nothing and returns `None`. The threshold is
 no better proven today than it was yesterday; what exists now is the

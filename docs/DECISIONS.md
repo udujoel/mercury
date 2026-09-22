@@ -1012,6 +1012,17 @@ flip first if the threshold moved a hundredth rather than a tenth. Silent
 truncation would read as "covered everything", which is the one thing a
 tuning log must never imply.
 
+**A pair the split direction already ruled on this run is skipped.** The
+probe sees the story list after `verify_stories`, so an ejected member and
+its narrowed parent arrive as two ordinary stories whose average linkage
+often sits inside the band. The two directions ask in different framings —
+member against canonical there, canonical against canonical here — so they
+can disagree, and a disagreement writes a `MISSED` merge arguing to lower
+0.78 and re-make a merge this same run rejected. Siblings are NOT skipped:
+two members ejected from one cluster were each judged against the
+canonical and never against each other, which leaves the open question
+this probe exists to ask.
+
 **The cosine is not in the payload.** It is the quantity being evaluated.
 Telling the judgment that a pair scores 0.77 gives it every reason to lean
 "same event", and the inflation would land at the top of the band — where

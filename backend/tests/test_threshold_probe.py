@@ -26,11 +26,13 @@ from app.pipeline.cluster_verify import (
     BODY_CHARS,
     SAME_EVENT_RULE,
     probe_threshold,
+    verify_stories,
 )
 from app.providers.fake_judgment import FakeClaimJudge
 
 NOW = datetime(2026, 9, 22, 7, 0, tzinfo=UTC)
 SAME = "__SAME_EVENT__"
+DIFFERENT = "__DIFFERENT_EVENT__"
 LOGGER = "app.pipeline.cluster_verify"
 
 
@@ -39,9 +41,13 @@ def _slug(title: str) -> str:
     return hashlib.sha256(title.encode()).hexdigest()[:12]
 
 
-def _vec(cosine: float) -> list[float]:
-    """A unit vector whose cosine with BASE is exactly `cosine`."""
-    return [cosine, math.sqrt(max(0.0, 1.0 - cosine * cosine)), 0.0]
+def _vec(cosine: float, sign: float = 1.0) -> list[float]:
+    """A unit vector whose cosine with BASE is exactly `cosine`.
+
+    `sign` flips it to the other side of the BASE axis, which is how two
+    items equally similar to a canonical can be dissimilar to each other.
+    """
+    return [cosine, sign * math.sqrt(max(0.0, 1.0 - cosine * cosine)), 0.0]
 
 
 BASE = [1.0, 0.0, 0.0]
@@ -360,3 +366,100 @@ async def test_the_probe_asks_the_same_question_the_verifier_asks():
     await probe_threshold([story(item("A")), at(0.69, "B")], judge)
     _, claims = judge.claim_calls[0]
     assert SAME_EVENT_RULE in claims[0].instructions
+
+
+# ── review of #65: pairs this run already ruled on ────────────────────
+
+
+async def test_a_pair_the_verifier_just_split_is_not_re_examined():
+    """`verify_stories` runs first and hands its output straight here.
+
+    An ejected member becomes a singleton, and the average linkage between
+    it and its narrowed parent lands inside the band often enough to
+    matter — the ejection turned on a member-vs-canonical judgment, which
+    says nothing about where the cluster AVERAGE sits once the member is
+    gone.
+
+    Re-asking is not merely wasteful. The framing differs (canonical
+    against canonical here, member against canonical there), so the two
+    readings can disagree — and then the tuning log carries a MISSED merge
+    arguing to lower 0.78 and re-make a merge the verifier rejected
+    minutes earlier. That is an entry pointing the wrong way, in the
+    direction ADR-003 calls expensive.
+
+    Reproduced on #65 at cosine 0.6696.
+    """
+    canonical = item("TechCorp acquires DataFlow")
+    other = item("What the DataFlow buy means", embedding=_vec(0.97),
+                 source="Stratechery")
+    intruder = item(f"TechCorp ships a new phone {DIFFERENT}",
+                    embedding=_vec(0.76, sign=-1.0), source="Ars Technica")
+    parent = story(canonical, other, intruder, cluster_id="c1")
+
+    after = await verify_stories([parent], FakeClaimJudge())
+    assert len(after) == 2, "the fixture must actually split, or this is vacuous"
+
+    judge = FakeClaimJudge()
+    await probe_threshold(after, judge)
+    assert judge.claim_calls == [], (
+        "the probe re-judged the pair verify_stories split in this same run"
+    )
+
+
+async def test_an_unrelated_story_is_still_examined_after_a_split():
+    """The skip must be narrow. Suppressing every pair involving a split
+    child would blind the probe to that item's relationship with the rest
+    of the morning, which is ordinary evidence."""
+    canonical = item("TechCorp acquires DataFlow")
+    other = item("What the DataFlow buy means", embedding=_vec(0.97),
+                 source="Stratechery")
+    intruder = item(f"TechCorp ships a new phone {DIFFERENT}",
+                    embedding=_vec(0.76, sign=-1.0), source="Ars Technica")
+    parent = story(canonical, other, intruder, cluster_id="c1")
+    after = await verify_stories([parent], FakeClaimJudge())
+
+    # A third story positioned to sit at 0.70 from the EJECTED item — well
+    # inside the band — and at -0.05 from its former parent, well outside
+    # it. So the only pair on offer is the one the skip must not swallow.
+    bystander = story(
+        item("Rival phone launch roundup", embedding=_vec(0.068, sign=-1.0)),
+        cluster_id="c9",
+    )
+
+    judge = FakeClaimJudge()
+    await probe_threshold([*after, bystander], judge)
+    pairs = judge.claim_calls[0][0]["pairs"] if judge.claim_calls else []
+    titles = {s["title"] for p in pairs for s in (p["a"], p["b"])}
+    assert any("Rival phone" in t for t in titles), titles
+
+
+async def test_two_members_ejected_from_one_cluster_are_still_compared():
+    """The skip is parent-to-child, never sibling-to-sibling.
+
+    `verify_stories` judges each member against the CANONICAL and never
+    against the other members. So two items ejected from one cluster have
+    been ruled different from the canonical and ruled nothing at all about
+    each other — an open question, which is the only kind this probe wants.
+
+    Skipping them would be the easy over-correction of the #65 fix, and it
+    would silently narrow the band's coverage on exactly the mornings where
+    a cluster went wrong.
+    """
+    canonical = item("TechCorp acquires DataFlow")
+    left = item(f"TechCorp opens a Dublin office {DIFFERENT}",
+                embedding=_vec(0.92), source="Reuters")
+    right = item(f"TechCorp's Dublin hiring plan {DIFFERENT}",
+                 embedding=_vec(0.92, sign=-1.0), source="Platformer")
+
+    after = await verify_stories(
+        [story(canonical, left, right, cluster_id="c1")], FakeClaimJudge()
+    )
+    assert len(after) == 3, "both members must be ejected, or this is vacuous"
+    assert sum(s.cluster_id.startswith("c1-split-") for s in after) == 2
+
+    judge = FakeClaimJudge()
+    await probe_threshold(after, judge)
+    pairs = judge.claim_calls[0][0]["pairs"] if judge.claim_calls else []
+    titles = {s["title"] for p in pairs for s in (p["a"], p["b"])}
+    assert any("Dublin office" in t for t in titles), titles
+    assert any("Dublin hiring" in t for t in titles), titles

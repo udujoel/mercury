@@ -300,6 +300,34 @@ def _is_evidence(probability: float, settings) -> bool:
     return probability >= settings.cluster_verify_threshold
 
 
+def _already_ruled_on(left: Story, right: Story) -> bool:
+    """Did `verify_stories` split one of these out of the other this run?
+
+    The probe receives the story list AFTER the split direction has run, so
+    an ejected member and its narrowed parent arrive here as two ordinary
+    stories — and their average linkage often lands inside the band, since
+    the ejection turned on a member-vs-canonical judgment that says nothing
+    about where the cluster average sits once the member is gone.
+    Reproduced on #65 at cosine 0.6696.
+
+    Re-asking is not merely a wasted claim slot. The framing differs —
+    canonical against canonical here, member against canonical there — so
+    the two readings can disagree, and then the tuning log carries a
+    MISSED merge arguing to LOWER 0.78 and re-make a merge this same run
+    rejected. An entry pointing the wrong way is worse than no entry,
+    because the direction it points is the expensive one (ADR-003).
+
+    Siblings are deliberately NOT skipped. Two members ejected from one
+    cluster were each judged against the canonical and never against each
+    other, so whether they are the same event is a question nobody has
+    answered — which is exactly what this probe is for.
+    """
+    return (
+        right.cluster_id.startswith(f"{left.cluster_id}-split-")
+        or left.cluster_id.startswith(f"{right.cluster_id}-split-")
+    )
+
+
 def _near_threshold_pairs(
     stories: list[Story], floor: float, ceiling: float
 ) -> list[tuple[Story, Story, float]]:
@@ -380,11 +408,13 @@ def _near_threshold_pairs(
     keep = np.triu(np.ones_like(block, dtype=bool), k=1)
     keep &= (block >= floor) & (block < ceiling)
 
-    found = [
-        (stories[present[left]], stories[present[right]],
-         float(block[left, right]))
-        for left, right in zip(*np.nonzero(keep), strict=True)
-    ]
+    found: list[tuple[Story, Story, float]] = []
+    for left, right in zip(*np.nonzero(keep), strict=True):
+        one, two = stories[present[left]], stories[present[right]]
+        if _already_ruled_on(one, two):
+            continue
+        found.append((one, two, float(block[left, right])))
+
     found.sort(key=lambda row: row[2], reverse=True)
     return found
 
@@ -481,8 +511,19 @@ async def probe_threshold(
 
         missed = 0
         unjudged = 0
-        for index, (left, right, similarity) in enumerate(examined):
-            probability = answers.get(f"probe:{index}")
+        # Zipped against `claims`, so the key comes off the Claim that was
+        # sent rather than being rebuilt from the index. Two copies of the
+        # `probe:{i}` format coupled only by a repeated literal degrade the
+        # wrong way: change one and every lookup returns None, every pair
+        # counts as unjudged, and the summary reads exactly like a spent
+        # budget or a provider outage. Nobody investigates that line, and
+        # the probe reports nothing for as long as it takes to notice.
+        # `strict=True` turns a length mismatch into an exception the
+        # enclosing try converts to a visible failure instead.
+        for claim, (left, right, similarity) in zip(
+            claims, examined, strict=True
+        ):
+            probability = answers.get(claim.key)
             # `is not None`, never a truthiness test. A judged 0.0 is a
             # real "different event" and is falsy; `or` would fold it in
             # with "not judged", and the two are opposite evidence.
