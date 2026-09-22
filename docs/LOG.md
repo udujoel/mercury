@@ -1129,6 +1129,65 @@ Written as `personal = judged.get(cid) or lexical`, a judged 0.0 — a real
 any email 0.5. The judgment could then only ever raise a score. Caught by
 writing the test before believing the code.
 
+## 2026-09-22 - the one place where the source data is model output
+
+ADR-018. The gap is the part worth remembering.
+
+`check_grounding` measures the script against `source_data`. For email and
+calendar that block is raw ingested text. For newsletters it is the
+headlines and gists `extract_items` GENERATED — so a hallucination there
+does not get flagged, it becomes the thing everything else is flagged
+against. The gate was structurally blind to the only source it did not
+ingest.
+
+Nothing about that is visible from either module alone. `extract_items`
+looks like an extractor and `_flatten_source_text` looks like a formatter;
+the problem is the edge between them.
+
+**The design question turned out to be a false choice.** Verifying a gist
+needs the passage it came from, and the passage is rarely in the first few
+hundred characters — so it looked like "send whole newsletters to the
+vendor, or leave the gap open". It is neither: the body is already in
+memory locally, so code finds the span by token overlap and only the span
+is sent. 700 characters out of a 6723-character issue, with the passage in
+it. Retrieval in code, judgment in the model.
+
+**Threshold 0.2, not 0.5**, because the two errors are not symmetric. A
+false drop silently loses a real story — the exact failure this module
+exists to prevent. A false keep costs only the behaviour that shipped
+before. So uncertainty keeps the item and only a confident rejection drops
+it.
+
+## 2026-09-22 - two mistakes made twice, in the same week
+
+Both of these were found by review, fixed, and then made again in code
+written AFTER the fix. Recording them as rules rather than as four more war
+stories.
+
+**Wrap the work, not the await.** A `try` around only the network call
+leaves the state building and the response handling outside it. A provider
+that returns the wrong SHAPE rather than raising — a list, None, anything
+without `.get` — then takes an AttributeError out of a function whose
+docstring promises it never raises. Happened in `cluster_verify._apply`
+(#62) and again in `newsletter_items.verify_extracted` (#64). Rule 7 is
+about what the briefing survives, and "the provider answered strangely" has
+to degrade exactly the way "the provider timed out" does. **When a function
+documents that it never raises, put everything fallible inside the try and
+say so in a comment.**
+
+**Never key on `Item.id`.** Already written up above for the relevance map.
+It also reached `cluster_verify._apply` (#62) and `NewsletterItem.email_id`,
+which `_parse` now avoids by keeping the index pairing. Four places in one
+codebase. It is a content hash seeded on (source_name, url-or-title,
+timestamp), every Gmail item has `url=None`, and a live RSS run recorded 187
+items with 186 distinct ids.
+
+The common shape is worth naming: **both are invisible on the happy path and
+in every fixture.** A green suite cannot distinguish "wrapped correctly"
+from "never had a malformed response", or "keyed correctly" from "the
+fixture gave everything distinct ids". Both need a test that constructs the
+bad case on purpose.
+
 ## Standing facts worth not rediscovering
 
 - **The Worker has no CI deploy.** Merging is not shipping. A route on `main`

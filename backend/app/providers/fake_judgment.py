@@ -103,7 +103,8 @@ _PATH_RE = re.compile(
     r"`(lines\[\d+\]"
     r"|segments\.[A-Za-z_][A-Za-z0-9_]*"
     r"|clusters\[\d+\]\.canonical"
-    r"|clusters\[\d+\]\.members\[\d+\])`"
+    r"|clusters\[\d+\]\.members\[\d+\]"
+    r"|extracted\[\d+\](?:\.[a-z_]+)?)`"
 )
 
 def _resolve(state: dict, path: str) -> str:
@@ -116,6 +117,17 @@ def _resolve(state: dict, path: str) -> str:
     match = re.fullmatch(r"segments\.(.+)", path)
     if match:
         return str((state.get("segments") or {}).get(match.group(1), ""))
+    match = re.fullmatch(r"extracted\[(\d+)\](?:\.([a-z_]+))?", path)
+    if match:
+        rows = state.get("extracted") or []
+        index = int(match.group(1))
+        if index >= len(rows):
+            return ""
+        row = rows[index]
+        field = match.group(2)
+        if field:
+            return str(row.get(field, "")) if isinstance(row, dict) else ""
+        return _flatten(row)
     match = re.fullmatch(r"clusters\[(\d+)\]\.canonical", path)
     if match:
         return _flatten(_cluster(state, int(match.group(1))).get("canonical"))
@@ -149,12 +161,16 @@ def _flatten(summary) -> str:
 #
 # `_NORMAL` is what each family looks like when nothing is wrong;
 # `_FLIP` is the marker a test puts in a turn to make that family abnormal.
-_NORMAL = {"ground": 0.98, "relay": 0.02, "challenge": 0.98, "cluster": 0.98}
+_NORMAL = {
+    "ground": 0.98, "relay": 0.02, "challenge": 0.98,
+    "cluster": 0.98, "support": 0.98,
+}
 _FLIP = {
     "ground": "__UNGROUNDED__",
     "relay": "__RELAYS__",
     "challenge": "__NO_CHALLENGE__",
     "cluster": "__DIFFERENT_EVENT__",
+    "support": "__UNSUPPORTED__",
 }
 
 

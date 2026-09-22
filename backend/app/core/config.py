@@ -346,6 +346,14 @@ class Settings(BaseSettings):
     # records at cosine 0.6908 and two editions of one daily newsletter.
     cluster_verify_threshold: float = 0.5
 
+    # An extracted newsletter item is dropped when P(supported by the
+    # passage it came from) falls below this (ADR-018). Far below 0.5 on
+    # purpose: `_best_window` finds the passage approximately, so an
+    # uncertain answer usually means the window missed rather than that the
+    # item was invented — and a false drop silently loses a real story,
+    # which is the failure that module was written to stop.
+    newsletter_support_threshold: float = 0.2
+
     # Semantic quality gates (ADR-015). Probabilities from Jev, so these are
     # ordinary 0-1 thresholds — unlike the consequence Score above, which is
     # a level index.

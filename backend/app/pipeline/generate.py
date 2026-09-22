@@ -318,7 +318,7 @@ async def generate_briefing(
         # trade goes this way until a morning shows otherwise.
         for_extraction = _newsletters_for_extraction(inbox_emails)
         newsletter_stories, newsletter_remainder = await _extract_newsletter_stories(
-            llm, for_extraction
+            llm, for_extraction, judgment_provider=judgment_provider
         )
         # `took` is the count BEFORE the transactional gate, deliberately.
         # Measuring after it means a gate that empties the list reports
@@ -759,7 +759,9 @@ def _when_a_stage_is_starved(names: list[str]) -> None:
 
 
 async def _extract_newsletter_stories(
-    llm, newsletters: list[Item]
+    llm,
+    newsletters: list[Item],
+    judgment_provider: Any = None,
 ) -> tuple[list, int]:
     """Newsletters -> discrete items -> merged subjects -> researched.
 
@@ -795,7 +797,11 @@ async def _extract_newsletter_stories(
         )
         from app.providers.gemini_research import build_research_provider
 
-        items = await extract_items(llm, newsletters)
+        # The provider that judged the inbox also checks that these
+        # extracted items are actually in the newsletters they claim to be
+        # from (ADR-018) — before `_flatten_source_text` promotes them to
+        # source data the grounding gate measures against.
+        items = await extract_items(llm, newsletters, judgment_provider)
         if not items:
             return [], 0
         stories = rank(merge_by_subject(items))

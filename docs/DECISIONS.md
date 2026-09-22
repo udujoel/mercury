@@ -1033,3 +1033,60 @@ One request for the whole story list, capped at `MAX_JUDGED = 120` with the
 drop logged. Roughly 1s. No judgment, no context to judge against (no
 attendees, follows or interests), or a failed pass, all return an empty map
 and ranking is byte-identical to before this ADR — pinned by a test.
+
+
+## ADR-018 — An extracted newsletter item is checked before it becomes source data
+
+**Status:** accepted
+
+`newsletter_items.extract_items` uses the LLM to pull headlines and gists
+out of newsletter bodies. `script_chain._flatten_source_text` then puts
+those extracted strings into `source_data`, and `check_grounding` measures
+the finished script against that block.
+
+So an item invented at extraction time is not merely wrong. It is
+**promoted to evidence**, and every claim the hosts derive from it scores
+as perfectly grounded. The gate cannot see it, because by the time the gate
+looks, the fabrication is the source.
+
+Rule 3 says ground every factual claim in the source data. This is the one
+place in the pipeline where "the source data" is itself model output, and
+it was the one place nothing checked.
+
+`verify_extracted` asks, per item, whether its headline and gist are
+supported by the newsletter passage they came from, and drops the ones that
+are not — before the promotion happens.
+
+### Retrieval in code, judgment in the model
+
+A gist cannot be checked against a truncated newsletter: the passage it
+came from is usually not in the first few hundred characters. The obvious
+fix — send the whole issue — would be a step change in what leaves the
+machine, well beyond the 300-500 characters ADR-014 and ADR-016 settled.
+
+So `_best_window` finds the span locally, by plain token overlap, and only
+the span is sent. Measured on 2026-09-22: a 6723-character newsletter, a
+700-character window, and the window contained the passage.
+
+```
+KEPT     TechCorp acquires DataFlow for $2.1bn          (the real item)
+DROPPED  TechCorp acquires DataFlow for $4.8bn   p=0.01 (wrong figures)
+DROPPED  Regulators have already cleared the deal p=0.02 (invented outright)
+```
+
+### Conservative on purpose
+
+The drop threshold is **0.2**, not 0.5. `_best_window` is approximate, so
+an uncertain answer usually means the window missed rather than that the
+item was invented — and a false drop silently loses a real story, which is
+the failure `newsletter_items` was written to stop. Uncertainty keeps the
+item; only a confident rejection drops it.
+
+### Pairing
+
+`_parse` now returns each item alongside the newsletter object it came
+from, rather than letting anything re-derive it from
+`NewsletterItem.email_id`. That field is `Item.id`, a content hash that
+collides for two issues sharing a sender, subject and timestamp — a lookup
+by it can hand an item the wrong newsletter to be verified against. The
+index is exact and it is already in hand at parse time.
