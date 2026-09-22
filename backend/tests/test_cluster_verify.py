@@ -287,3 +287,30 @@ async def test_an_email_member_is_truncated_like_any_other():
     sent = state["clusters"][0]["members"][0]
     assert set(sent) == {"source", "title", "excerpt"}
     assert len(sent["excerpt"]) == BODY_CHARS
+
+
+async def test_a_malformed_response_degrades_instead_of_raising():
+    """Regression: `_apply` sat outside the try.
+
+    A provider that returns the wrong SHAPE rather than raising — a list,
+    None, anything without `.get` — took an AttributeError all the way out
+    of a module whose docstring promises it never raises. Rule 7 is about
+    what the briefing survives, and "answered strangely" has to degrade the
+    same way "timed out" does.
+    """
+    class _Malformed:
+        async def judge_claims(self, state, claims, *, timeout=20.0):
+            return [0.9]                      # a list, not the documented dict
+
+    stories = [story(item("A"), item("B"))]
+    assert await verify_stories(stories, _Malformed()) == stories
+
+
+async def test_a_response_missing_keys_leaves_those_members_alone():
+    class _Empty:
+        async def judge_claims(self, state, claims, *, timeout=20.0):
+            return {}                         # well-formed, but answers nothing
+
+    stories = [story(item("A"), item("B"))]
+    result = await verify_stories(stories, _Empty())
+    assert len(result) == 1 and len(result[0].members) == 2

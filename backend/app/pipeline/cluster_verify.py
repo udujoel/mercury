@@ -105,18 +105,23 @@ async def verify_stories(
     settings = get_settings()
     state, claims, addressed = _build(candidates)
 
+    # `_apply` is INSIDE the try, not after it. A provider that returns the
+    # wrong SHAPE rather than raising — a list, None, anything without
+    # `.get` — used to take the AttributeError all the way out of a module
+    # whose docstring promises it never raises. Rule 7 is about what the
+    # briefing survives, and "the provider answered strangely" has to
+    # degrade the same way "the provider timed out" does.
     try:
         answers = await provider.judge_claims(
             state, claims, timeout=settings.judgment_timeout_seconds
         )
+        return _apply(stories, addressed, answers, settings)
     except Exception as exc:
         log.warning(
             "cluster verification failed (%s) — keeping clustering's own "
             "merges for all %d multi-source story(ies)", exc, len(candidates),
         )
         return stories
-
-    return _apply(stories, addressed, answers, settings)
 
 
 def _build(
