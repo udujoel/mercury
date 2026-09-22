@@ -31,8 +31,9 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Any
 
-from app.core.providers import ContentBlocked, LLMProvider
+from app.core.providers import Claim, ContentBlocked, LLMProvider
 from app.core.schemas import Item, Research
 from app.pipeline.prompts import (
     NEWSLETTER_EXTRACT_PROMPT,
@@ -215,7 +216,9 @@ def _format_newsletters(newsletters: list[Item]) -> str:
     return "\n\n---\n\n".join(blocks)
 
 
-def _parse(raw: str, newsletters: list[Item]) -> list[NewsletterItem]:
+def _parse(
+    raw: str, newsletters: list[Item]
+) -> list[tuple[NewsletterItem, Item]]:
     """Turn the model's JSON into items, dropping anything malformed.
 
     Per-item rather than all-or-nothing. One unusable entry in a list of
@@ -248,7 +251,12 @@ def _parse(raw: str, newsletters: list[Item]) -> list[NewsletterItem]:
         return []
 
     per_source: dict[int, int] = {}
-    out: list[NewsletterItem] = []
+    # Paired with the newsletter it came out of. NOT re-derived later from
+    # `NewsletterItem.email_id`: that is `Item.id`, a content hash that
+    # collides for two messages sharing a sender, subject and timestamp, so
+    # a lookup by it can return the wrong issue. The index is exact and it
+    # is already in hand here.
+    out: list[tuple[NewsletterItem, Item]] = []
     for entry in parsed:
         if not isinstance(entry, dict):
             continue
@@ -274,18 +282,21 @@ def _parse(raw: str, newsletters: list[Item]) -> list[NewsletterItem]:
         per_source[index] = per_source.get(index, 0) + 1
 
         source = newsletters[index]
-        out.append(
+        out.append((
             NewsletterItem(
                 headline=headline, gist=gist, subject=subject,
                 source_name=source.source_name, sender=source.author,
                 received_at=source.timestamp, email_id=source.id,
-            )
-        )
+            ),
+            source,
+        ))
     return out
 
 
 async def extract_items(
-    llm: LLMProvider, newsletters: list[Item]
+    llm: LLMProvider,
+    newsletters: list[Item],
+    judgment_provider: Any = None,
 ) -> list[NewsletterItem]:
     """Pull the discrete news items out of every newsletter, in one call.
 
@@ -347,7 +358,9 @@ async def extract_items(
         log.warning("newsletter extraction failed", exc_info=True)
         return []
 
-    items = _parse(raw, newsletters)
+    pairs = _parse(raw, newsletters)
+    pairs = await verify_extracted(pairs, judgment_provider)
+    items = [item for item, _ in pairs]
     log.info(
         "newsletters: %d issue(s) yielded %d item(s) across %d subject(s)",
         len(newsletters), len(items), len({i.subject.lower() for i in items}),
@@ -460,3 +473,140 @@ _EXTRACT_SCHEMA: dict = {
         "required": ["source", "headline", "gist", "subject"],
     },
 }
+
+
+# ──────────────────────────────────────────────────────────────
+# Verification — the extracted item BECOMES the source (ADR-018)
+# ──────────────────────────────────────────────────────────────
+
+# `script_chain._flatten_source_text` puts these headlines and gists into
+# `source_data`, and `check_grounding` measures the finished script against
+# that block. So an item invented here is not merely wrong — it is promoted
+# to evidence, and every claim the hosts derive from it then scores as
+# perfectly grounded. The gate cannot see it, because by the time the gate
+# looks, the fabrication IS the source.
+#
+# Rule 3 says ground every factual claim in the source data. This is the
+# one place where "the source data" is itself model output.
+
+# How much of the newsletter the judgment sees per item. Not the whole
+# issue: `_best_window` finds the passage locally first, so egress stays at
+# the magnitude ADR-014 set rather than growing to the size of an inbox.
+WINDOW_CHARS = 700
+
+_WORD_RE = re.compile(r"[a-z0-9]{4,}")
+
+
+def _best_window(body: str, needle: str, *, width: int = WINDOW_CHARS) -> str:
+    """The span of `body` most likely to be what `needle` was drawn from.
+
+    Retrieval in code, judgment in the model. A gist cannot be checked
+    against a truncated newsletter — the passage it came from is usually
+    not in the first 500 characters — and sending whole issues would be a
+    step change in what leaves the machine. So the span is found here,
+    with plain token overlap, and only the span is sent.
+
+    Deliberately generous: an approximate window costs a judgment of
+    "can't tell", which keeps the item. A window that is too tight costs a
+    false "unsupported", which DROPS a real story.
+    """
+    if len(body) <= width:
+        return body
+    wanted = set(_WORD_RE.findall(needle.lower()))
+    if not wanted:
+        return body[:width]
+    step = max(width // 3, 1)
+    best, best_score = body[:width], -1
+    for start in range(0, max(len(body) - width, 0) + 1, step):
+        window = body[start:start + width]
+        score = len(wanted & set(_WORD_RE.findall(window.lower())))
+        if score > best_score:
+            best, best_score = window, score
+    return best
+
+
+async def verify_extracted(
+    pairs: list[tuple[NewsletterItem, Item]], provider: Any = None
+) -> list[tuple[NewsletterItem, Item]]:
+    """Drop extracted items their own newsletter does not support.
+
+    Conservative on purpose. An item is dropped only when the judgment is
+    CONFIDENT it is unsupported, because `_best_window` is approximate and
+    a false drop silently loses a real story — the failure this module was
+    written to stop. Uncertainty keeps the item.
+
+    Never raises. No provider, or a failed pass, returns `pairs` unchanged,
+    which is the behaviour before this ADR.
+    """
+    if provider is None or not pairs:
+        return pairs
+
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    state = {
+        "extracted": [
+            {
+                "headline": item.headline,
+                "gist": item.gist,
+                "newsletter_passage": _best_window(
+                    source.body, f"{item.headline} {item.gist}"
+                ),
+            }
+            for item, source in pairs
+        ]
+    }
+    claims = [
+        Claim(
+            key=f"support:{index}",
+            instructions=(
+                f"Both the headline and the gist in `extracted[{index}]` are "
+                f"supported by `extracted[{index}].newsletter_passage`. "
+                "Condensing, rewording and summarising are fine. A name, "
+                "number, date, quotation or claim that does not appear in "
+                "the passage is not supported."
+            ),
+        )
+        for index in range(len(pairs))
+    ]
+
+    try:
+        answers = await provider.judge_claims(
+            state, claims, timeout=settings.judgment_timeout_seconds
+        )
+    except Exception as exc:
+        log.warning(
+            "newsletter item verification failed (%s) — keeping all %d "
+            "extracted item(s)", exc, len(pairs),
+        )
+        return pairs
+
+    kept: list[tuple[NewsletterItem, Item]] = []
+    dropped = 0
+    for index, (item, source) in enumerate(pairs):
+        probability = answers.get(f"support:{index}")
+        unsupported = (
+            probability is not None
+            and probability < settings.newsletter_support_threshold
+        )
+        if unsupported:
+            dropped += 1
+            log.warning(
+                "newsletter item dropped as unsupported by %r (p=%.2f): %r",
+                source.source_name, probability, item.headline[:70],
+            )
+            continue
+        kept.append((item, source))
+
+    if dropped:
+        log.warning(
+            "newsletters: %d of %d extracted item(s) were not supported by "
+            "the issue they came from and were dropped before becoming "
+            "source data", dropped, len(pairs),
+        )
+    else:
+        log.info(
+            "newsletters: all %d extracted item(s) supported by their source",
+            len(pairs),
+        )
+    return kept
