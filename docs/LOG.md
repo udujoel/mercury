@@ -1188,6 +1188,51 @@ from "never had a malformed response", or "keyed correctly" from "the
 fixture gave everything distinct ids". Both need a test that constructs the
 bad case on purpose.
 
+## 2026-09-22 - the briefing died in libxml2, not in Python
+
+The 16:55 run failed with no traceback:
+
+```
+malloc_consolidate(): unaligned fastbin chunk detected
+Aborted (core dumped)
+##[error]Process completed with exit code 134
+```
+
+Exit 134 is SIGABRT. That is glibc detecting a corrupted heap, thirty
+seconds in, at the end of RSS full-text extraction — no Python exception,
+so nothing in the pipeline's own error handling could have seen it, and
+rule 7 has nothing to degrade to when the interpreter is aborted under it.
+
+**Cause.** `trafilatura.extract` parses with a MODULE-LEVEL lxml parser,
+`trafilatura.utils.HTML_PARSER`. lxml parser instances are not thread-safe
+— lxml's docs require one per thread. `rss._extract_full_text` called it
+through `asyncio.to_thread` under a semaphore of 5, so five threads drove
+one libxml2 parser context at once. Latent since #2.
+
+**What made it findable was that it was NOT deterministic.** The same
+commit, `88c7a25`, ran clean at 11:29 and aborted at 16:55. That ruled out
+a code regression from the day's five merges and pointed straight at a
+race. Worth remembering as a diagnostic: identical SHA, one pass and one
+crash, means timing or input, not logic.
+
+**It does not reproduce on macOS.** `malloc_consolidate` is a glibc check
+and the allocator here is different; 12 threads x 80 malformed documents
+survived four attempts locally. A native crash that only appears in CI is
+not necessarily flaky infrastructure — check whether the check itself is
+libc-specific before dismissing it.
+
+**The fix is nearly free.** A single-worker executor for extraction, so
+"one parse at a time" is structural rather than a rule to remember. Fetches
+stay concurrent, which is where the time actually goes: a parse is ~4ms,
+and serialising 30 of them costs 0.02s.
+
+**Unrelated, and the more important operational fact:** every OTHER recent
+failure — eleven consecutive runs across 2026-09-20 and 09-21 — was
+`429 ResourceExhausted`, the Gemini monthly spend cap, not this. Those
+stopped of their own accord and 09-22 ran clean three times before the
+abort. When a run fails, read the signature before assuming it is the same
+problem as last time.
+
 ## Standing facts worth not rediscovering
 
 - **The Worker has no CI deploy.** Merging is not shipping. A route on `main`

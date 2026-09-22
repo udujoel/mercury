@@ -10,6 +10,7 @@ the pattern in test_ingestion_weather.py.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -391,3 +392,62 @@ async def test_an_explicit_now_still_wins_over_the_snapshot_anchor():
         fixture=FIXTURE, now=FIXED_NOW + timedelta(days=365)
     )
     assert items == []
+
+
+# ──────────────────────────────────────────────────────────────
+# lxml is not thread-safe, and trafilatura's parser is shared
+# ──────────────────────────────────────────────────────────────
+
+
+async def test_extraction_runs_on_exactly_one_thread(monkeypatch):
+    """Regression: five threads drove one libxml2 parser context.
+
+    `trafilatura.extract` parses with a module-level lxml parser
+    (`trafilatura.utils.HTML_PARSER`) and lxml parsers are not thread-safe.
+    Called from several `asyncio.to_thread` workers, that corrupted the
+    heap: the 16:55 briefing on 2026-09-22 died with
+    `malloc_consolidate(): unaligned fastbin chunk detected` and SIGABRT,
+    thirty seconds in, at the end of full-text extraction — while the same
+    commit had run clean five hours earlier.
+
+    Asserted on the THREAD, not on `_EXTRACTOR._max_workers`: the invariant
+    that matters is "one parse at a time", and a future refactor could keep
+    the executor and stop using it.
+    """
+    import threading
+
+    from app.ingestion import rss
+
+    seen: list[int] = []
+
+    def _record(html, **kwargs):
+        seen.append(threading.get_ident())
+        return "extracted text"
+
+    class _Resp:
+        text = "<html><body><p>hello</p></body></html>"
+
+        def raise_for_status(self):
+            return None
+
+    async def _fake_get(client, url, **kwargs):
+        return _Resp()
+
+    monkeypatch.setattr(rss.trafilatura, "extract", _record)
+    monkeypatch.setattr(rss, "safe_get", _fake_get)
+
+    semaphore = asyncio.Semaphore(rss.EXTRACTION_CONCURRENCY)
+    await asyncio.gather(*(
+        rss._extract_full_text(None, f"https://example.test/{i}", semaphore)
+        for i in range(12)
+    ))
+
+    assert len(seen) == 12, "every extraction should have run"
+    assert len(set(seen)) == 1, (
+        f"extraction ran on {len(set(seen))} threads; trafilatura's lxml "
+        "parser is shared and not thread-safe"
+    )
+    assert set(seen) != {threading.get_ident()}, (
+        "extraction ran on the event-loop thread, which blocks every other "
+        "feed fetch for the duration of the parse"
+    )

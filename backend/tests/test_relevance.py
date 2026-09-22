@@ -12,6 +12,8 @@ import hashlib
 import logging
 from datetime import UTC, datetime
 
+import pytest
+
 from app.core.schemas import CalendarEvent, Item, SourceType, Story
 from app.pipeline.ranking import score_stories
 from app.pipeline.relevance import EXCERPT_CHARS, judge_personal_relevance
@@ -111,11 +113,23 @@ def test_a_judged_zero_does_not_fall_through_to_the_email_default():
 
 
 def test_an_unjudged_story_keeps_its_lexical_score():
+    """`approx`, not `==`, and the reason is not float sloppiness.
+
+    `score_stories` reads `datetime.now(UTC)` and `recency` decays
+    continuously, so two calls microseconds apart give scores that differ
+    in the tenth decimal. Written with `==` (as it was, in #63) this
+    passes only when both calls land in the same tick — a coin flip that
+    usually lands heads, and did until 2026-09-22.
+
+    The term under test is `personal`, worth `w_personal` = 0.35. Clock
+    drift across two adjacent calls is ~1e-10, so a relative tolerance of
+    1e-6 still fails loudly if the judgment leaks into an unjudged story.
+    """
     mail = story("A newsletter", kind=SourceType.EMAIL)
     score_stories([mail], calendar_events=[], judged_personal={-1: 1.0})
     with_map = mail.score
     score_stories([mail], calendar_events=[], judged_personal=None)
-    assert with_map == mail.score
+    assert with_map == pytest.approx(mail.score, rel=1e-6)
 
 
 def test_ranking_is_byte_identical_without_a_judgment_map():
