@@ -968,3 +968,68 @@ An unjudged member **stays in its cluster**. Treating "not judged" as
 "different event" would let a network blip shatter a correct cluster, which
 is the failure this module exists to prevent arriving by the other door. A
 failed pass leaves clustering's own decision standing (rule 7).
+
+
+## ADR-017 — Personal relevance is asked, not matched
+
+**Status:** accepted
+
+`ranking.score_stories` weighs five signals. Four are structural — recency
+decays, corroboration counts distinct outlets, interest is a cosine against
+a centroid. The fifth, `personal`, was a substring match, and it is the one
+that has already gone wrong twice.
+
+`app/pipeline/relevance.py` replaces it with a Noul per story, composed
+back into the SAME [0, 1] range at the SAME weight. `w_personal` does not
+move. The other four terms do not move. A story with no judgment keeps the
+lexical score.
+
+### What the lexical term could not do
+
+Review of #58 fixed the false POSITIVES: unanchored matching worth 0.28 put
+a Hacker News dark-mode post above a Russian missile strike, because
+following "X" matched "extension". A three-character floor and a word
+boundary closed that.
+
+Nothing closed the false NEGATIVES, because they are not fixable by
+matching. Measured on 2026-09-22 with a realistic configuration — following
+"TypeSafe", a calendar entry with `priya@aveiro.test` — against four
+stories:
+
+```
+LEXICAL                                    JUDGED
+0.226  Jev hits 99% on benchmarks          0.548  p=0.92  Aveiro Labs raises $12M
+0.226  Aveiro Labs raises $12M             0.485  p=0.74  Jev hits 99% on benchmarks
+0.226  Premier League round-up             0.258  p=0.09  Global shipping rates fall
+0.226  Global shipping rates fall          0.240  p=0.04  Premier League round-up
+```
+
+**All four lexical scores are identical.** The term contributed nothing, so
+the world segment's order fell to sort stability. The attendee is an email
+address and the match is `name in haystack`, so the whole string must
+appear in the article. The followed entity is "TypeSafe" and the story is
+about Jev. Neither can match, and neither failure is visible in a score
+that simply reads 0.0.
+
+### Why replace rather than add a sixth term
+
+A sixth weight would dilute the other four proportionally and leave the
+inert term in place. Replacing keeps the weight budget at 1.0, upgrades
+exactly the signal that was weakest, and preserves every fix #58 bought —
+the lexical branches still run whenever a judgment is absent.
+
+### The falsy-zero trap
+
+`personal = judged.get(cid) or lexical` is wrong, and was written that way
+first. A judged **0.0** is a real verdict — "this is not about your day" —
+and it is falsy, so it would fall through to the lexical branch that scores
+any email 0.5 for being email. The judgment could then only ever RAISE a
+score, never lower one. It is `is not None`, with a test that fails if that
+is relaxed.
+
+### Cost and degradation
+
+One request for the whole story list, capped at `MAX_JUDGED = 120` with the
+drop logged. Roughly 1s. No judgment, no context to judge against (no
+attendees, follows or interests), or a failed pass, all return an empty map
+and ranking is byte-identical to before this ADR — pinned by a test.

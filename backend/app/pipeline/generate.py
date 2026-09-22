@@ -57,6 +57,7 @@ from app.pipeline.digest import (
     stories_to_enrich,
 )
 from app.pipeline.ranking import score_stories, topic_centroid
+from app.pipeline.relevance import judge_personal_relevance
 from app.synthesis.music import DEFAULT_SET as DEFAULT_MUSIC_SET
 from app.synthesis.stitch import synthesize_briefing
 from app.synthesis.storage import BriefingStorage, build_storage
@@ -955,11 +956,22 @@ async def _build_world_stories(
     # and its 0.20 weight cancelled out. Third of the four "built and
     # never called" bugs in this project's history.
     centroid = await _topic_centroid(interests, embeddings)
+    # Ask whether each story matters to THIS person before weighing it
+    # (ADR-017). Replaces the lexical personal term where it answers, and
+    # leaves it in place where it does not.
+    judged_personal = await judge_personal_relevance(
+        stories,
+        events=events,
+        followed_entities=followed_entities,
+        interests=interests,
+        provider=judgment_provider,
+    )
     stories = score_stories(
         stories,
         calendar_events=events,
         topic_centroid=centroid,
         followed_entities=set(followed_entities or ()),
+        judged_personal=judged_personal,
     )
 
     world = [
