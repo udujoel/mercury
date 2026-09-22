@@ -22,8 +22,17 @@ def score_stories(
     calendar_events: list[CalendarEvent],
     topic_centroid: np.ndarray | None = None,
     followed_entities: set[str] | None = None,
+    judged_personal: dict[str, float] | None = None,
 ) -> list[Story]:
-    """Score every story and return sorted descending."""
+    """Score every story and return sorted descending.
+
+    `judged_personal` maps `cluster_id` to P(this matters to this person
+    today), from `app.pipeline.relevance` (ADR-017). Where a story has an
+    entry, it REPLACES the lexical personal term — same weight, same
+    [0, 1] range, nothing else about the formula moves. A story with no
+    entry keeps the lexical score, so an absent or failed judgment leaves
+    ranking exactly as it was (rule 7).
+    """
     s = get_settings()
     now = datetime.now(UTC)
 
@@ -56,13 +65,20 @@ def score_stories(
         if followed else None
     )
 
+    judged = judged_personal or {}
+
     for story in stories:
         item = story.canonical
 
         # Personal relevance — does this touch someone or something in my day
         haystack = f"{item.title} {item.body[:600]}".lower()
         personal = 0.0
-        if any(name and name in haystack for name in attendee_names):
+        # `is not None`, not `or`: a judged 0.0 is a real verdict — "this
+        # is not about your day" — and must not fall through to the
+        # lexical branches that would then score it 0.5 for being email.
+        if (verdict := judged.get(story.cluster_id)) is not None:
+            personal = verdict
+        elif any(name and name in haystack for name in attendee_names):
             personal = 1.0
         # `source_name` is in the haystack deliberately: following a
         # PUBLICATION is the most obvious thing a person types into this

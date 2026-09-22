@@ -1083,6 +1083,33 @@ affected" as `len(set(out ids)) - len(stories) + 1`, which reports 2 when
 one cluster loses one member. Counted directly now. #56 is the standing
 lesson and it caught me anyway — the number looked like a fact.
 
+## 2026-09-22 - the personal ranking term was inert, and nothing said so
+
+ADR-017. The finding is worth separating from the change.
+
+**On a realistic input the lexical `personal` term scored every story
+identically.** Following "TypeSafe", one calendar entry with
+`priya@aveiro.test`, four RSS stories: all four came out at 0.226. Not
+"ranked badly" — ranked not at all, with the order falling to sort
+stability. The attendee match is `name in haystack` against the full email
+address, and the followed entity was "TypeSafe" while the story was about
+Jev. Both misses are structural and neither shows up as anything but a 0.0.
+
+Judged, the same four ordered 0.92 / 0.74 / 0.09 / 0.04 — the funding round
+of the company whose employee is on the calendar first, the followed
+company's product second.
+
+Review of #58 hardened this term against false positives and could not
+touch the false negatives, because a substring match has no way to know
+that Jev is TypeSafe's model or that priya@aveiro.test works at Aveiro
+Labs. The fix that made it safe also made it silent.
+
+**`or` versus `is not None` decided whether the change could work at all.**
+Written as `personal = judged.get(cid) or lexical`, a judged 0.0 — a real
+"not about your day" — is falsy and falls through to the branch that gives
+any email 0.5. The judgment could then only ever raise a score. Caught by
+writing the test before believing the code.
+
 ## Standing facts worth not rediscovering
 
 - **The Worker has no CI deploy.** Merging is not shipping. A route on `main`
