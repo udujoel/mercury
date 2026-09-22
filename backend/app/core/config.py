@@ -346,6 +346,26 @@ class Settings(BaseSettings):
     # records at cosine 0.6908 and two editions of one daily newsletter.
     cluster_verify_threshold: float = 0.5
 
+    # The other half of ADR-016: what the threshold MISSED. The probe reads
+    # cross-cluster pairs whose average-linkage similarity falls in
+    # [cluster_similarity_threshold - band, cluster_similarity_threshold)
+    # and logs the ones a semantic reading calls the same event. It never
+    # merges anything — it produces the evidence for moving 0.78, nothing
+    # else.
+    #
+    # 0.13 puts the floor at 0.65, which is chosen to contain ONE pair:
+    # SpaceX Starlink against Rocket Lab Electron at cosine 0.6908, the
+    # tightest non-merge this repo has measured and the reason 0.78 was
+    # picked. A band that excluded the deciding case would be tuning
+    # against data with the decision taken out of it.
+    threshold_probe_band: float = 0.13
+    # Pairs are quadratic in items — a 200-item morning has 19,900 story
+    # pairs before any filtering — so the band alone is not a bound. 20 is
+    # under CLAIMS_PER_REQUEST (40), which keeps the whole probe to ONE
+    # request against the shared briefing budget. When it truncates it
+    # keeps the pairs nearest the threshold and says so in the log.
+    threshold_probe_max_pairs: int = 20
+
     # An extracted newsletter item is dropped when P(supported by the
     # passage it came from) falls below this (ADR-018). Far below 0.5 on
     # purpose: `_best_window` finds the passage approximately, so an

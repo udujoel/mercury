@@ -45,6 +45,7 @@ from app.pipeline.generate import (
 )
 from app.pipeline.script_chain import _build_source_refs
 from app.providers.fake_embeddings import FakeEmbeddingProvider
+from app.providers.fake_judgment import FakeClaimJudge
 from app.providers.fake_tts import FakeTTSProvider
 from app.synthesis.storage import LocalFilesystemStorage
 from tests.test_script_chain_prompt_wiring import PromptCapturingLLM
@@ -651,3 +652,144 @@ async def test_an_id_collision_does_not_drop_an_unrelated_email():
     assert any(e is bystander for e in inbox), (
         "the unrelated message was dropped because it shared a content hash"
     )
+
+
+# ──────────────────────────────────────────────────────────────
+# ADR-016's other half: the probe runs, on a real morning's stories
+# ──────────────────────────────────────────────────────────────
+
+
+async def test_the_threshold_probe_runs_during_a_real_briefing(
+    tmp_path, clustering_threshold, caplog
+):
+    """What CALLS the new code, not what tests it.
+
+    This project has shipped four features certified by a green suite and
+    called by nothing — the news half with a hardcoded `n_stories=0`, a
+    `music_set` a Worker whitelist stripped, a `topic_centroid` no caller
+    passed, a newsletter segment that ran zero times in sixteen briefings.
+    An observe-only diagnostic is the easiest thing in this codebase to
+    add and never notice is dead, because its whole output is a log line
+    nobody is waiting for.
+
+    So this asserts on the line, from a real `generate_briefing` run over
+    real Gmail and RSS ingestion, real embedding and real clustering.
+    """
+    import logging
+
+    judge = FakeClaimJudge()
+    with caplog.at_level(logging.INFO, logger="app.pipeline.cluster_verify"):
+        await _generate(tmp_path, PromptCapturingLLM(), judgment_provider=judge)
+
+    assert any(
+        "threshold probe:" in r.getMessage() for r in caplog.records
+    ), "the probe never ran during a full briefing"
+
+    # And on this corpus at the calibrated band it costs NOTHING: the two
+    # controls are nowhere near the threshold, so there is no pair to ask
+    # about and no request is made. The cost is a function of how crowded
+    # the band is, not of how many items the morning had — which is the
+    # answer to "does the fifth call starve the other four".
+    assert [c for c in judge.claim_calls if c[1][0].key.startswith("probe:")] == []
+    assert any(
+        "threshold probe: 0 near-threshold pair(s)" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+async def test_the_probe_sees_the_pair_the_threshold_was_chosen_to_separate(
+    tmp_path, monkeypatch, caplog
+):
+    """The acquisition against the rocket launch — this corpus's tightest
+    non-merge, and the pair ADR-016 records at cosine 0.6908 under Gemini.
+
+    A band that could not reach it would be collecting tuning data with the
+    deciding case filtered out, which is worse than collecting none: it
+    would read as evidence that 0.78 has nothing near it.
+    """
+    import logging
+
+    judge = FakeClaimJudge()
+    # The fake embedding provider is a feature-hashing proxy, so its
+    # geometry is not Gemini's — the threshold is calibrated separately
+    # (FAKE_PROVIDER_TEST_THRESHOLD) and the band has to be too. What
+    # carries over is the SHAPE: the two controls sit just under whatever
+    # threshold separates them, which is exactly what the band is for.
+    monkeypatch.setenv(
+        "CLUSTER_SIMILARITY_THRESHOLD", str(FAKE_PROVIDER_TEST_THRESHOLD)
+    )
+    monkeypatch.setenv("THRESHOLD_PROBE_BAND", "0.60")
+    get_settings.cache_clear()
+    try:
+        with caplog.at_level(logging.INFO, logger="app.pipeline.cluster_verify"):
+            await _generate(
+                tmp_path, PromptCapturingLLM(), judgment_provider=judge
+            )
+    finally:
+        get_settings.cache_clear()
+
+    titles = {
+        summary["title"]
+        for state, _ in judge.claim_calls
+        for pair in state.get("pairs", [])
+        for summary in (pair["a"], pair["b"])
+    }
+    assert any("Rocket" in t or "Electron" in t for t in titles), titles
+    assert any("DataFlow" in t for t in titles), titles
+
+    # And it changed nothing: the acquisition is still one story with all
+    # five sources on it.
+    stories = await _stories()
+    assert max(stories, key=lambda s: s.cluster_size).source_names == (
+        ACQUISITION_SOURCES
+    )
+
+
+class _OrderRecordingJudge(FakeClaimJudge):
+    """Records which claim family each request carried, in order.
+
+    The probe is a FIFTH call against one shared
+    `judgment_briefing_budget_seconds`. Ordering is the whole defence
+    against it starving the other four, so ordering is what gets asserted
+    rather than described in a comment.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.families: list[str] = []
+
+    async def judge_claims(self, state, claims, *, timeout=20.0):
+        if claims:
+            self.families.append(claims[0].key.split(":", 1)[0])
+        return await super().judge_claims(state, claims, timeout=timeout)
+
+
+async def test_the_probe_is_last_in_the_judgment_queue(
+    tmp_path, clustering_threshold, monkeypatch
+):
+    """A diagnostic must not spend budget the product needs.
+
+    Triage, cluster verification, personal relevance and the quality gates
+    all change what the listener hears. The probe changes nothing — it logs
+    evidence for a decision a human makes later — so it goes after them and
+    takes whatever budget is left. If the budget is already gone, its claims
+    come back None and the briefing is exactly what it would have been.
+
+    The band is widened because at the default this corpus produces no
+    near-threshold pairs at all and the probe makes no call — which is the
+    honest common case and is asserted separately, but cannot demonstrate
+    an ordering.
+    """
+    monkeypatch.setenv("THRESHOLD_PROBE_BAND", "0.60")
+    get_settings.cache_clear()
+    judge = _OrderRecordingJudge()
+    await _generate(tmp_path, PromptCapturingLLM(), judgment_provider=judge)
+
+    assert "probe" in judge.families, judge.families
+    assert judge.families.index("probe") == len(judge.families) - 1, (
+        "the probe ran before judgment work that affects the briefing: "
+        f"{judge.families}"
+    )
+    # And it is one request, not one per pair: the cap sits under
+    # CLAIMS_PER_REQUEST so the whole probe chunks into a single call.
+    assert judge.families.count("probe") == 1
