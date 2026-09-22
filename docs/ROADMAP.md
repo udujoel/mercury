@@ -149,6 +149,14 @@ a live run says otherwise:
   against real feeds; the offline test uses 0.60, the value calibrated for
   `FakeEmbeddingProvider`, and sweeps 0.50-0.70 to show the merge is not
   balanced on one number. What holds is the wiring, not the tuning.
+
+  Both halves are now instrumented rather than answered. `verify_stories`
+  reports the merges 0.78 MADE and undoes the bad ones; `probe_threshold`
+  logs the near-misses it MISSED and changes nothing (ADR-016 and its
+  2026-09-22 amendment). Neither proves the number. **The next step is a
+  human one:** read a week of `threshold probe: MISSED` lines from real
+  mornings and decide whether 0.78 moves. Until someone does, this bullet
+  stands exactly as written.
 - Whether real newsletters covering the same event actually cluster. The
   fixture is written to be a duplicate. Real ones may sit either side of the
   threshold, and finding out needs a morning of live data.
