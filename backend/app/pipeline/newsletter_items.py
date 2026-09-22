@@ -544,7 +544,31 @@ async def verify_extracted(
     from app.core.config import get_settings
 
     settings = get_settings()
-    state = {
+    # EVERYTHING that can fail is inside the try, not just the await.
+    # `_best_window` runs over untrusted bodies, and a provider can return
+    # the wrong SHAPE rather than raising — a list, None, anything without
+    # `.get`. Either took an exception out of `extract_items`, whose
+    # docstring promises it never raises, and cost the whole newsletter
+    # segment rather than just its verification.
+    #
+    # This is the same defect review found in `cluster_verify` on #62, two
+    # PRs later. Wrapping the await alone is not wrapping the work.
+    try:
+        state = _verification_state(pairs)
+        answers = await provider.judge_claims(
+            state, claims_for(pairs), timeout=settings.judgment_timeout_seconds
+        )
+        return _keep_supported(pairs, answers, settings)
+    except Exception as exc:
+        log.warning(
+            "newsletter item verification failed (%s) — keeping all %d "
+            "extracted item(s)", exc, len(pairs),
+        )
+        return pairs
+
+
+def _verification_state(pairs: list[tuple[NewsletterItem, Item]]) -> dict:
+    return {
         "extracted": [
             {
                 "headline": item.headline,
@@ -556,7 +580,10 @@ async def verify_extracted(
             for item, source in pairs
         ]
     }
-    claims = [
+
+
+def claims_for(pairs: list[tuple[NewsletterItem, Item]]) -> list[Claim]:
+    return [
         Claim(
             key=f"support:{index}",
             instructions=(
@@ -570,17 +597,12 @@ async def verify_extracted(
         for index in range(len(pairs))
     ]
 
-    try:
-        answers = await provider.judge_claims(
-            state, claims, timeout=settings.judgment_timeout_seconds
-        )
-    except Exception as exc:
-        log.warning(
-            "newsletter item verification failed (%s) — keeping all %d "
-            "extracted item(s)", exc, len(pairs),
-        )
-        return pairs
 
+def _keep_supported(
+    pairs: list[tuple[NewsletterItem, Item]],
+    answers: dict[str, float | None],
+    settings,
+) -> list[tuple[NewsletterItem, Item]]:
     kept: list[tuple[NewsletterItem, Item]] = []
     dropped = 0
     for index, (item, source) in enumerate(pairs):

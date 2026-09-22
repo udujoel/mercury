@@ -174,3 +174,41 @@ async def test_the_payload_is_an_allowlist():
     assert set(state) == {"extracted"}
     assert set(state["extracted"][0]) == {"headline", "gist", "newsletter_passage"}
     assert "must-not-leave" not in str(state)
+
+
+# ── review finding (PR #64) ───────────────────────────────────────────
+
+
+async def test_a_malformed_response_degrades_instead_of_raising():
+    """Regression: only the `await` was inside the try.
+
+    A provider that returns the wrong SHAPE rather than raising — a list,
+    None, anything without `.get` — took an AttributeError out of
+    `extract_items`, whose docstring promises it never raises, costing the
+    whole newsletter segment rather than just its verification.
+
+    Same defect review found in `cluster_verify` on #62, two PRs later.
+    Wrapping the await alone is not wrapping the work.
+    """
+    class _Malformed:
+        async def judge_claims(self, state, claims, *, timeout=20.0):
+            return [0.9]
+
+    pairs = [(extracted(), newsletter("body"))]
+    assert await verify_extracted(pairs, _Malformed()) == pairs
+
+
+async def test_a_body_that_breaks_window_selection_degrades():
+    """`_best_window` runs over untrusted bodies, inside the try."""
+    from app.pipeline import newsletter_items
+
+    def _boom(*a, **k):
+        raise ValueError("window selection blew up")
+
+    original = newsletter_items._best_window
+    newsletter_items._best_window = _boom
+    try:
+        pairs = [(extracted(), newsletter("body"))]
+        assert await verify_extracted(pairs, FakeClaimJudge()) == pairs
+    finally:
+        newsletter_items._best_window = original
