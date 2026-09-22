@@ -897,3 +897,74 @@ Per turn. A turn whose claim comes back unjudged keeps whatever
 opposite decisions and must never collapse together. No provider, or a
 provider that fails outright, means the whole report is the heuristic one,
 which is what shipped before this ADR.
+
+
+## ADR-016 — Clustering gets a second opinion, in the split direction only
+
+**Status:** accepted
+
+`cluster_items` decides two items are one story from the cosine similarity
+of their embeddings at 0.78. `app/pipeline/cluster_verify.py` now re-reads
+those merges semantically and undoes the ones that do not survive.
+
+### Why only one direction
+
+ADR-003 settled the asymmetry: **merging unrelated stories is far worse
+than leaving a duplicate.** A duplicate costs the listener thirty seconds.
+A false merge tells them two things happened when one did, and attributes
+a source to a story it never covered.
+
+Pulling a member back out of a cluster can only ever cost a duplicate — the
+cheaper error, by that ADR's own reckoning. Adding merges the threshold did
+not make is the direction where a mistake is expensive, so it is out of
+scope until the split direction has run against real mornings.
+
+That is a deliberate half-measure, and it is not a feature that does
+nothing: the split direction acts on every briefing. The follow-up is to
+log near-threshold cross-cluster pairs without acting on them, which gives
+the data to tune 0.78 against real feeds — the unknown CLAUDE.md names —
+without the verifier itself making the expensive call.
+
+### What it does not do
+
+It does not tune the threshold, and it does not re-cluster. Clustering
+proposes; this disposes. That keeps the expensive, well-tested
+agglomerative pass exactly as it is.
+
+### Measured
+
+A seven-pair probe on 2026-09-21 answered 0.94-0.96 for genuine same-event
+pairs and 0.01-0.04 for everything else — 7/7, with no marginal calls. The
+two that matter:
+
+- **SpaceX Starlink vs Rocket Lab Electron: 0.01.** This repo records that
+  exact pair at cosine **0.6908**, the highest similarity between two
+  stories that must not merge, and the 0.089 of margin below 0.78 is the
+  whole justification for the current threshold.
+- **"Morning Briefing — Monday" vs "— Tuesday": 0.03.** The recurring-title
+  collision `schemas.py` warns about, where a feed publishes under one
+  title daily and a 24-hour window spans two editions.
+
+End to end on ADR-003's worked example — Reuters carrying an announcement
+with Stratechery and Platformer writing about it, plus a same-company
+different-event intruder — the intruder was ejected and the three real
+members stayed, in 999ms.
+
+### Egress
+
+The payload is an allowlist — source, title, and 300 characters of body —
+and it **includes email**. `_build_world_stories` puts newsletters and
+articles into one `build_stories` call by design, which is what lets a
+newsletter and a news article about the same event deduplicate, so a
+cluster member judged here can be an inbox message.
+
+That is the egress ADR-014 already established (triage sends 500
+characters of every message to the same vendor), not a new one. Recorded
+because this ADR's payload reads as "news only" and it is not.
+
+### Degradation
+
+An unjudged member **stays in its cluster**. Treating "not judged" as
+"different event" would let a network blip shatter a correct cluster, which
+is the failure this module exists to prevent arriving by the other door. A
+failed pass leaves clustering's own decision standing (rule 7).

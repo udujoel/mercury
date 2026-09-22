@@ -1054,6 +1054,35 @@ window that the default had been quietly excluding all along. It is now
 passed explicitly, so the guarantee is visible at the call site rather than
 resting on a default.
 
+## 2026-09-22 - clustering gets a second reader
+
+ADR-016. Beyond the ADR:
+
+**Jev is not marginal on this question.** Seven pairs, 0.94-0.96 for same
+event and 0.01-0.04 for everything else. The SpaceX / Rocket Lab pair that
+sits at cosine 0.6908 — the tightest non-merge this repo has measured, and
+the reason 0.78 was chosen — comes back at 0.01. Embedding similarity had
+0.089 of margin there; the semantic reading has 0.49.
+
+**The threshold is still unproven and this does not prove it.** What the
+verifier checks is the merges the threshold MADE. Whether 0.78 misses
+merges it should make is the other half, still open, and deliberately not
+acted on because that is the direction where a mistake is expensive
+(ADR-003).
+
+**A test fixture gave every item the same id.** `Item.model_post_init`
+seeds the id from (source_name, url or title, timestamp), and the helper
+passed a fixed url. So every item in a cluster collided, the
+non-canonical filter emptied, and three tests asserted on zero claims
+while reading as though they covered the split path. Worth remembering
+when writing any Item fixture: **vary the url, or the ids collide
+silently.** The helper now derives it from the title.
+
+**And the first version of the summary log lied.** It computed "stories
+affected" as `len(set(out ids)) - len(stories) + 1`, which reports 2 when
+one cluster loses one member. Counted directly now. #56 is the standing
+lesson and it caught me anyway — the number looked like a fact.
+
 ## Standing facts worth not rediscovering
 
 - **The Worker has no CI deploy.** Merging is not shipping. A route on `main`
