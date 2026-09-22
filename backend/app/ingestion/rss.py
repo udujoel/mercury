@@ -26,6 +26,7 @@ import asyncio
 import json
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -54,6 +55,29 @@ EXTRACTION_TIMEOUT_S = 10.0
 # the full article is worth the cost.
 EXTRACTION_MIN_CHARS = 500
 EXTRACTION_CONCURRENCY = 5
+
+# ONE worker, and the count is the whole point.
+#
+# `trafilatura.extract` parses with a MODULE-LEVEL lxml parser
+# (`trafilatura.utils.HTML_PARSER`), and lxml parser instances are not
+# thread-safe — lxml's own docs require one parser per thread. Calling
+# extract from several `asyncio.to_thread` workers therefore drove one
+# libxml2 parser context from five threads at once.
+#
+# That is not a theoretical hazard. On 2026-09-22 the 16:55 briefing died
+# with `malloc_consolidate(): unaligned fastbin chunk detected` and
+# SIGABRT (exit 134), thirty seconds in, at the end of full-text
+# extraction — glibc detecting a corrupted heap. The same commit had run
+# clean five hours earlier, which is what a data- and timing-dependent
+# race looks like. It is not reproducible on macOS: that check is glibc's,
+# and the allocator there is different.
+#
+# A single-worker executor makes the invariant structural rather than a
+# rule someone has to remember: there is only one thread, so there can
+# only be one parse. Fetches stay concurrent under EXTRACTION_CONCURRENCY
+# above, which is where the time actually goes — measured, serialising 30
+# extracts costs 0.02s, because a parse is ~4ms and a fetch is not.
+_EXTRACTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rss-extract")
 
 # Tolerance for a publisher's clock running slightly fast.
 MAX_CLOCK_SKEW = timedelta(hours=2)
@@ -196,16 +220,20 @@ async def _extract_full_text(
             # trafilatura.extract is a synchronous, CPU-bound HTML parse.
             # Called directly it blocks the event loop, freezing every other
             # feed fetch and extraction for its duration — and ~84% of a live
-            # run's articles need extraction. Run it in a thread, and keep it
+            # run's articles need extraction. Run it off the loop, and keep it
             # inside the semaphore so the concurrency cap covers the parse and
             # not just the fetch.
-            return await asyncio.to_thread(
+            # `_EXTRACTOR`, not `asyncio.to_thread`: the default pool has
+            # many workers, and trafilatura's lxml parser is shared and not
+            # thread-safe. See the comment on _EXTRACTOR.
+            return await asyncio.get_running_loop().run_in_executor(
+                _EXTRACTOR,
                 lambda: trafilatura.extract(
                     html,
                     include_comments=False,
                     include_tables=False,
                     favor_recall=True,
-                )
+                ),
             )
         except Exception:
             logger.debug("trafilatura extraction raised for %s", url, exc_info=True)
