@@ -41,7 +41,7 @@ pydub==0.25.1
 apscheduler==3.11.0
 
 # Push notifications (APNs) — ES256 JWT provider tokens, HTTP/2 transport
-pyjwt==2.13.0
+pyjwt==2.15.0
 cryptography==50.0.0
 httpx[http2]==0.28.1
 
