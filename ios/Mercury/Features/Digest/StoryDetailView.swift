@@ -1,12 +1,16 @@
 import SafariServices
 import SwiftUI
 
-/// One story, opened.
+/// One story, opened — laid out the way Particle lays out a story.
 ///
-/// The reading half of Mercury, and the thing the digest was built to feed:
-/// an image, the reporting in bullets, why it matters, every publication that
-/// covered it, and — when the hosts discussed it — a way into the audio at
-/// the exact turn where they did.
+/// The reading half of Mercury, and the thing the digest was built to feed.
+/// Particle's story page has a shape worth copying because every part of it
+/// answers a question in the order a reader asks them: what is this (the
+/// picture and the headline), who says so (the outlets, directly under the
+/// headline rather than at the foot of the page), what happened (the points),
+/// why should I care, and where can I read more (big rows that open the
+/// publisher). Mercury adds one thing Particle puts behind a tab: when the
+/// hosts discussed the story, a way into the audio at that exact turn.
 ///
 /// Bullets rather than the paragraph wherever both exist. `points` is written
 /// as its own output for this screen; `summary` is the fallback for a digest
@@ -21,25 +25,29 @@ struct StoryDetailView: View {
 
     @State private var openURL: URL?
 
+    private var outlets: [String] { SourceAttribution.outlets(of: story) }
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: MercurySpace.comfortable) {
-                lead
-                headline
-                if !story.points.isEmpty {
-                    points
-                } else if let summary = story.summary {
-                    Text(summary)
-                        .font(MercuryType.cardBody)
-                        .foregroundStyle(MercuryColor.inkMuted.color)
-                        .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 0) {
+                hero
+
+                VStack(alignment: .leading, spacing: MercurySpace.comfortable) {
+                    eyebrow
+                    headline
+                    if !outlets.isEmpty {
+                        SourceByline(outlets: outlets)
+                            .foregroundStyle(MercuryColor.inkMuted.color)
+                    }
+                    if let onPlay, let index = story.turnIndex { listen(onPlay, index) }
+                    summary
+                    if let why = story.whyItMatters { whyItMatters(why) }
+                    coverage
                 }
-                if let why = story.whyItMatters { whyItMatters(why) }
-                if let onPlay, let index = story.turnIndex { listen(onPlay, index) }
-                sources
+                .mercuryGutter()
+                .padding(.top, MercurySpace.generous)
+                .padding(.bottom, MercurySpace.section)
             }
-            .mercuryGutter()
-            .padding(.vertical, MercurySpace.comfortable)
         }
         .background(MercuryColor.surface.color.ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
@@ -52,120 +60,249 @@ struct StoryDetailView: View {
         }
     }
 
-    /// The lead image, or the accent band that stands in for one.
+    // MARK: - What is this
+
+    /// The lead image, edge to edge, or the sunrise where one would be.
     ///
-    /// Same treatment as the card, which is the point: a newsletter-only
-    /// story HAS no picture, and if the card shows a band while the detail
-    /// view shows nothing, opening a story looks like something failed to
-    /// load. A failed fetch gets the band too, for the same reason — a
-    /// publisher refusing a hotlink is ordinary, not an error.
-    private var lead: some View {
-        ZStack {
-            if let url = story.imageURL {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().aspectRatio(contentMode: .fill)
-                    default:
-                        MercuryColor.accent.color.opacity(0.12)
-                    }
-                }
-            } else {
-                MercuryColor.accent.color.opacity(0.12)
+    /// Full bleed, as Particle does it: inset inside the gutter with rounded
+    /// corners it read as a thumbnail that had been enlarged, which is a
+    /// card's treatment rather than a page's.
+    ///
+    /// The fallback is `MercuryMark` — the same mark `DeskFeed` draws for a
+    /// story with no picture — and not a pale accent band. A newsletter-only
+    /// story HAS no picture, because rule 5 discards the body its images live
+    /// in, so this is the ordinary case on a quiet morning; if the row shows
+    /// the sunrise and the page shows a tinted strip, opening the story looks
+    /// like something failed to load. Shorter than a photograph, because a
+    /// mark is not something to look at for long.
+    private var hero: some View {
+        // `Color.clear` decides the size and the artwork is an OVERLAY, so
+        // the picture can never widen the page. A fill-mode image overflows
+        // the size it is offered by design, and as a direct child it widened
+        // its frame and pushed the text with it — the exact defect
+        // `LeadCard`'s comment records.
+        Color.clear
+            .frame(maxWidth: .infinity)
+            .frame(height: story.imageURL == nil ? 140 : 240)
+            .overlay { artwork }
+            .clipped()
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(MercuryColor.hairline.color)
+                    .frame(height: 1)
             }
+            .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private var artwork: some View {
+        if let url = story.imageURL {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable().aspectRatio(contentMode: .fill)
+                default:
+                    MercuryMark()
+                }
+            }
+        } else {
+            MercuryMark()
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: 200)
-        .clipped()
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .accessibilityHidden(true)
+    }
+
+    /// "IN YOUR BRIEFING · 2 HOURS AGO".
+    ///
+    /// The waveform and the accent only when the hosts discussed it, which is
+    /// the one fact about this story that no other app could tell you.
+    @ViewBuilder
+    private var eyebrow: some View {
+        let age = Self.age(of: story)
+        if story.coveredInAudio || age != nil {
+            HStack(spacing: MercurySpace.tight) {
+                if story.coveredInAudio {
+                    Image(systemName: "waveform")
+                        .font(.caption2)
+                    Text("In your briefing")
+                    if age != nil { Text("·") }
+                }
+                if let age { Text(age).foregroundStyle(MercuryColor.inkFaint.color) }
+            }
+            .font(MercuryType.eyebrow)
+            .textCase(.uppercase)
+            .tracking(0.6)
+            .foregroundStyle(MercuryColor.accent.color)
+            .accessibilityElement(children: .combine)
+        }
     }
 
     private var headline: some View {
         Text(story.headline)
-            .font(MercuryType.greeting)
+            .font(MercuryType.headline)
             .foregroundStyle(MercuryColor.ink.color)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityAddTraits(.isHeader)
     }
 
-    private var points: some View {
-        VStack(alignment: .leading, spacing: MercurySpace.snug) {
-            ForEach(Array(story.points.enumerated()), id: \.offset) { _, point in
-                HStack(alignment: .firstTextBaseline, spacing: MercurySpace.snug) {
-                    // Drawn here, not carried in the string — the backend
-                    // strips any marker the model added, so this is the only
-                    // place a bullet exists.
-                    Circle()
-                        .fill(MercuryColor.accent.color)
-                        .frame(width: 4, height: 4)
-                        .accessibilityHidden(true)
-                    Text(point)
-                        .font(MercuryType.cardBody)
-                        .foregroundStyle(MercuryColor.ink.color)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
+    /// Newest article's age, relative. Shared with the desk's eyebrow so a
+    /// story cannot be "2 hours ago" on the row and something else here.
+    static func age(of story: DigestStory) -> String? {
+        guard let published = story.sources.compactMap(\.publishedAt).max()
+        else { return nil }
+        return published.formatted(.relative(presentation: .numeric))
     }
 
-    private func whyItMatters(_ text: String) -> some View {
-        VStack(alignment: .leading, spacing: MercurySpace.tight) {
-            SectionLabel("Why it matters")
-            Text(text)
-                .font(MercuryType.cardBody)
-                .foregroundStyle(MercuryColor.inkMuted.color)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
+    // MARK: - Hear it
 
+    /// A pill, near the top, rather than a text link after the summary.
+    ///
+    /// It sat between "why it matters" and the sources, styled as a line of
+    /// accent text — below the fold on most stories, and indistinguishable
+    /// from a heading. The audio is the one thing on this page Particle
+    /// cannot offer, so it goes where Particle puts its own listen control:
+    /// under the byline, as a control that looks like one.
     private func listen(_ onPlay: @escaping (Int) -> Void, _ index: Int) -> some View {
         Button { onPlay(index) } label: {
             HStack(spacing: MercurySpace.snug) {
-                Image(systemName: "waveform")
+                Image(systemName: "play.fill")
+                    .font(.footnote)
                 Text("Hear the hosts on this")
-                    .font(MercuryType.cardBody)
-                Spacer(minLength: 0)
+                    .font(MercuryType.chapterTab)
             }
-            .foregroundStyle(MercuryColor.accent.color)
+            .foregroundStyle(MercuryColor.inkOnAccent.color)
+            .padding(.horizontal, MercurySpace.comfortable)
             .frame(minHeight: 44)
-            .contentShape(Rectangle())
+            .background(Capsule().fill(MercuryColor.accent.color))
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .accessibilityHint("Plays the briefing from where this story is discussed")
     }
 
+    // MARK: - What happened
+
+    /// The points, on a card of their own.
+    ///
+    /// A raised card rather than bullets loose on the page: on Particle the
+    /// summary is the object, and everything else on the screen is about it.
     @ViewBuilder
-    private var sources: some View {
+    private var summary: some View {
+        if !story.points.isEmpty {
+            VStack(alignment: .leading, spacing: MercurySpace.base) {
+                ForEach(Array(story.points.enumerated()), id: \.offset) { _, point in
+                    HStack(alignment: .firstTextBaseline, spacing: MercurySpace.base) {
+                        // Drawn here, not carried in the string — the backend
+                        // strips any marker the model added, so this is the
+                        // only place a bullet exists.
+                        Circle()
+                            .fill(MercuryColor.accent.color)
+                            .frame(width: 6, height: 6)
+                            // Sits on the first line's x-height rather than
+                            // its baseline, where a bare dot reads as a full
+                            // stop that wandered.
+                            .alignmentGuide(.firstTextBaseline) { d in d.height + 4 }
+                            .accessibilityHidden(true)
+                        Text(point)
+                            .font(MercuryType.reading)
+                            .foregroundStyle(MercuryColor.ink.color)
+                            .lineSpacing(MercuryType.interfaceLineSpacing)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(MercurySpace.comfortable)
+            .mercuryCard(.raised)
+        } else if let paragraph = story.summary {
+            Text(paragraph)
+                .font(MercuryType.reading)
+                .foregroundStyle(MercuryColor.ink.color)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // MARK: - Why care
+
+    /// A pull-out with a rule down its left edge, the way a printed page sets
+    /// an aside. Ink rather than muted ink: this is the sentence the reader
+    /// came for, not a footnote to it.
+    private func whyItMatters(_ text: String) -> some View {
+        VStack(alignment: .leading, spacing: MercurySpace.tight) {
+            SectionLabel("Why it matters")
+            Text(text)
+                .font(MercuryType.reading)
+                .foregroundStyle(MercuryColor.ink.color)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.leading, MercurySpace.base + 3)
+        // An overlay, not an HStack sibling: an overlay is offered the
+        // text's own height, so the rule runs the full length of the aside.
+        // As a sibling under `fixedSize` it was offered no height at all and
+        // drew at a shape's 10pt ideal — a tick, not a rule.
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(MercuryColor.accent.color)
+                .frame(width: 3)
+                .accessibilityHidden(true)
+        }
+        .padding(.vertical, MercurySpace.tight)
+    }
+
+    // MARK: - Read more
+
+    @ViewBuilder
+    private var coverage: some View {
         // Counted from what is actually RENDERED, not from `source_count`.
         // A legacy story with a count of 3 and an empty array said
         // "3 sources" above nothing at all, which implies coverage exists
         // and is being withheld. The section disappears instead.
         if !story.sources.isEmpty {
-            VStack(alignment: .leading, spacing: 0) {
-                SectionLabel(
-                    story.sources.count == 1 ? "1 source" : "\(story.sources.count) sources"
-                )
-                .padding(.bottom, MercurySpace.tight)
+            VStack(alignment: .leading, spacing: MercurySpace.snug) {
+                SectionLabel(Self.coverageLabel(articles: story.sources.count,
+                                                outlets: outlets.count))
+                    .padding(.top, MercurySpace.snug)
 
-                ForEach(story.sources) { source in
-                    SourceRow(source: source) { openURL = $0 }
-                    if source.id != story.sources.last?.id {
-                        Rectangle()
-                            .fill(MercuryColor.hairline.color)
-                            .frame(height: 1)
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(story.sources) { source in
+                        SourceRow(source: source) { openURL = $0 }
+                        if source.id != story.sources.last?.id {
+                            Rectangle()
+                                .fill(MercuryColor.hairline.color)
+                                .frame(height: 1)
+                                .padding(.leading, MercurySpace.comfortable)
+                        }
                     }
                 }
+                .mercuryCard(.raised)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
+
+    /// "Coverage · 3 outlets", or "Coverage · 4 articles from 3 outlets"
+    /// when one outlet wrote more than once.
+    ///
+    /// Both numbers, when they differ, because the rows below are articles
+    /// and the byline above counts outlets: a header naming only one of them
+    /// would disagree with something else on the same screen.
+    static func coverageLabel(articles: Int, outlets: Int) -> String {
+        func count(_ n: Int, _ noun: String) -> String {
+            "\(n) \(noun)\(n == 1 ? "" : "s")"
+        }
+        // Zero outlets with articles present means every source arrived
+        // without a name; the articles are still real, so count those.
+        if outlets == 0 { return "Coverage · \(count(articles, "article"))" }
+        if articles == outlets { return "Coverage · \(count(outlets, "outlet"))" }
+        return "Coverage · \(count(articles, "article")) from \(count(outlets, "outlet"))"
+    }
 }
 
 /// One publication's coverage, tappable when there is something to open.
+///
+/// A big target, which is the part of Particle's page its publishers care
+/// about: the row is the way back to the journalism, so the whole row opens
+/// it, and the outlet's mark leads so the eye finds the publisher first.
 ///
 /// An email source has no URL, structurally — `gmail.py` builds every email
 /// `Item` with none, because a message in your inbox has no public address.
@@ -195,8 +332,12 @@ struct SourceRow: View {
         }
     }
 
+    private var isEmail: Bool { source.sourceType == "email" }
+
     private func content(openable: Bool) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: MercurySpace.snug) {
+        HStack(alignment: .top, spacing: MercurySpace.base) {
+            SourceStack(outlets: [source.sourceName], visible: 1)
+
             VStack(alignment: .leading, spacing: 2) {
                 Text(source.sourceName)
                     .font(MercuryType.eyebrow)
@@ -208,17 +349,23 @@ struct SourceRow: View {
                     .foregroundStyle(MercuryColor.ink.color)
                     .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.leading)
+                if isEmail {
+                    Label("From your inbox", systemImage: "envelope")
+                        .font(MercuryType.caption)
+                        .foregroundStyle(MercuryColor.inkFaint.color)
+                        .labelStyle(.titleAndIcon)
+                }
             }
             Spacer(minLength: MercurySpace.snug)
             if openable {
                 Image(systemName: "arrow.up.right")
-                    .font(.footnote)
+                    .font(.footnote.weight(.semibold))
                     .foregroundStyle(MercuryColor.inkFaint.color)
                     .accessibilityHidden(true)
             }
         }
         .frame(minHeight: 44)
-        .padding(.vertical, MercurySpace.tight)
+        .padding(MercurySpace.comfortable)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
     }

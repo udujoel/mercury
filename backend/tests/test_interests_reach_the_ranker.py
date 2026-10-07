@@ -24,12 +24,47 @@ import logging
 from datetime import UTC, datetime
 
 import numpy as np
+import pytest
 
 from app.core.schemas import BriefingLength, Item, SourceType
 from app.pipeline.generate import _build_world_stories, _topic_centroid
 from app.providers.fake_embeddings import FakeEmbeddingProvider
 
 NOW = datetime(2026, 9, 20, 6, tzinfo=UTC)
+
+
+# The minute after the newest fixture. `_article` stamps items at
+# `NOW.replace(minute=59 - minutes_old)`, so they land between 06:00 and
+# 06:59 and their ages are measured from 07:00 — NOT from NOW, which would
+# put every fixture in the future and clamp all their recency to 1.
+CLOCK = NOW.replace(hour=7)
+
+
+class _FrozenClock(datetime):
+    """`datetime`, except `now()` is CLOCK."""
+
+    @classmethod
+    def now(cls, tz=None):
+        return CLOCK if tz is None else CLOCK.astimezone(tz)
+
+
+@pytest.fixture(autouse=True)
+def _ranker_reads_the_fixtures_clock(monkeypatch):
+    """Pin the clock `score_stories` reads to the one the fixtures use.
+
+    These articles are stamped minutes apart on 2026-09-20, and the ranker
+    measured their age against the REAL clock. That held the week the
+    suite was written and stopped holding as the calendar moved: at
+    seventeen days old, `exp(-hours / 12)` is about 1e-15 for every
+    fixture, the minutes between them vanish into float rounding, two
+    stories score identically and the sort falls back to input order.
+    Four tests failed on an untouched main on 2026-10-07 — including one
+    whose message blamed "the same +0.28 personal boost" for what was
+    really two stories whose ages had become indistinguishable. A test
+    that passes only in the week it was written is the coin-flip test #66
+    fixed, on a slower clock.
+    """
+    monkeypatch.setattr("app.pipeline.ranking.datetime", _FrozenClock)
 
 
 def _article(name: str, title: str, body: str, minutes_old: int) -> Item:

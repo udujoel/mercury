@@ -292,6 +292,53 @@ def test_a_healthy_briefing_is_still_left_alone(cli, monkeypatch):
     assert main(["generate", "--briefing-id", "2026-08-27"]) == 0
 
 
+def test_a_refused_segment_is_reported_not_regenerated(cli, monkeypatch, caplog):
+    """A content refusal is deterministic, so a retry pays a full LLM and
+    TTS bill to be refused again. There was no test of this path at all."""
+    m = _manifest().model_copy(update={"degraded_sources": ["world"]})
+    cli.save("2026-08-27", b"AUDIO", "wav", m)
+
+    def _never(**_kwargs):
+        raise AssertionError("a refusal must not be regenerated")
+
+    monkeypatch.setattr(
+        "app.pipeline.generate.generate_briefing", _never, raising=True
+    )
+    with caplog.at_level("WARNING"):
+        assert main(["generate", "--briefing-id", "2026-08-27"]) == 0
+    assert any("model refused" in r.getMessage() for r in caplog.records)
+
+
+def test_a_calendar_that_failed_alone_is_retried_not_filed_as_a_refusal(
+    cli, monkeypatch, caplog
+):
+    """`calendar` is a source label AND a `Segment` value. Classified
+    against the whole enum, a calendar fetch that failed on its own read as
+    a model refusal: exit 0, logged as "the model refused to write
+    calendar", and never retried — for a briefing missing the user's day.
+    The ladder cannot give up the calendar segment, so this can only ever
+    be the source."""
+    m = _manifest().model_copy(update={"degraded_sources": ["calendar"]})
+    cli.save("2026-08-27", b"AUDIO", "wav", m)
+    generated: list[str] = []
+
+    async def _records(**kwargs):
+        generated.append(kwargs["briefing_id"])
+        monkeypatch.setattr(
+            "app.pipeline.generate._failed_personal_sources", [], raising=True
+        )
+        return _manifest()
+
+    monkeypatch.setattr(
+        "app.pipeline.generate.generate_briefing", _records, raising=True
+    )
+    with caplog.at_level("WARNING"):
+        assert main(["generate", "--briefing-id", "2026-08-27"]) == 0
+
+    assert generated == ["2026-08-27"]
+    assert not any("model refused" in r.getMessage() for r in caplog.records)
+
+
 def test_the_manifest_records_which_sources_were_missing():
     """The signal has to survive the round trip through storage, or the
     existence check on the next run cannot see it."""

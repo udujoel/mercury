@@ -904,7 +904,22 @@ produced, ranked by what they buy per hour spent.
       path from "a stranger sends a well-worded email" to "the hosts read it
       out as urgent" got shorter today.
 
-- [ ] 33. **Decode `degraded_sources` on the phone.** The manifest has
+- [x] 33. **Decode `degraded_sources` on the phone.** DONE. Decoded
+      leniently, carried through SwiftData (an optional column, so the
+      notice survives a relaunch and an offline open, which is where task
+      21 lost word timings), and said on the briefing card as one muted
+      line: "Made without your inbox and your calendar." A label the build
+      does not know still produces a sentence, so a newer backend cannot
+      make a degraded morning quiet again. Found on the way: `calendar` is
+      a source label AND a `Segment`, so `cli._only_refusals` filed a
+      calendar-only failure as a model refusal and never retried it; it now
+      tests against the three segments the refusal ladder can give up.
+      STILL OPEN from task 22: the TTS failover is not recorded anywhere
+      the phone can read. It must NOT go into `degraded_sources` as it
+      stands, because `cli.py` retries anything in that list, and an
+      ElevenLabs quota that is out for the month would then cost three full
+      generations every morning. It wants its own manifest field.
+      Original text: The manifest has
       carried it since the schema was written and `BriefingManifest.swift`
       does not declare it, although its doc comment claims the mirror is
       exact. On 2026-09-01, 09-02 and 09-03 the OAuth refresh token was
@@ -983,6 +998,16 @@ DROP, with reasons, from the review:
       newsletter whose body contained the block delimiter forged a second
       outlet, which mattered because outlet count is both the ranking signal
       and the sentence the hosts are told to say.
+
+- [x] 37. **The story page in Particle's shape.** DONE. Outlet marks and
+      named outlets on every desk row, the lead card and the outlet
+      section; the story page reordered to Particle's anatomy (picture,
+      headline, who says so, listen, the points on a card, why it matters,
+      coverage rows that open the publisher). Headlines moved out of the
+      hosts' serif into a bold SF `headline` token, which ADR-012's own
+      rule asked for. See docs/LOG.md 2026-10-07. NOT DONE and the next
+      Particle step worth taking: summary styles (ELI5, the 5Ws), which is
+      Phase 4 week 17 and needs a backend prompt, not a view.
 
 ## Phase 4 — Depth (weeks 16 to 19)
 

@@ -145,6 +145,10 @@ struct HomeView: View {
                         // briefing changed, so arriving silently would be
                         // the same as not rebuilding.
                         isFresh: appState.hasUnseenRebuild,
+                        // Task 33. Read off the manifest ON SCREEN, so a
+                        // restored or browsed morning says what IT lacked.
+                        notice: BriefingHealth.notice(
+                            for: appState.manifest?.degradedSources ?? []),
                         onPlay: play,
                         // NOT `play`. Retry follows a failed fetch, and
                         // `togglePlayback` would pause or resume whatever

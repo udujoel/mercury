@@ -1340,6 +1340,65 @@ stopped of their own accord and 09-22 ran clean three times before the
 abort. When a run fails, read the signature before assuming it is the same
 problem as last time.
 
+## 2026-10-07 - the story page in Particle's shape, and a morning that says what it lacks
+
+Three things landed together, and two of them were found rather than planned.
+
+**Particle's story anatomy.** The desk already had Particle's feed shape
+(thumbnail rows and one promoted lead). What it lacked was Particle's
+signature: the publishers, shown prominently, on every story. The eyebrow
+said "4 ARTICLES", which counted cluster members rather than outlets and
+asked to be trusted. It is now a row of overlapping outlet marks plus
+"REUTERS +3", and the story page follows Particle's order: picture, headline,
+who says so (directly under the headline), a listen pill, the points on a
+card of their own, why it matters as a ruled aside, and coverage rows that
+open the publisher with the whole row as the target.
+
+Particle's own help pages and design write-ups were blocked by the egress
+proxy from this session, so the design rests on what search results
+confirmed (bullet summaries, sources showcased directly under the summary
+with big tap targets, a listen control) rather than on screenshots. Worth
+checking against the real app before anyone treats it as a copy.
+
+**Monograms, not logos, on purpose.** Favicons would mean a hotlinked fetch
+per outlet per row from sites that refuse hotlinks often enough that
+`LeadCard` already needs a fallback, and ADR-012 says the edition has one
+colour. Forty outlets bringing forty brand reds would make the desk a
+sticker sheet. The marks are ink on paper.
+
+**The headlines were in the hosts' typeface.** `LeadCard` and the story page
+both set headlines in `MercuryType.greeting`, the serif that ADR-012 reserves
+for what a host says, and `DesignTokenTests` could not see it because it
+checks tokens, not which token a call site borrows. A new `headline` token is
+bold SF, which is both the rule and what Particle does. The lesson is the
+same shape as the census: a test of the vocabulary does not test its use.
+
+**Task 33 found a backend bug on the way.** Writing the phone's sentence for
+`degraded_sources` meant mapping every label, and `calendar` turned out to be
+both a SOURCE label from ingestion and a `Segment` value. `cli._only_refusals`
+tested membership in the whole `Segment` enum, on a docstring that said the
+two vocabularies never overlap. So a calendar fetch that failed on its own
+was filed as a model refusal: exit 0, a log line blaming the model, and no
+retry, for a briefing missing the user's day. It now tests against
+`REFUSABLE_SEGMENTS`, the three segments the ladder can actually give up.
+It needed the calendar to fail without Gmail, which a shared OAuth token
+makes rare, and that is why nothing noticed.
+
+**Four tests on main were a slow clock bomb.** `test_interests_reach_the_ranker`
+pinned its fixtures to 2026-09-20 and let `score_stories` read the real
+clock. Seventeen days later `exp(-hours / 12)` is about 1e-15 for every
+fixture, the minutes between them round away, the scores tie and the sort
+falls back to input order. Freezing the clock at the fixtures' `NOW` did not
+fix it, which is the part worth remembering: `_article` stamps items at
+`NOW.replace(minute=59 - age)`, AFTER `NOW`, so every age clamped to zero and
+the stories tied for the opposite reason. The clock has to sit after the
+newest fixture (07:00). A frozen clock is only correct if it is frozen at a
+time the fixtures agree with.
+
+**Not compiled here.** The session had no Swift toolchain. The iOS changes
+were written against the existing patterns and read adversarially, and the
+`ios` CI job on the PR is the first build they get.
+
 ## Standing facts worth not rediscovering
 
 - **The Worker has no CI deploy.** Merging is not shipping. A route on `main`
