@@ -15,26 +15,36 @@ import Foundation
 /// for an inbox segment that is not coming. Not an error, not red.
 enum BriefingHealth {
 
-    /// Every label the backend writes, as the thing the listener lost.
+    /// Every label `degraded_sources` can carry, as the thing the listener
+    /// lost.
     ///
-    /// Two vocabularies land in one list: SOURCE labels from ingestion and
-    /// SEGMENT names the refusal ladder gave up. Both are said the same way,
-    /// because from the listener's side "Gmail would not answer" and "the
-    /// model would not write about your inbox" cost the same thing. So
-    /// `email` and `inbox` are one phrase, and saying it twice would be
-    /// wrong rather than thorough.
+    /// Two vocabularies land in one list, both named in the backend's
+    /// `schemas.py`: `INGESTION_SOURCE_LABELS` and `REFUSABLE_SEGMENTS`.
+    /// They are said the same way, because from the listener's side "Gmail
+    /// would not answer" and "the model would not write about your inbox"
+    /// cost the same thing — so `email` and `inbox` are one phrase, and
+    /// saying it twice would be wrong rather than thorough.
     ///
-    /// Ordered as the briefing is — inbox, day, news — so the sentence reads
-    /// in the order the missing segments would have played.
+    /// `news` and `weather` are NOT written today, and that is a backend
+    /// decision rather than an oversight here: ingestion records only the
+    /// personal sources, on the grounds that a dead feed costs a segment
+    /// rule 7 already covers (see `_ingest_concurrently`). A morning whose
+    /// every feed failed therefore shows no notice. The rows are kept so
+    /// that the day the backend does record them, the phone says so in
+    /// words rather than as "one other source".
+    ///
+    /// Ordered as `Segment` is — weather, calendar, inbox, world,
+    /// follow-ups — so the sentence lists what is missing in the order it
+    /// would have played.
     static let phrases: [(labels: Set<String>, phrase: String)] = [
-        (["email", "inbox"], "your inbox"),
-        (["calendar"], "your calendar"),
-        (["follow_ups"], "your follow-ups"),
-        (["news", "world"], "the news"),
         (["weather"], "the weather"),
+        (["calendar"], "your calendar"),
+        (["email", "inbox"], "your inbox"),
+        (["news", "world"], "the news"),
+        (["follow_ups"], "your follow-ups"),
     ]
 
-    /// "Made without your inbox and your calendar.", or nil on a healthy
+    /// "Made without your calendar and your inbox.", or nil on a healthy
     /// morning.
     ///
     /// A label this build does not know still produces a sentence. A newer
@@ -47,13 +57,21 @@ enum BriefingHealth {
 
         let named = phrases.filter { !$0.labels.isDisjoint(with: labels) }.map(\.phrase)
         let known = phrases.reduce(into: Set<String>()) { $0.formUnion($1.labels) }
-        let unknown = !labels.isSubset(of: known)
+        // Counted, not flagged: two unknown labels are two things missing,
+        // and "one other source" for both would understate the morning in
+        // exactly the direction this notice exists to stop.
+        let unknown = labels.subtracting(known).count
 
         guard !named.isEmpty else {
             return "Made without part of what you usually get."
         }
-        let list = named + (unknown ? ["one other source"] : [])
-        return "Made without \(sentenceList(list))."
+        let others: [String]
+        switch unknown {
+        case 0: others = []
+        case 1: others = ["one other source"]
+        default: others = ["\(unknown) other sources"]
+        }
+        return "Made without \(sentenceList(named + others))."
     }
 
     /// "a", "a and b", "a, b and c".

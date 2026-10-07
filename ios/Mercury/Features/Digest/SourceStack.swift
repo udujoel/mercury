@@ -19,13 +19,22 @@ import SwiftUI
 enum SourceAttribution {
 
     /// Words that never earn a letter. "The New York Times" is NY, not TN.
-    private static let skipped: Set<String> = ["the", "a", "an", "of", "and", "&"]
-
-    /// One to three letters standing in for an outlet's logo.
     ///
-    /// An acronym keeps its letters ("BBC", "NPR", "CNBC" as "CNB"), because
-    /// that is how those outlets write their own names and a single "B"
-    /// would be no one. Otherwise the initials of the first two significant
+    /// No "&": the name is split on everything that is not a letter or a
+    /// digit BEFORE this list is consulted, so a punctuation entry here
+    /// could never match.
+    private static let skipped: Set<String> = ["the", "a", "an", "of", "and"]
+
+    /// The longest acronym kept whole. Four, because CNBC and TLDR are four
+    /// letters and "CNB" or "TLD" would be a different outlet — the reason
+    /// to keep acronyms at all. The mark's text scales down to fit.
+    static let acronymLimit = 4
+
+    /// One to four letters standing in for an outlet's logo.
+    ///
+    /// An acronym keeps its letters ("BBC", "NPR", "CNBC"), because that is
+    /// how those outlets write their own names and a single "B" would be
+    /// no one. Otherwise the initials of the first two significant
     /// words, so "Financial Times" is FT and "The Verge" is V. Never empty:
     /// a name made only of punctuation still gets a mark, so the row never
     /// draws a blank disc that reads as a failed image.
@@ -38,10 +47,10 @@ enum SourceAttribution {
         guard let first = words.first else { return "•" }
 
         // At least one capital, or "1440" — a newsletter named for a
-        // number — would be read as an acronym and drawn as "144".
+        // number — would be read as an acronym and drawn as digits.
         if first.count >= 2, first.contains(where: \.isUppercase),
            first.allSatisfy({ $0.isUppercase || $0.isNumber }) {
-            return String(first.prefix(3))
+            return String(first.prefix(acronymLimit))
         }
 
         let initials = words.prefix(2).compactMap(\.first).map { String($0) }
@@ -115,7 +124,9 @@ struct SourceStack: View {
     private func mark(_ name: String) -> some View {
         Text(SourceAttribution.monogram(for: name))
             .font(.system(size: diameter * 0.4, weight: .bold, design: .rounded))
-            .minimumScaleFactor(0.6)
+            // Four bold letters in a 20pt mark need about 0.68; the floor
+            // sits below that so CNBC fits at every Dynamic Type size.
+            .minimumScaleFactor(0.5)
             .lineLimit(1)
             .foregroundStyle(onDarkGround
                              // Paper ink in BOTH appearances: the mark is
@@ -146,50 +157,32 @@ struct SourceStack: View {
     }
 }
 
-/// The stack and its words, as one line.
+/// The stack and its words, as one line under a headline:
+/// "Reuters, The Verge and 2 more".
+///
+/// Only the byline form lives here. The compact eyebrow form ("REUTERS +3")
+/// is drawn by `DeskEyebrow`, which threads the waveform and the age between
+/// the marks and the words; a second compact view here was used by nothing
+/// but its own preview and would have drifted from the one on screen.
 struct SourceByline: View {
     let outlets: [String]
-    var style: Style = .byline
     var onDarkGround: Bool = false
-
-    enum Style {
-        /// "Reuters +3", as an uppercase eyebrow on a desk row.
-        case compact
-        /// "Reuters, The Verge and 2 more", at caption size under a headline.
-        case byline
-    }
 
     var body: some View {
         if !outlets.isEmpty {
             HStack(spacing: MercurySpace.snug) {
                 SourceStack(outlets: outlets, onDarkGround: onDarkGround)
-                label
+                Text(SourceAttribution.byline(outlets))
+                    .font(MercuryType.caption)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-        }
-    }
-
-    @ViewBuilder
-    private var label: some View {
-        switch style {
-        case .compact:
-            Text(SourceAttribution.compact(outlets))
-                .font(MercuryType.eyebrow)
-                .textCase(.uppercase)
-                .tracking(0.6)
-                .lineLimit(1)
-        case .byline:
-            Text(SourceAttribution.byline(outlets))
-                .font(MercuryType.caption)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
 
 #Preview("Source stacks") {
     VStack(alignment: .leading, spacing: 20) {
-        SourceByline(outlets: ["Reuters"], style: .compact)
-        SourceByline(outlets: ["the BBC", "Financial Times", "The Verge", "NPR"],
-                     style: .compact)
+        SourceByline(outlets: ["Reuters"])
         SourceByline(outlets: ["the BBC", "Financial Times", "The Verge", "NPR"])
         SourceByline(outlets: ["CNBC", "Al Jazeera"], onDarkGround: true)
             .padding()

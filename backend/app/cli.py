@@ -46,7 +46,7 @@ from zoneinfo import ZoneInfo
 
 from app.core.config import apply_to_environment, get_settings
 from app.core.providers import build_embedding_provider
-from app.core.schemas import BriefingLength, Segment
+from app.core.schemas import REFUSABLE_SEGMENTS, BriefingLength
 
 # How many times a briefing may be generated in a day while it keeps
 # shipping degraded, counting the first one. Three: the original plus two
@@ -501,23 +501,6 @@ def _prune(retention_days: int, today_id: str, *, dry_run: bool) -> int:
     return 0
 
 
-# The segments the refusal ladder in `script_chain.generate_script` can give
-# up, and nothing else. NOT every `Segment`.
-#
-# This compared against the whole enum, on the stated assumption that source
-# labels and segment names never overlap. They already did: `calendar` is
-# both a source `_ingest_concurrently` records and `Segment.CALENDAR`. So a
-# calendar fetch that failed on its own — an API 5xx, a scope revoked for
-# Calendar but not Gmail — was filed as a model refusal, logged as one,
-# exited 0 and was never retried, for a briefing missing the user's day.
-# The ladder's own docstring says calendar, weather and the greeting are
-# never given up (it raises instead), so the set it CAN record is the set
-# to test against.
-REFUSABLE_SEGMENTS = frozenset(
-    {Segment.WORLD.value, Segment.INBOX.value, Segment.FOLLOW_UPS.value}
-)
-
-
 def _only_refusals(degraded: list[str]) -> bool:
     """Is every entry a SEGMENT the model refused, rather than a SOURCE that
     failed?
@@ -525,10 +508,13 @@ def _only_refusals(degraded: list[str]) -> bool:
     `_ingest_concurrently` records source labels — email, calendar, weather,
     news. The refusal ladder records segment names — world, inbox,
     follow_ups. Tested against `REFUSABLE_SEGMENTS`, the ladder's actual
-    vocabulary, because the full `Segment` enum shares `calendar` with the
-    sources.
+    vocabulary, NOT the whole `Segment` enum: that shares `calendar` with
+    the sources, so a calendar fetch that failed on its own was filed as a
+    model refusal and never retried. Both sets live in `schemas.py`, beside
+    each other, and a test keeps them disjoint.
     """
-    return bool(degraded) and all(name in REFUSABLE_SEGMENTS for name in degraded)
+    refusable = {segment.value for segment in REFUSABLE_SEGMENTS}
+    return bool(degraded) and all(name in refusable for name in degraded)
 
 
 async def _generate(

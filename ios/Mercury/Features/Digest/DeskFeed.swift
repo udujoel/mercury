@@ -242,7 +242,15 @@ struct DeskEyebrow: View {
     let story: DigestStory
     var onDarkGround: Bool = false
 
-    private var outlets: [String] { SourceAttribution.outlets(of: story) }
+    /// Worked out once per view rather than on every read: `body` and
+    /// `line` both need it, and a desk renders a dozen of these.
+    private let outlets: [String]
+
+    init(story: DigestStory, onDarkGround: Bool = false) {
+        self.story = story
+        self.onDarkGround = onDarkGround
+        self.outlets = SourceAttribution.outlets(of: story)
+    }
 
     var body: some View {
         HStack(spacing: MercurySpace.snug) {

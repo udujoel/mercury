@@ -37,6 +37,7 @@ from zoneinfo import ZoneInfo
 from app.core.config import get_settings
 from app.core.providers import EmbeddingProvider, LLMProvider, TTSProvider
 from app.core.schemas import (
+    INGESTION_SOURCE_LABELS,
     LENGTH_BUDGETS,
     BriefingLength,
     BriefingManifest,
@@ -622,7 +623,7 @@ async def _ingest_concurrently(
             return await fetch_articles(fixture=rss_fixture, feeds=feeds)
         return await fetch_articles(fixture=rss_fixture)
 
-    labels = ("email", "calendar", "weather", "news")
+    labels = INGESTION_SOURCE_LABELS
     defaults: tuple[Any, Any, Any, Any] = ([], [], None, [])
     results = await asyncio.gather(
         _emails(), _events(), _weather(), _articles(), return_exceptions=True

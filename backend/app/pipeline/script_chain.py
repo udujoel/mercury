@@ -38,6 +38,7 @@ from typing import Any
 from app.core.providers import ContentBlocked, LLMProvider
 from app.core.schemas import (
     LENGTH_BUDGETS,
+    REFUSABLE_SEGMENTS,
     BriefingLength,
     CalendarEvent,
     Item,
@@ -1559,6 +1560,19 @@ async def generate_script(
         whether to regenerate. A briefing that silently lost its news and
         reported `degraded_sources=[]` would be filed as healthy.
         """
+        # Before the `degraded is None` return, so the check runs on every
+        # path the tests exercise and not only when a list was passed in.
+        # `cli._only_refusals` decides retry-or-report from this vocabulary;
+        # a segment recorded here but missing from `REFUSABLE_SEGMENTS`
+        # would be read as a failed SOURCE and regenerated three times, to
+        # be refused three times.
+        unknown = [s for s in segments if s not in REFUSABLE_SEGMENTS]
+        if unknown:
+            raise ValueError(
+                f"the ladder gave up {unknown}, which REFUSABLE_SEGMENTS in "
+                "app/core/schemas.py does not list — add them there, or "
+                "cli.py will retry a deterministic refusal"
+            )
         if degraded is None:
             return
         for segment in segments:

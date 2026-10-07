@@ -24,10 +24,20 @@ final class SourceStackTests: XCTestCase {
         XCTAssertEqual(SourceAttribution.monogram(for: "Morning Brew Daily"), "MB")
     }
 
-    func testAnAcronymKeepsItsLettersUpToThree() {
+    func testAnAcronymKeepsItsLetters() {
+        // Review of #68: capped at three, CNBC drew as "CNB" and TLDR as
+        // "TLD" — different outlets, which defeats keeping acronyms at all.
         XCTAssertEqual(SourceAttribution.monogram(for: "NPR"), "NPR")
-        XCTAssertEqual(SourceAttribution.monogram(for: "CNBC"), "CNB")
-        XCTAssertEqual(SourceAttribution.monogram(for: "TLDR AI"), "TLD")
+        XCTAssertEqual(SourceAttribution.monogram(for: "CNBC"), "CNBC")
+        XCTAssertEqual(SourceAttribution.monogram(for: "TLDR AI"), "TLDR")
+    }
+
+    func testAnOverlongAcronymIsCut() {
+        XCTAssertEqual(SourceAttribution.monogram(for: "NASDAQ"), "NASD")
+    }
+
+    func testAnAmpersandNameStillGetsInitials() {
+        XCTAssertEqual(SourceAttribution.monogram(for: "Marketplace & Co"), "MC")
     }
 
     func testANumberIsNotAnAcronym() {
@@ -108,24 +118,33 @@ final class SourceStackTests: XCTestCase {
 
     // MARK: - The coverage header
 
+    private func sources(_ names: String...) -> [DigestSource] {
+        names.enumerated().map { DigestSource(sourceName: $1, title: "t\($0)") }
+    }
+
     func testCoverageCountsOutletsWhenEachWroteOnce() {
-        XCTAssertEqual(StoryDetailView.coverageLabel(articles: 1, outlets: 1),
+        XCTAssertEqual(StoryDetailView.coverageLabel(for: sources("Reuters")),
                        "Coverage · 1 outlet")
-        XCTAssertEqual(StoryDetailView.coverageLabel(articles: 3, outlets: 3),
+        XCTAssertEqual(StoryDetailView.coverageLabel(for: sources("Reuters", "NPR", "CNBC")),
                        "Coverage · 3 outlets")
     }
 
     func testCoverageSaysBothNumbersWhenTheyDiffer() {
         // The rows are articles and the byline counts outlets; a header
         // naming only one would contradict something else on the screen.
-        XCTAssertEqual(StoryDetailView.coverageLabel(articles: 4, outlets: 3),
-                       "Coverage · 4 articles from 3 outlets")
-        XCTAssertEqual(StoryDetailView.coverageLabel(articles: 2, outlets: 1),
+        XCTAssertEqual(
+            StoryDetailView.coverageLabel(for: sources("TLDR", "TLDR", "Reuters", "NPR")),
+            "Coverage · 4 articles from 3 outlets")
+        XCTAssertEqual(StoryDetailView.coverageLabel(for: sources("TLDR", "TLDR")),
                        "Coverage · 2 articles from 1 outlet")
     }
 
-    func testCoverageWithNoNamedOutletStillCountsTheArticles() {
-        XCTAssertEqual(StoryDetailView.coverageLabel(articles: 2, outlets: 0),
+    func testANamelessSourceIsNotCreditedToANamedOutlet() {
+        // Review of #68: counted separately, this read "2 articles from 1
+        // outlet", as if Reuters had written the nameless one too.
+        XCTAssertEqual(StoryDetailView.coverageLabel(for: sources("Reuters", "")),
+                       "Coverage · 2 articles")
+        XCTAssertEqual(StoryDetailView.coverageLabel(for: sources("", "")),
                        "Coverage · 2 articles")
     }
 }

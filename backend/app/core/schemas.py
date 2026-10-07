@@ -162,6 +162,26 @@ class Segment(str, Enum):
     SIGN_OFF = "sign_off"
 
 
+# The two vocabularies that share `BriefingManifest.degraded_sources`.
+#
+# Named here, together, because they were once kept apart only by a docstring
+# claiming they never overlap — and they did: `calendar` is both an ingestion
+# source and `Segment.CALENDAR`, so `cli._only_refusals` filed a calendar
+# fetch that failed on its own as a model refusal and never retried it.
+# `test_cli_generate` asserts the two sets stay disjoint; the ladder in
+# `script_chain.generate_script` refuses to record a segment outside its set.
+#
+# What ingestion records when a source fails (`generate._ingest_concurrently`).
+INGESTION_SOURCE_LABELS: tuple[str, ...] = ("email", "calendar", "weather", "news")
+
+# What the refusal ladder can give up when the model declines to write a
+# segment. Calendar, weather and the greeting are never given up — the ladder
+# raises instead — so they are not here.
+REFUSABLE_SEGMENTS: frozenset[Segment] = frozenset(
+    {Segment.WORLD, Segment.INBOX, Segment.FOLLOW_UPS}
+)
+
+
 SEGMENT_LABELS: dict[Segment, str] = {
     Segment.COLD_OPEN: "Good morning",
     Segment.WEATHER: "Weather",

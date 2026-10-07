@@ -20,7 +20,7 @@ final class BriefingHealthTests: XCTestCase {
 
     func testTheExpiredTokenMorning() {
         XCTAssertEqual(BriefingHealth.notice(for: ["email", "calendar"]),
-                       "Made without your inbox and your calendar.")
+                       "Made without your calendar and your inbox.")
     }
 
     func testASourceAndTheSegmentItFeedsAreSaidOnce() {
@@ -33,8 +33,11 @@ final class BriefingHealthTests: XCTestCase {
     }
 
     func testTheOrderIsTheBriefingsNotTheLists() {
+        // The briefing plays calendar, then inbox, then the world segment.
+        // Review of #68: the first cut listed inbox first, and its own test
+        // asserted that wrong order under this name.
         XCTAssertEqual(BriefingHealth.notice(for: ["world", "calendar", "email"]),
-                       "Made without your inbox, your calendar and the news.")
+                       "Made without your calendar, your inbox and the news.")
     }
 
     func testTheRefusalLaddersSegmentsAreNamed() {
@@ -49,6 +52,13 @@ final class BriefingHealthTests: XCTestCase {
                        "Made without part of what you usually get.")
         XCTAssertEqual(BriefingHealth.notice(for: ["calendar", "slack"]),
                        "Made without your calendar and one other source.")
+    }
+
+    func testTwoUnknownLabelsAreTwoThingsMissing() {
+        // Review of #68: a flag rather than a count said "one other source"
+        // for any number of them.
+        XCTAssertEqual(BriefingHealth.notice(for: ["calendar", "slack", "reddit"]),
+                       "Made without your calendar and 2 other sources.")
     }
 
     func testCaseDoesNotHideALabel() {

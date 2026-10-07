@@ -908,7 +908,7 @@ produced, ranked by what they buy per hour spent.
       leniently, carried through SwiftData (an optional column, so the
       notice survives a relaunch and an offline open, which is where task
       21 lost word timings), and said on the briefing card as one muted
-      line: "Made without your inbox and your calendar." A label the build
+      line: "Made without your calendar and your inbox." A label the build
       does not know still produces a sentence, so a newer backend cannot
       make a degraded morning quiet again. Found on the way: `calendar` is
       a source label AND a `Segment`, so `cli._only_refusals` filed a

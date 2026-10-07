@@ -339,6 +339,22 @@ def test_a_calendar_that_failed_alone_is_retried_not_filed_as_a_refusal(
     assert not any("model refused" in r.getMessage() for r in caplog.records)
 
 
+def test_a_source_label_is_never_also_a_refusable_segment():
+    """The two vocabularies in `degraded_sources` must not overlap.
+
+    They did, through `calendar`, while a docstring said they could not.
+    Both sets now live side by side in `schemas.py`; this is what stops a
+    new source or a new ladder rung re-creating the collision."""
+    from app.core.schemas import INGESTION_SOURCE_LABELS, REFUSABLE_SEGMENTS
+
+    refusable = {segment.value for segment in REFUSABLE_SEGMENTS}
+    assert not refusable & set(INGESTION_SOURCE_LABELS), (
+        "a label that is both a source and a refusable segment cannot be "
+        "classified, and cli.py will either retry a refusal or never retry "
+        "a failure"
+    )
+
+
 def test_the_manifest_records_which_sources_were_missing():
     """The signal has to survive the round trip through storage, or the
     existence check on the next run cannot see it."""

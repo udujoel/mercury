@@ -25,7 +25,15 @@ struct StoryDetailView: View {
 
     @State private var openURL: URL?
 
-    private var outlets: [String] { SourceAttribution.outlets(of: story) }
+    /// Distinct outlets, worked out once. A computed property rebuilt the
+    /// list on every read, and `body` reads it more than once.
+    private let outlets: [String]
+
+    init(story: DigestStory, onPlay: ((Int) -> Void)?) {
+        self.story = story
+        self.onPlay = onPlay
+        self.outlets = SourceAttribution.outlets(of: story)
+    }
 
     var body: some View {
         ScrollView {
@@ -259,8 +267,7 @@ struct StoryDetailView: View {
         // and is being withheld. The section disappears instead.
         if !story.sources.isEmpty {
             VStack(alignment: .leading, spacing: MercurySpace.snug) {
-                SectionLabel(Self.coverageLabel(articles: story.sources.count,
-                                                outlets: outlets.count))
+                SectionLabel(Self.coverageLabel(for: story.sources))
                     .padding(.top, MercurySpace.snug)
 
                 VStack(alignment: .leading, spacing: 0) {
@@ -286,15 +293,27 @@ struct StoryDetailView: View {
     /// Both numbers, when they differ, because the rows below are articles
     /// and the byline above counts outlets: a header naming only one of them
     /// would disagree with something else on the same screen.
-    static func coverageLabel(articles: Int, outlets: Int) -> String {
+    ///
+    /// Taken from the SOURCES rather than from two counts, because the two
+    /// counts did not measure the same set. Review of #68: an article with
+    /// no outlet name counted as an article and not as an outlet, so one
+    /// Reuters piece beside one nameless source read "2 articles from 1
+    /// outlet" — crediting Reuters with an article it did not write. When
+    /// any source is nameless, the outlet count cannot be stated honestly,
+    /// so only the articles are.
+    static func coverageLabel(for sources: [DigestSource]) -> String {
         func count(_ n: Int, _ noun: String) -> String {
             "\(n) \(noun)\(n == 1 ? "" : "s")"
         }
-        // Zero outlets with articles present means every source arrived
-        // without a name; the articles are still real, so count those.
-        if outlets == 0 { return "Coverage · \(count(articles, "article"))" }
-        if articles == outlets { return "Coverage · \(count(outlets, "outlet"))" }
-        return "Coverage · \(count(articles, "article")) from \(count(outlets, "outlet"))"
+        let names = sources.map(\.sourceName)
+        if names.contains(where: \.isEmpty) {
+            return "Coverage · \(count(sources.count, "article"))"
+        }
+        let outlets = Set(names).count
+        if outlets == sources.count {
+            return "Coverage · \(count(outlets, "outlet"))"
+        }
+        return "Coverage · \(count(sources.count, "article")) from \(count(outlets, "outlet"))"
     }
 }
 
