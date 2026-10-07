@@ -1395,6 +1395,13 @@ the stories tied for the opposite reason. The clock has to sit after the
 newest fixture (07:00). A frozen clock is only correct if it is frozen at a
 time the fixtures agree with.
 
+**Backend CI was red for everyone, not for this PR.** `pip-audit` reported
+fourteen new advisories in `pyjwt 2.13.0` on 2026-10-07, so every backend run
+failed before a test executed. It goes to 2.15.0 here, because two of the
+fourteen are fixed only there. Worth remembering: `pip-audit` gates the whole
+job, so a pin that was clean yesterday can turn an unrelated PR red today,
+and the failure reads as this PR's until you see that no test ran.
+
 **Not compiled here.** The session had no Swift toolchain. The iOS changes
 were written against the existing patterns and read adversarially, and the
 `ios` CI job on the PR is the first build they get.
