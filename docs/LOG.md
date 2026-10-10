@@ -1514,13 +1514,13 @@ same bare way, and collision policy belongs to the caller: cron skips an
 existing id and the CLI picks a free one. `generate_briefing` stores what
 it is told.
 
-**Two local failures that are not this change.**
-`test_generate_e2e.py::test_generate_briefing_end_to_end_produces_audio_and_valid_manifest`
-fails on this Mac because Homebrew's ffmpeg 9.0.2 cannot decode the
-pipeline's m4a for pydub (`CouldntDecodeError`, ffmpeg exit 255). It fails
-identically on the base branch. `test_net_guard.py::test_public_url_allowed`
-fails under the Claude Code Bash sandbox for the same no-DNS reason as in
-the cloud one.
+**Two failures that were the sandbox, not the code.** Inside the Claude
+Code Bash sandbox, `test_generate_e2e.py::test_generate_briefing_end_to_end_produces_audio_and_valid_manifest`
+and `test_net_guard.py::test_public_url_allowed` fail (ffmpeg cannot use a
+temp file, and there is no DNS). The first draft of this entry blamed the
+ffmpeg failure on Homebrew's ffmpeg 9.0.2. That was wrong. Run outside the
+sandbox, the full suite is 1044 passed. Confirm by running unsandboxed
+before diagnosing either of these.
 
 ## Standing facts worth not rediscovering
 
