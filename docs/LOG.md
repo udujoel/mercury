@@ -1477,15 +1477,18 @@ a default that disagrees with the rest of the codebase is the one a future
 caller inherits without reading. That is how this project's five earlier
 date bugs arrived.
 
-**Why the zone helper lives in `generate.py`.** There are now three copies
+**Why the zone helper lives in `generate.py`.** There are now four copies
 of "resolve USER_TIMEZONE, fall back to UTC": `cli._user_now`,
-`cron._user_tz` and `generate._user_tz`. The last was lifted out of
-`_parse_briefing_date` so the id and the greeting cannot drift apart.
+`cron._user_tz`, `api.briefing._today_briefing_id` and `generate._user_tz`.
+`ingestion/calendar.py` makes a fifth lookup with no fallback at all, so a
+bad zone fails the calendar source outright. `generate._user_tz` was lifted
+out of `_parse_briefing_date` so the id and the greeting cannot drift apart.
 Importing `cron`'s copy would point the pipeline at the scheduler, which
-calls it. Collapsing all three into `app/core` is a separate change.
-The first draft of this entry said only the CLI logs a bad zone name. That
-was wrong: `cron._user_tz` logs one too, and the silent copy was this one.
-Review of #70 caught it, and it now logs.
+calls it. Collapsing them into `app/core` is a separate change. The first
+draft of this entry counted three copies and said only the CLI logs a bad
+zone name. Both were wrong: cubic found the API's copy, `cron._user_tz` logs
+too, and the silent copies were this one and the API's. Review of #70 caught
+it, and this one now logs.
 
 **A naive `now` had to be pinned for this to hold.** `astimezone()` reads
 a naive datetime as the HOST's local time, while `ranking._aware` reads it

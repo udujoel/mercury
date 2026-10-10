@@ -17,6 +17,8 @@ modules on disk.
 
 from __future__ import annotations
 
+import os
+import time
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
@@ -296,6 +298,7 @@ async def test_default_briefing_id_is_the_users_local_day_not_utcs(
     assert greeted.strftime("%Y-%m-%d") == local_day
 
 
+@pytest.mark.skipif(not hasattr(time, "tzset"), reason="time.tzset is Unix-only")
 async def test_a_naive_now_is_read_as_utc_like_the_ranker_reads_it(
     storage, monkeypatch
 ):
@@ -307,9 +310,6 @@ async def test_a_naive_now_is_read_as_utc_like_the_ranker_reads_it(
     host zone is pinned here so the test means the same thing on a UTC CI
     runner as on a laptop.
     """
-    import os
-    import time
-
     # By hand rather than monkeypatch: time.tzset() has to run AFTER the
     # restore, and monkeypatch only restores at teardown.
     host_tz = os.environ.get("TZ")
