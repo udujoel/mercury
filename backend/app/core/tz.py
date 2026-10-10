@@ -7,9 +7,10 @@ wrong day, a scheduler filing a briefing under yesterday, a default id
 colliding with yesterday's stored briefing.
 
 Five modules used to resolve USER_TIMEZONE themselves, and they disagreed.
-Two logged a bad zone name, two fell back to UTC silently, and calendar
-ingestion did not fall back at all, so a typo dropped the calendar segment
-while the rest of the briefing quietly dated itself in UTC.
+Three logged a bad zone name (cli, cron, generate), the API fell back to UTC
+silently, and calendar ingestion did not fall back at all, so a typo dropped
+the calendar segment while the rest of the briefing quietly dated itself in
+UTC. The watchdog workflow was a sixth, in shell.
 `tests/test_tz.py` fails if a module constructs a `ZoneInfo` anywhere else.
 """
 

@@ -1,7 +1,7 @@
 """One resolver for the user's timezone, and every caller going through it.
 
-Five places used to resolve USER_TIMEZONE themselves. They disagreed: two
-logged a bad zone name, two fell back to UTC silently, and calendar
+Five places used to resolve USER_TIMEZONE themselves. They disagreed: three
+logged a bad zone name, the API fell back to UTC silently, and calendar
 ingestion did not fall back at all, so one typo failed the calendar source
 while the rest of the briefing quietly dated itself in UTC. Each of this
 project's date bugs came from a layer deciding "today" on its own.
@@ -80,6 +80,10 @@ def test_the_fallback_needs_no_zone_database(monkeypatch, caplog):
             with caplog.at_level("ERROR", logger="app.core.tz"):
                 tz = reloaded.resolve_tz("Europe/Lisbon")
     finally:
+        # Not redundant with the scoped patch. The stubbed reload bound the
+        # stub into the module's own globals via `from zoneinfo import
+        # ZoneInfo`, and restoring `zoneinfo.ZoneInfo` does not unbind it.
+        # Without this, the next test that resolves a zone fails (checked).
         importlib.reload(tz_module)
 
     assert tz.utcoffset(None) == timedelta(0)

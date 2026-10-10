@@ -32,6 +32,7 @@ from app.core.schemas import (
     BriefingManifest,
     UserSettings,
 )
+from app.core.tz import user_tz
 from app.pipeline.generate import generate_briefing
 from app.providers.fake import FakeLLMProvider
 from app.providers.fake_tts import FakeTTSProvider
@@ -51,8 +52,6 @@ def _today_briefing_id() -> str:
     """Today in the USER's timezone — matches how the scheduler names
     briefings, so a manual tap and the cron agree on the same id."""
     from datetime import datetime
-
-    from app.core.tz import user_tz
 
     return datetime.now(user_tz()).strftime("%Y-%m-%d")
 
