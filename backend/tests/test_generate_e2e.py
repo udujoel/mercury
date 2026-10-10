@@ -356,7 +356,7 @@ async def test_an_unknown_zone_falls_back_to_utc_and_says_so(
     """A misspelt USER_TIMEZONE brings back the UTC day, which is the bug
     the rest of this file pins. It has to be loud, as it already is in
     `cron._user_tz` and `cli._user_now`."""
-    with caplog.at_level("ERROR", logger="app.pipeline.generate"):
+    with caplog.at_level("ERROR", logger="app.core.tz"):
         manifest, _ = await _generate_on(
             storage,
             monkeypatch,

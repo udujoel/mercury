@@ -42,11 +42,11 @@ import asyncio
 import logging
 import sys
 from datetime import UTC, datetime
-from zoneinfo import ZoneInfo
 
 from app.core.config import apply_to_environment, get_settings
 from app.core.providers import build_embedding_provider
 from app.core.schemas import REFUSABLE_SEGMENTS, BriefingLength
+from app.core.tz import resolve_tz
 
 # How many times a briefing may be generated in a day while it keeps
 # shipping degraded, counting the first one. Three: the original plus two
@@ -71,12 +71,7 @@ def _user_now(tz_name: str) -> datetime:
     """Now in the USER's timezone. Never UTC — this project has had five
     separate date bugs, and the scheduler, the API and this entrypoint must
     all name the same briefing the same way."""
-    try:
-        tz = ZoneInfo(tz_name)
-    except Exception:
-        log.error("invalid USER_TIMEZONE %r; falling back to UTC", tz_name)
-        tz = ZoneInfo("UTC")
-    return datetime.now(tz)
+    return datetime.now(resolve_tz(tz_name))
 
 
 def _today_briefing_id(tz_name: str) -> str:

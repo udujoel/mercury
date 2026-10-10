@@ -21,8 +21,8 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from app.core.config import get_settings
 from app.core.schemas import CalendarEvent
+from app.core.tz import user_tz
 from app.ingestion.drops import drop_id, log_drop, report_drops
 
 log = logging.getLogger(__name__)
@@ -247,8 +247,9 @@ async def fetch_events(
     fixture=None hits the live Calendar API and raises a clear, actionable
     RuntimeError naming the exact missing credential if it cannot run.
     """
-    settings = get_settings()
-    tz = ZoneInfo(settings.user_timezone)
+    # Through the shared resolver, so a bad zone degrades to UTC with the
+    # rest of the briefing instead of failing this source outright.
+    tz = user_tz()
 
     if fixture is not None:
         calendars, events_by_cal = _load_fixture(fixture)

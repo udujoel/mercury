@@ -1522,6 +1522,43 @@ ffmpeg failure on Homebrew's ffmpeg 9.0.2. That was wrong. Run outside the
 sandbox, the full suite is 1044 passed. Confirm by running unsandboxed
 before diagnosing either of these.
 
+## 2026-10-10 - one resolver for the user's timezone
+
+#70 left four copies of "resolve USER_TIMEZONE, fall back to UTC" plus a
+fifth lookup in calendar ingestion that did not fall back at all. They now
+all go through `app/core/tz.py`: `resolve_tz(name)` and `user_tz()`. The
+wrappers tests patch (`cli._today_briefing_id`, `cli._user_now`,
+`cron._target_briefing_id`, `api.briefing._today_briefing_id`) keep their
+names; only their zone lookup moved. `cron._user_tz` and
+`generate._user_tz` are gone.
+
+**Calendar now degrades instead of failing.** A misspelt zone used to raise
+out of `calendar.fetch_events`, so the calendar segment vanished while the
+id, the greeting and the scheduler all fell back to UTC. Falling back with
+them keeps the segment and keeps its day window on the same day as the rest
+of the briefing, which is CLAUDE.md rule 7. The test asserts the events'
+`tzinfo` is UTC rather than their offset, because Lisbon is UTC+0 all winter
+and an offset check would pass for the wrong reason half the year.
+
+**The fallback is `datetime.UTC`, not `ZoneInfo("UTC")`.** `tzdata` is not
+a dependency, so where there is no system zone database `ZoneInfo("UTC")`
+raises like every other key. As a module-level constant it would have
+crashed the import and taken the app down on exactly the hosts the fallback
+exists for. `test_the_fallback_needs_no_zone_database` reloads the module
+with `ZoneInfo` stubbed to always raise. It failed on the first draft,
+which had `_UTC = ZoneInfo("UTC")`.
+
+**A guard, not a convention.** `test_nothing_outside_the_resolver_constructs_a_zoneinfo`
+walks the AST of `app/` and fails on any `ZoneInfo(...)` call outside
+`app/core/tz.py`. Every copy this replaced started as a reasonable two-line
+lookup, and a reviewer would have waved through the sixth. Using `ZoneInfo`
+as a type annotation is still allowed.
+
+**Each site is proven to route through the resolver** by where its error
+is logged from: before the change, three sites logged under their own
+loggers, the API logged nothing, and calendar raised. Each test checks for
+a record from `app.core.tz`.
+
 ## Standing facts worth not rediscovering
 
 - **The Worker has no CI deploy.** Merging is not shipping. A route on `main`
