@@ -1462,6 +1462,49 @@ separate decision.
 `test_net_guard.py::test_public_url_allowed` resolves `arstechnica.com`, and
 the sandbox's DNS cannot. It failed identically before this change.
 
+## 2026-10-10 - the default briefing id was the one date still read in UTC
+
+`generate_briefing` stamped a missing `briefing_id` from the UTC instant
+while every other date in the run (`_parse_briefing_date`, `cli._user_now`,
+`cron._target_briefing_id`) is the user's local day. At 00:11 in Lisbon that
+names yesterday, so a run would land on yesterday's stored briefing while
+its calendar segment talks about today. That is the same bug as the
+"Friday, August 21st" cold open, one function over.
+
+**Fixed although nothing reaches it.** The CLI, the API and the cron job
+all pass an id, so only tests hit the default. It was fixed anyway because
+a default that disagrees with the rest of the codebase is the one a future
+caller inherits without reading. That is how this project's five earlier
+date bugs arrived.
+
+**Why the zone helper lives in `generate.py`.** There are now three copies
+of "resolve USER_TIMEZONE, fall back to UTC": `cli._user_now`,
+`cron._user_tz` and `generate._user_tz`. The last was lifted out of
+`_parse_briefing_date` so the id and the greeting cannot drift apart.
+Importing `cron`'s copy would point the pipeline at the scheduler, which
+calls it. Collapsing all three into `app/core` is a separate change.
+They also differ on purpose: only the CLI logs a bad zone name.
+
+**A naive `now` had to be pinned for this to hold.** `astimezone()` reads
+a naive datetime as the HOST's local time, while `ranking._aware` reads it
+as UTC. Without normalising, a naive `now` would have named the day from one
+instant and ranked from another, and the day named would differ between a
+Lisbon laptop and a UTC runner. The test pins the process `TZ` to Tokyo so
+the difference shows on any host. A test that relied on the machine's zone
+would pass on CI whether or not the fix was there.
+
+**Test dates chosen to bite.** 2026-03-29 is the night Europe's clocks go
+forward, so Lisbon is already UTC+1 at 23:30Z. Los Angeles is the opposite
+direction, so a fix that always added a day would fail it.
+
+**Two local failures that are not this change.**
+`test_generate_e2e.py::test_generate_briefing_end_to_end_produces_audio_and_valid_manifest`
+fails on this Mac because Homebrew's ffmpeg 9.0.2 cannot decode the
+pipeline's m4a for pydub (`CouldntDecodeError`, ffmpeg exit 255). It fails
+identically on the base branch. `test_net_guard.py::test_public_url_allowed`
+fails under the Claude Code Bash sandbox for the same no-DNS reason as in
+the cloud one.
+
 ## Standing facts worth not rediscovering
 
 - **The Worker has no CI deploy.** Merging is not shipping. A route on `main`

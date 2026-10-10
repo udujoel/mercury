@@ -29,7 +29,7 @@ import asyncio
 import inspect
 import logging
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, tzinfo
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -202,7 +202,18 @@ async def generate_briefing(
     # on the ranking path is one a caller can replace. Not a run-wide clock:
     # ingestion, the digest and stitching still read their own.
     run_started_at = now if now is not None else datetime.now(UTC)
-    briefing_id = briefing_id or run_started_at.strftime("%Y-%m-%d")
+    # A naive `now` means UTC, as it already does to the ranker
+    # (`ranking._aware`). Left naive, `astimezone` below would read it as the
+    # HOST's local time, and the id would name a different day on a laptop
+    # than on a UTC CI runner.
+    if run_started_at.tzinfo is None:
+        run_started_at = run_started_at.replace(tzinfo=UTC)
+    # The id is the user's local day, the same day `_parse_briefing_date`
+    # greets them with. Formatting the UTC instant filed a run at 00:11 in
+    # Lisbon under yesterday's id, on top of yesterday's stored briefing.
+    briefing_id = briefing_id or run_started_at.astimezone(_user_tz()).strftime(
+        "%Y-%m-%d"
+    )
     briefing_date = _parse_briefing_date(briefing_id)
 
     (emails, events, weather, articles), degraded = await _ingest_concurrently(
@@ -1127,20 +1138,28 @@ def _scrub_email_bodies(items: list[Item]) -> None:
         item.body = ""
 
 
+def _user_tz() -> tzinfo:
+    """The USER's timezone, which is where every date in a briefing lives.
+
+    Never UTC by default. Generated at 00:11 in Europe/Lisbon (UTC+1),
+    datetime.now(UTC) still reads as the previous day — so the cold open
+    announced "Friday, August 21st" while the calendar segment, built from
+    real events, talked about the 22nd. The hosts contradicted each other
+    inside one briefing. UTC is only the fallback for a zone name that does
+    not resolve.
+    """
+    try:
+        return ZoneInfo(get_settings().user_timezone)
+    except Exception:
+        return UTC
+
+
 def _parse_briefing_date(briefing_id: str) -> datetime:
     """`briefing_id` is normally a "YYYY-MM-DD" string (see the manifest's
     docstring in app/core/schemas.py), but `generate_script`'s `date`
     parameter is typed as a real `datetime`. Parse it back out; fall back
     to now() for a caller-supplied id that isn't date-shaped."""
-    # The date must be resolved in the USER's timezone, never UTC. Generated
-    # at 00:11 in Europe/Lisbon (UTC+1), datetime.now(UTC) still reads as the
-    # previous day — so the cold open announced "Friday, August 21st" while
-    # the calendar segment, built from real events, talked about the 22nd.
-    # The hosts contradicted each other inside one briefing.
-    try:
-        tz = ZoneInfo(get_settings().user_timezone)
-    except Exception:
-        tz = UTC
+    tz = _user_tz()
     # The DAY, whether or not the id carries a time of day.
     #
     # Ids gained a `-HHMM` suffix so several briefings can share a date

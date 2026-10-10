@@ -223,6 +223,110 @@ async def test_generate_briefing_end_to_end_produces_audio_and_valid_manifest(st
     assert stored_manifest.duration_ms == manifest.duration_ms
 
 
+@pytest.mark.parametrize(
+    ("tz_name", "instant", "local_day"),
+    [
+        # 23:30Z is 00:30 the next morning in Lisbon — and 2026-03-29 is the
+        # night Europe's clocks go forward, so Lisbon is UTC+1 by then.
+        ("Europe/Lisbon", datetime(2026, 3, 29, 23, 30, tzinfo=UTC), "2026-03-30"),
+        # The other direction: 03:30Z is still the previous evening in LA.
+        # A fix that always added a day would pass the Lisbon case alone.
+        (
+            "America/Los_Angeles",
+            datetime(2026, 3, 30, 3, 30, tzinfo=UTC),
+            "2026-03-29",
+        ),
+    ],
+)
+async def test_default_briefing_id_is_the_users_local_day_not_utcs(
+    storage, monkeypatch, tz_name, instant, local_day
+):
+    """With no `briefing_id`, the id is the date where the user is.
+
+    Every production caller passes an id today, so only this default is at
+    stake — but formatting the UTC instant would file a just-after-midnight
+    run under yesterday, colliding with yesterday's stored briefing while
+    the calendar segment talks about today.
+    """
+    from app.core.config import get_settings
+
+    monkeypatch.setenv("USER_TIMEZONE", tz_name)
+    get_settings.cache_clear()
+
+    manifest = await generate_briefing(
+        now=instant,
+        length=BriefingLength.STANDARD,
+        llm=FakeLLMProvider(),
+        tts=FakeTTSProvider(),
+        fetch_events=_fake_fetch_events,
+        fetch_weather=_fake_fetch_weather,
+        score_emails=_fake_score_emails,
+        fetch_articles=_fake_fetch_articles,
+        select_for_briefing=_fake_select_for_briefing,
+        generate_script=_fake_generate_script,
+        storage=storage,
+        gmail_fixture=FIXTURES_DIR / "gmail_messages.json",
+        calendar_fixture=None,
+        weather_fixture=None,
+    )
+
+    assert manifest.briefing_id == local_day
+    stored = storage.load_manifest(local_day)
+    assert stored is not None and stored.briefing_id == local_day
+
+
+async def test_a_naive_now_is_read_as_utc_like_the_ranker_reads_it(
+    storage, monkeypatch
+):
+    """A naive `now` means UTC, the convention `ranking._aware` already uses.
+
+    `datetime.astimezone()` reads a naive value as the HOST's local time,
+    so without this the id and the ranker would work from two different
+    instants, and which day the id named would depend on the machine. The
+    host zone is pinned here so the test means the same thing on a UTC CI
+    runner as on a laptop.
+    """
+    import os
+    import time
+
+    from app.core.config import get_settings
+
+    monkeypatch.setenv("USER_TIMEZONE", "Europe/Lisbon")
+    get_settings.cache_clear()
+    # By hand rather than monkeypatch: time.tzset() has to run AFTER the
+    # restore, and monkeypatch only restores at teardown.
+    host_tz = os.environ.get("TZ")
+    os.environ["TZ"] = "Asia/Tokyo"
+    time.tzset()
+    try:
+        manifest = await generate_briefing(
+            # 23:30 UTC is 00:30 on the 30th in Lisbon. Read as Tokyo time it
+            # would be 14:30Z, still the 29th in Lisbon.
+            now=datetime(2026, 3, 29, 23, 30),
+            length=BriefingLength.STANDARD,
+            llm=FakeLLMProvider(),
+            tts=FakeTTSProvider(),
+            fetch_events=_fake_fetch_events,
+            fetch_weather=_fake_fetch_weather,
+            score_emails=_fake_score_emails,
+            fetch_articles=_fake_fetch_articles,
+            select_for_briefing=_fake_select_for_briefing,
+            generate_script=_fake_generate_script,
+            storage=storage,
+            gmail_fixture=FIXTURES_DIR / "gmail_messages.json",
+            calendar_fixture=None,
+            weather_fixture=None,
+        )
+    finally:
+        if host_tz is None:
+            del os.environ["TZ"]
+        else:
+            os.environ["TZ"] = host_tz
+        time.tzset()
+
+    assert manifest.briefing_id == "2026-03-30"
+
+
 async def test_generate_briefing_drops_raw_email_bodies_before_persisting(storage):
     from app.ingestion.gmail import fetch_emails as real_fetch_emails
 
