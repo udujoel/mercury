@@ -1136,6 +1136,25 @@ describe("settings", () => {
     assert.deepEqual(calls, []);
   });
 
+  test("before 03:00 local the floor does not apply", async () => {
+    // Review of #68. The checkpoints fire at fixed UTC times. In Sao Paulo
+    // (UTC-3) 03:40 UTC is 00:40 local, so every run a checkpoint caused
+    // would be stamped before the floor, and with the floor applied each
+    // checkpoint would dispatch another generation, every morning.
+    const calls = recordFetch();
+    await worker.scheduled(
+      { scheduledTime: GENERATE_CHECKPOINT },
+      {
+        ...envFor({
+          "2026-08-30-0012.manifest.json": PLAYABLE,
+          "2026-08-30-0012.m4a": REAL_AUDIO,
+        }),
+        USER_TIMEZONE: "America/Sao_Paulo",
+      },
+    );
+    assert.deepEqual(calls, []);
+  });
+
   test("an overnight briefing beside a morning one changes nothing", async () => {
     const calls = recordFetch();
     await worker.scheduled(

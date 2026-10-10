@@ -1444,6 +1444,24 @@ regenerates under the 00:12 id, which still does not cover the morning, so
 the next checkpoint would dispatch again. A fresh run for the day is the
 repair that holds.
 
+**Review found the floor taught to one reader of three.** The first cut
+put it only in the Worker. The GitHub backstop (`cli check`, no id) still
+counted an overnight briefing as the morning's, and the Worker's alarm sent
+the watchdog a bare DAY, which `check` read as the literal key
+`<day>.manifest.json` that no timed run writes, so it could never clear,
+even when a morning run landed during its re-checks. That second half
+predates the floor and was already true of every "missing" alarm. `check`
+now treats a bare day, or no id, as "is this morning covered?", resolved
+through `storage.covers_morning`, which mirrors the Worker's floor.
+
+Both sides apply the floor only once it is past 03:00 local. The
+checkpoints are fixed UTC times sized for Lisbon, and in a zone where they
+fire before 03:00 local every run they caused would count as overnight
+the moment it landed, dispatching again forever. And an install with NO
+ElevenLabs key is not a fallback: `tts_provider` defaults to elevenlabs,
+so a Google-only install would have been told every morning that its own
+voice was the backup.
+
 **Deployment, again.** The Worker change does nothing until someone runs
 `wrangler deploy`. Merging is not shipping (see the standing facts below).
 

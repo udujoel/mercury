@@ -452,6 +452,14 @@ def build_tts_provider() -> TTSProvider:
                 "highlighting degrades to whole-line.",
                 exc,
             )
+            # No key at all is not a fallback, it is an install that never
+            # set ElevenLabs up. `tts_provider` DEFAULTS to elevenlabs, so a
+            # Google-only deployment lands here every run, and marking it
+            # would tell that listener every morning that their own voice is
+            # a degradation. A key that is set and still fails is the case
+            # worth saying.
+            if not getattr(get_settings(), "elevenlabs_api_key", "").strip():
+                return _google()
             return _FellBackBeforeTheRun(_google())
     elif choice not in GOOGLE_NAMES:
         # A typo is the case this docstring warns about, so it must not be

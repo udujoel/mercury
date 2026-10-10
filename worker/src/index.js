@@ -318,16 +318,26 @@ export default {
    */
   async scheduled(controller, env) {
     const scheduledAt = new Date(controller.scheduledTime);
-    const day = briefingIdFor(scheduledAt, resolvedTimeZone(env));
+    const timeZone = resolvedTimeZone(env);
+    const day = briefingIdFor(scheduledAt, timeZone);
     // Any playable briefing for the day answers this. The bare
     // `<day>.manifest.json` read that used to answer it stopped existing
     // when runs started naming themselves `<day>-HHMM`, so every checkpoint
     // saw `missing`, dispatched again, and the alarm fired about a morning
     // that was already in the bucket.
     //
-    // `morning: true`: an overnight briefing is playable but is not this
+    // `morning`: an overnight briefing is playable but is not this
     // morning's, so it must not stand the checkpoints down (task 31).
-    const { state, id } = await dayState(env, day, { morning: true });
+    //
+    // Only once it IS morning where the user is. The checkpoints fire at
+    // fixed UTC times sized for Europe/Lisbon; in a zone where they land
+    // before 03:00 local, every run they dispatch would be stamped before
+    // the floor, count as overnight the moment it landed, and the next
+    // checkpoint would dispatch again, every morning. Before the floor,
+    // any playable briefing covers the day, which is how this behaved
+    // before the floor existed.
+    const morning = localHHMM(scheduledAt, timeZone) >= MORNING_FLOOR_HHMM;
+    const { state, id } = await dayState(env, day, { morning });
 
     if (state === "ok") {
       console.log(`briefing ${id}: already in R2, nothing to do`);
@@ -408,6 +418,22 @@ function briefingIdFor(date, timeZone) {
   }).formatToParts(date);
   const at = (type) => parts.find((part) => part.type === type).value;
   return `${at("year")}-${at("month")}-${at("day")}`;
+}
+
+/**
+ * The local time of `date` in `timeZone`, as `HHMM` — the same form as the
+ * suffix the backend puts on an id, so the two compare as strings.
+ * `hourCycle: "h23"` because "24" for midnight would sort after everything.
+ */
+function localHHMM(date, timeZone) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const at = (type) => parts.find((part) => part.type === type).value;
+  return `${at("hour")}${at("minute")}`;
 }
 
 /**
@@ -531,14 +557,16 @@ async function dayState(env, day, { morning = false } = {}) {
   let worst = null;
   let stale = false;
   for (const id of ids) {
-    const state = await briefingState(env, id);
-    const counts = !morning || coversMorning(id);
-    if (state === "ok") {
-      if (counts) return { state: "ok", id };
+    // Judged by name BEFORE spending an R2 get and two heads on it. An
+    // overnight id can only ever make the day `stale`, and `stale` is
+    // dispatched exactly like `missing`, so whether it would play changes
+    // a log word and nothing else.
+    if (morning && !coversMorning(id)) {
       stale = true;
       continue;
     }
-    if (!counts) continue;
+    const state = await briefingState(env, id);
+    if (state === "ok") return { state: "ok", id };
     // Prefer reporting an EMPTY one, since that is the repairable case and
     // names the id to repair.
     if (state === "empty" || worst === null) worst = { state, id };

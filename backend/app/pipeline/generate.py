@@ -198,7 +198,14 @@ async def generate_briefing(
     # a story's recency cannot depend on how long ingestion and clustering
     # took before the ranker happened to read the clock.
     run_started = datetime.now(UTC)
-    briefing_id = briefing_id or run_started.strftime("%Y-%m-%d")
+    # The default id is the USER's day, never UTC's: at 00:30 in Lisbon in
+    # summer the UTC date is still yesterday. Every deployed caller names
+    # the id itself, so this guards the caller that forgets.
+    try:
+        user_tz = ZoneInfo(settings.user_timezone)
+    except Exception:
+        user_tz = UTC
+    briefing_id = briefing_id or run_started.astimezone(user_tz).strftime("%Y-%m-%d")
     briefing_date = _parse_briefing_date(briefing_id)
 
     (emails, events, weather, articles), degraded = await _ingest_concurrently(

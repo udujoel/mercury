@@ -184,3 +184,60 @@ def test_check_defaults_to_today_in_the_users_timezone(storage_at, monkeypatch):
     storage_at.save("2026-08-21", PLAUSIBLE_AUDIO, "wav", _manifest())
 
     assert main(["check"]) == 0
+
+
+# ── a DAY means "is this morning covered?" (task 31) ─────────────────
+
+
+def _at(monkeypatch, hh: int, mm: int) -> None:
+    monkeypatch.setattr(
+        "app.cli._user_now",
+        lambda _tz: datetime(2026, 8, 21, hh, mm, tzinfo=UTC),
+        raising=True,
+    )
+    monkeypatch.setattr(
+        "app.cli._today_briefing_id", lambda _tz: "2026-08-21", raising=True
+    )
+
+
+def test_a_bare_day_finds_a_timed_morning_briefing(storage_at, monkeypatch):
+    """Review of #68. The Worker's alarm names the bare DAY when a morning
+    is missing or stale, and `check` read it as a literal key, which no
+    timed run writes. It reported "no briefing" with one in the bucket, and
+    its re-checks could never see a morning run land."""
+    _at(monkeypatch, 5, 52)
+    storage_at.save("2026-08-21-0441", PLAUSIBLE_AUDIO, "wav",
+                    _manifest("2026-08-21-0441"))
+
+    assert main(["check", "--briefing-id", "2026-08-21"]) == 0
+
+
+def test_an_overnight_briefing_does_not_cover_the_morning(storage_at, monkeypatch):
+    """The scheduled backstop asks with no id. An overnight briefing is
+    playable, but it is not this morning's, and the backstop exists for
+    the morning the Worker's alarm missed."""
+    _at(monkeypatch, 5, 52)
+    storage_at.save("2026-08-21-0012", PLAUSIBLE_AUDIO, "wav",
+                    _manifest("2026-08-21-0012"))
+
+    assert main(["check"]) == 1
+    assert main(["check", "--briefing-id", "2026-08-21"]) == 1
+
+
+def test_before_the_floor_any_briefing_for_the_day_counts(storage_at, monkeypatch):
+    """A checkpoint that fires before 03:00 local could never be satisfied
+    by anything it caused if the floor applied then."""
+    _at(monkeypatch, 2, 30)
+    storage_at.save("2026-08-21-0012", PLAUSIBLE_AUDIO, "wav",
+                    _manifest("2026-08-21-0012"))
+
+    assert main(["check"]) == 0
+
+
+def test_a_full_id_is_still_checked_as_named(storage_at, monkeypatch):
+    """Naming an exact briefing asks about that briefing, floor or not."""
+    _at(monkeypatch, 5, 52)
+    storage_at.save("2026-08-21-0012", PLAUSIBLE_AUDIO, "wav",
+                    _manifest("2026-08-21-0012"))
+
+    assert main(["check", "--briefing-id", "2026-08-21-0012"]) == 0

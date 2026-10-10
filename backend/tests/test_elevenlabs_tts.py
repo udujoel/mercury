@@ -196,6 +196,7 @@ def _settings(**kwargs):
     class _S:
         def __init__(self) -> None:
             self.tts_provider = kwargs.get("tts_provider", "google")
+            self.elevenlabs_api_key = kwargs.get("elevenlabs_api_key", "")
 
     return lambda: _S()
 
@@ -559,10 +560,24 @@ def test_an_unbuildable_elevenlabs_is_reported_as_a_fallback(monkeypatch):
     voice" from "the voice you chose was unavailable"."""
     import app.core.config as config
 
-    monkeypatch.setattr(config, "get_settings", _settings(tts_provider="elevenlabs"))
+    monkeypatch.setattr(config, "get_settings", _settings(
+        tts_provider="elevenlabs", elevenlabs_api_key="sk-set-but-refused"))
     _build_with_stubs(monkeypatch, elevenlabs_raises=True)
 
     assert getattr(build_tts_provider(), "failed_over", False) is True
+
+
+def test_an_install_with_no_elevenlabs_key_is_not_a_fallback(monkeypatch):
+    """Review of #68. `tts_provider` DEFAULTS to elevenlabs, so every
+    Google-only install reaches the unbuildable branch on every run. With
+    no key it never set ElevenLabs up, and telling that listener each
+    morning that their voice is the backup would be false."""
+    import app.core.config as config
+
+    monkeypatch.setattr(config, "get_settings", _settings(tts_provider="elevenlabs"))
+    _build_with_stubs(monkeypatch, elevenlabs_raises=True)
+
+    assert getattr(build_tts_provider(), "failed_over", False) is False
 
 
 def test_a_run_configured_for_google_is_not_a_fallback(monkeypatch):
