@@ -202,7 +202,16 @@ async def generate_briefing(
     # on the ranking path is one a caller can replace. Not a run-wide clock:
     # ingestion, the digest and stitching still read their own.
     run_started_at = now if now is not None else datetime.now(UTC)
-    briefing_id = briefing_id or run_started_at.strftime("%Y-%m-%d")
+    # The default id is the USER's day, never UTC's: at 00:30 in Lisbon in
+    # summer the UTC date is still yesterday. Every deployed caller names
+    # the id itself, so this guards the caller that forgets.
+    try:
+        user_tz = ZoneInfo(settings.user_timezone)
+    except Exception:
+        user_tz = UTC
+    briefing_id = briefing_id or run_started_at.astimezone(user_tz).strftime(
+        "%Y-%m-%d"
+    )
     briefing_date = _parse_briefing_date(briefing_id)
 
     (emails, events, weather, articles), degraded = await _ingest_concurrently(

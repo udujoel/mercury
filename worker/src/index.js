@@ -318,13 +318,26 @@ export default {
    */
   async scheduled(controller, env) {
     const scheduledAt = new Date(controller.scheduledTime);
-    const day = briefingIdFor(scheduledAt, resolvedTimeZone(env));
+    const timeZone = resolvedTimeZone(env);
+    const day = briefingIdFor(scheduledAt, timeZone);
     // Any playable briefing for the day answers this. The bare
     // `<day>.manifest.json` read that used to answer it stopped existing
     // when runs started naming themselves `<day>-HHMM`, so every checkpoint
     // saw `missing`, dispatched again, and the alarm fired about a morning
     // that was already in the bucket.
-    const { state, id } = await dayState(env, day);
+    //
+    // `morning`: an overnight briefing is playable but is not this
+    // morning's, so it must not stand the checkpoints down (task 31).
+    //
+    // Only once it IS morning where the user is. The checkpoints fire at
+    // fixed UTC times sized for Europe/Lisbon; in a zone where they land
+    // before 03:00 local, every run they dispatch would be stamped before
+    // the floor, count as overnight the moment it landed, and the next
+    // checkpoint would dispatch again, every morning. Before the floor,
+    // any playable briefing covers the day, which is how this behaved
+    // before the floor existed.
+    const morning = localHHMM(scheduledAt, timeZone) >= MORNING_FLOOR_HHMM;
+    const { state, id } = await dayState(env, day, { morning });
 
     if (state === "ok") {
       console.log(`briefing ${id}: already in R2, nothing to do`);
@@ -408,6 +421,22 @@ function briefingIdFor(date, timeZone) {
 }
 
 /**
+ * The local time of `date` in `timeZone`, as `HHMM` — the same form as the
+ * suffix the backend puts on an id, so the two compare as strings.
+ * `hourCycle: "h23"` because "24" for midnight would sort after everything.
+ */
+function localHHMM(date, timeZone) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const at = (type) => parts.find((part) => part.type === type).value;
+  return `${at("hour")}${at("minute")}`;
+}
+
+/**
  * The timezone this Worker will actually use — never one that throws.
  *
  * `Intl.DateTimeFormat` raises a RangeError for an unsupported zone, and that
@@ -478,6 +507,32 @@ async function briefingIdsForDay(env, day) {
 }
 
 /**
+ * The local time before which a briefing was made OVERNIGHT, as `HHMM`.
+ *
+ * Ids carry the user's local time (`_user_now` in backend/app/cli.py), so
+ * this compares directly against the suffix. A run stamped before it was
+ * made for the night, not the morning: GitHub's 00:12 cron names its
+ * briefing after the NEW day, and without this every morning checkpoint saw
+ * "this date has a playable briefing" and stood down, the alarm included.
+ * The listener woke to a briefing written before their inbox had its
+ * morning in it. Masked only by GitHub running that cron hours late, and
+ * the 25 October DST change was due to unmask it (ROADMAP task 31).
+ */
+const MORNING_FLOOR_HHMM = "0300";
+
+/**
+ * Was this briefing made for the morning, rather than overnight?
+ *
+ * A legacy day-only id has no time to judge by. It counts: those ids date
+ * from when one run a day was the morning run, and refusing them would
+ * re-generate days that were covered.
+ */
+function coversMorning(id) {
+  if (id.length <= 10) return true;
+  return id.slice(11) >= MORNING_FLOOR_HHMM;
+}
+
+/**
  * The state of a DAY: `ok` if any briefing stored for it is playable.
  *
  * Any, not the newest. A morning is covered the moment one playable
@@ -485,20 +540,39 @@ async function briefingIdsForDay(env, day) {
  * watchdog are actually asking, and answering it with "is the newest one
  * playable" would raise an alarm about a day that already has something to
  * listen to because its most recent run failed.
+ *
+ * `morning: true` is what the scheduled checkpoints ask: only a briefing
+ * made at or after `MORNING_FLOOR_HHMM` covers the morning. A playable one
+ * from before it makes the day `stale`, which is dispatched like `missing`
+ * (a FRESH run for the day, never a forced overwrite of the overnight one).
+ * An overnight briefing that came out empty is not offered for repair
+ * either, because repairing it in place would still leave a briefing
+ * stamped 00:12. `/status` asks without the floor, because "is there
+ * anything to play today" is a different question and its answer is yes.
  */
-async function dayState(env, day) {
+async function dayState(env, day, { morning = false } = {}) {
   const ids = await briefingIdsForDay(env, day);
   if (ids.length === 0) return { state: "missing", id: day };
 
   let worst = null;
+  let stale = false;
   for (const id of ids) {
+    // Judged by name BEFORE spending an R2 get and two heads on it. An
+    // overnight id can only ever make the day `stale`, and `stale` is
+    // dispatched exactly like `missing`, so whether it would play changes
+    // a log word and nothing else.
+    if (morning && !coversMorning(id)) {
+      stale = true;
+      continue;
+    }
     const state = await briefingState(env, id);
     if (state === "ok") return { state: "ok", id };
     // Prefer reporting an EMPTY one, since that is the repairable case and
     // names the id to repair.
     if (state === "empty" || worst === null) worst = { state, id };
   }
-  return worst;
+  if (worst) return worst;
+  return { state: stale ? "stale" : "missing", id: day };
 }
 
 async function briefingState(env, id) {
