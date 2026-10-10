@@ -214,7 +214,7 @@ async def generate_briefing(
     briefing_id = briefing_id or run_started_at.astimezone(_user_tz()).strftime(
         "%Y-%m-%d"
     )
-    briefing_date = _parse_briefing_date(briefing_id)
+    briefing_date = _parse_briefing_date(briefing_id, now=run_started_at)
 
     (emails, events, weather, articles), degraded = await _ingest_concurrently(
         fetch_emails=fetch_emails,
@@ -1146,19 +1146,23 @@ def _user_tz() -> tzinfo:
     announced "Friday, August 21st" while the calendar segment, built from
     real events, talked about the 22nd. The hosts contradicted each other
     inside one briefing. UTC is only the fallback for a zone name that does
-    not resolve.
+    not resolve, and it is logged because it brings that bug straight back.
     """
+    tz_name = get_settings().user_timezone
     try:
-        return ZoneInfo(get_settings().user_timezone)
+        return ZoneInfo(tz_name)
     except Exception:
+        log.error("invalid USER_TIMEZONE %r; dating the briefing in UTC", tz_name)
         return UTC
 
 
-def _parse_briefing_date(briefing_id: str) -> datetime:
+def _parse_briefing_date(briefing_id: str, *, now: datetime) -> datetime:
     """`briefing_id` is normally a "YYYY-MM-DD" string (see the manifest's
     docstring in app/core/schemas.py), but `generate_script`'s `date`
-    parameter is typed as a real `datetime`. Parse it back out; fall back
-    to now() for a caller-supplied id that isn't date-shaped."""
+    parameter is typed as a real `datetime`. Parse it back out; for a
+    caller-supplied id that isn't date-shaped, fall back to `now` (the
+    run's clock, aware) rather than the wall clock, so a replay greets the
+    morning it replays."""
     tz = _user_tz()
     # The DAY, whether or not the id carries a time of day.
     #
@@ -1176,4 +1180,4 @@ def _parse_briefing_date(briefing_id: str) -> datetime:
             briefing_day(briefing_id), "%Y-%m-%d"
         ).replace(tzinfo=tz)
     except ValueError:
-        return datetime.now(tz)
+        return now.astimezone(tz)

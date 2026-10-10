@@ -1483,7 +1483,9 @@ of "resolve USER_TIMEZONE, fall back to UTC": `cli._user_now`,
 `_parse_briefing_date` so the id and the greeting cannot drift apart.
 Importing `cron`'s copy would point the pipeline at the scheduler, which
 calls it. Collapsing all three into `app/core` is a separate change.
-They also differ on purpose: only the CLI logs a bad zone name.
+The first draft of this entry said only the CLI logs a bad zone name. That
+was wrong: `cron._user_tz` logs one too, and the silent copy was this one.
+Review of #70 caught it, and it now logs.
 
 **A naive `now` had to be pinned for this to hold.** `astimezone()` reads
 a naive datetime as the HOST's local time, while `ranking._aware` reads it
@@ -1496,6 +1498,18 @@ would pass on CI whether or not the fix was there.
 **Test dates chosen to bite.** 2026-03-29 is the night Europe's clocks go
 forward, so Lisbon is already UTC+1 at 23:30Z. Los Angeles is the opposite
 direction, so a fix that always added a day would fail it.
+
+**What review of #70 found.** A misspelt USER_TIMEZONE fell back to UTC
+without a word, which quietly reinstates the bug this entry is about. It now
+logs an error. `_parse_briefing_date` also fell back to the wall clock for an
+id that is not a date, so a replay at `now=` greeted whatever day it was
+re-run on. It now takes the run's clock, as a required keyword like
+`_build_world_stories`. Neither was reachable from production. One finding
+was declined: the default id has no `-HHMM` suffix, so two default runs on
+one day share an id. That is deliberate. The scheduler names briefings the
+same bare way, and collision policy belongs to the caller: cron skips an
+existing id and the CLI picks a free one. `generate_briefing` stores what
+it is told.
 
 **Two local failures that are not this change.**
 `test_generate_e2e.py::test_generate_briefing_end_to_end_produces_audio_and_valid_manifest`
