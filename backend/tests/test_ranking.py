@@ -184,3 +184,16 @@ def test_no_clock_falls_back_to_the_wall_clock(monkeypatch):
     implicit = score_stories([story], calendar_events=[])[0].score
     explicit = score_stories([story], calendar_events=[], now=CLOCK)[0].score
     assert implicit == explicit
+
+
+def test_a_naive_clock_is_taken_as_utc():
+    """Item timestamps go through `_aware`; the clock has to as well, or a
+    caller passing a naive `now` gets a TypeError subtracting an aware
+    timestamp from it, and the world segment dies with it."""
+    story = _story("s", [_article(0, "Reuters")])
+
+    naive = score_stories(
+        [story], calendar_events=[], now=CLOCK.replace(tzinfo=None)
+    )[0].score
+    aware = score_stories([story], calendar_events=[], now=CLOCK)[0].score
+    assert naive == aware

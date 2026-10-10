@@ -1409,10 +1409,13 @@ were written against the existing patterns and read adversarially, and the
 ## 2026-10-10 - the ranker is handed its clock instead of reading one
 
 Review of #68 asked for the structural version of its frozen-clock fixture,
-and this is it. `score_stories` takes `now`, `generate_briefing` captures one
-`run_started_at` and hands it down through `_build_world_stories`, and the
-default `briefing_id` is formatted from the same instant, so a run that takes
-four minutes ages every story against one clock.
+and this is it. `score_stories` takes `now`, and `generate_briefing` takes one
+too (None meaning the wall clock), reads it once and hands it down through
+`_build_world_stories`. The benefit is injectability, not run-wide
+consistency: `score_stories` already read the clock once per call, and
+ingestion, the digest and stitching still read their own. The first draft
+of this entry claimed a single clock for the whole run, and review of #69
+caught that it was not true.
 
 **Why `now` is optional in one place and required in the other.**
 `score_stories` keeps `None` as "use the wall clock", because it is a public
@@ -1431,16 +1434,29 @@ One test swaps in a fixed clock to keep the `None` fallback covered. With the
 clock pinned, the `approx` in `test_relevance.py` went back to `==`, and an
 exact comparison there is now the stronger assertion it was meant to be.
 
-Mutation check, by hand: deleting `now=now` inside `_build_world_stories`
-fails the interests tests on the guard's message, and deleting
-`now=run_started_at` from `generate_briefing` fails with a missing required
-argument. Neither survives a test run.
+**The guard only sees `now=None`.** Review of #69 pointed out that a caller
+reading `datetime.now(UTC)` itself and passing it on gets straight past the
+conftest guard, because the ranker is still handed a clock. Checked by
+hand: a fresh `datetime.now(UTC)` in place of `run_started_at` survived the
+whole suite, and one in place of `now=now` was caught only by the four
+ordering tests, and only because their fixtures happen to be old by now.
+On the day they were written it would have passed. So the forwarding tests
+assert IDENTITY with the clock they passed, which an aware datetime from
+anywhere else cannot satisfy. Deleting either argument outright fails
+anyway, as a missing required keyword or on the guard.
 
-**What still reads the real date.** Tests that enter at `generate_briefing`
-rank against `run_started_at`, which is the wall clock by design. None of
-them asserts an ordering today, but one that starts to would have the
-2026-10-07 problem again; at that point `generate_briefing` should accept an
-injected clock rather than the test freezing `datetime`.
+**A naive `now` is taken as UTC.** Item timestamps already went through
+`_aware`; an injectable clock that skipped it raised a TypeError on the
+first subtraction, from inside the world segment.
+
+**What still reads the real date.** Production runs rank against the wall
+clock by design, and so does a fixture run that does not pass `now`. RSS
+ingestion anchors its recency window on the fixture's newest entry
+(`_fixture_snapshot_time`), so an offline run replayed days later filters by
+the snapshot's time and ranks by today's, and every story's recency is then
+~0. That predates this change; `now=` is now the way to fix it for a replay,
+and whether `generate_briefing` should default to the snapshot time is a
+separate decision.
 
 **One test fails in the cloud sandbox and nowhere else.**
 `test_net_guard.py::test_public_url_allowed` resolves `arstechnica.com`, and

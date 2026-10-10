@@ -100,6 +100,10 @@ async def test_the_centroid_reaches_score_stories_from_the_real_path(
     monkeypatch.setattr(gen, "score_stories", _spy)
     await _world(interests=["war in Ukraine"], entities=["Reuters"])
 
+    # The clock it was handed, not one read on the way down. Identity, not
+    # equality: a `datetime.now(UTC)` substituted here would also be an
+    # aware datetime.
+    assert seen["now"] is CLOCK
     assert seen["topic_centroid"] is not None, (
         "generate_briefing computed no centroid, so the 0.20 interest "
         "weight goes on cancelling and the segment stays a recency sort"
@@ -228,6 +232,7 @@ async def test_generate_briefing_itself_forwards_the_interests(
         research_provider=None,
         interests=["war in Ukraine"],
         followed_entities=["Reuters"],
+        now=CLOCK,
     )
 
     assert seen.get("topic_centroid") is not None, (
@@ -235,12 +240,12 @@ async def test_generate_briefing_itself_forwards_the_interests(
         "back to a recency sort and every test above still passes"
     )
     assert seen.get("followed_entities") == {"Reuters"}
-    # The run clock, captured once in `generate_briefing`. Dropping it
-    # already fails this test earlier, inside the ranker, on conftest's
-    # wall-clock guard; stated here as well so the contract sits beside
-    # the other forwarded arguments where a reader looks for it.
-    assert isinstance(seen.get("now"), datetime)
-    assert seen["now"].tzinfo is not None
+    # The clock `generate_briefing` was given reaches the ranker unchanged.
+    # Dropping the argument fails earlier, as a missing required keyword on
+    # `_build_world_stories`; this catches the subtler mutation, a fresh
+    # `datetime.now(UTC)` passed in its place, which the conftest guard
+    # cannot see because the ranker is still handed a clock.
+    assert seen.get("now") is CLOCK
 
 
 async def test_the_scheduled_job_forwards_the_settings(monkeypatch):

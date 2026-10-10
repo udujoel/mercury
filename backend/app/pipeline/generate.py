@@ -130,6 +130,10 @@ async def generate_briefing(
     length: BriefingLength = BriefingLength.STANDARD,
     embeddings: EmbeddingProvider | None = None,
     previous_degraded_attempts: int = 0,
+    # The instant ranking ages stories against. None means the wall clock,
+    # which is what every production caller wants; a test or a replay of a
+    # saved snapshot passes the moment the snapshot represents instead.
+    now: datetime | None = None,
     fetch_emails: Any = _real_fetch_emails,
     fetch_events: Any = _real_fetch_events,
     fetch_weather: Any = _real_fetch_weather,
@@ -194,11 +198,10 @@ async def generate_briefing(
     # that forgets — which is exactly when writing to local disk instead of R2
     # would go unnoticed.
     storage = storage or build_storage()
-    # One clock for the whole run. Ranking ages every story against it, so
-    # a run that takes four minutes does not score its last story against a
-    # later "now" than its first, and the default briefing_id names the same
-    # instant.
-    run_started_at = datetime.now(UTC)
+    # Read once here and handed to the ranker, so the only wall-clock read
+    # on the ranking path is one a caller can replace. Not a run-wide clock:
+    # ingestion, the digest and stitching still read their own.
+    run_started_at = now if now is not None else datetime.now(UTC)
     briefing_id = briefing_id or run_started_at.strftime("%Y-%m-%d")
     briefing_date = _parse_briefing_date(briefing_id)
 

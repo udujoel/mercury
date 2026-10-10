@@ -41,16 +41,18 @@ def score_stories(
     a sender, subject and timestamp.
 
     `now` is the instant recency is measured from. `generate_briefing`
-    captures one at run start and passes it, so every story in a run is
-    aged against the same clock; None falls back to the wall clock for
-    any other caller. Tests always pass it: read from the wall clock, a
-    fixture stamped on a fixed date ages a day for every day the suite
-    goes unrun, and seventeen days on `exp(-hours / 12)` is ~1e-15 for
-    every story, so scores tie and the sort falls back to input order.
-    That failed four tests on an untouched main on 2026-10-07.
+    reads it once and passes it; None falls back to the wall clock for any
+    other caller. A naive value is taken as UTC, the same rule `_aware`
+    applies to item timestamps.
+
+    Tests always pass it. Read from the wall clock, a fixture stamped on a
+    fixed date ages a day for every day the suite goes unrun, and
+    seventeen days on `exp(-hours / 12)` is ~1e-15 for every story, so
+    scores tie and the sort falls back to input order. That failed four
+    tests on an untouched main on 2026-10-07.
     """
     s = get_settings()
-    now = _wall_clock() if now is None else now
+    now = _aware(_wall_clock() if now is None else now)
 
     attendee_names = {
         a.lower()
