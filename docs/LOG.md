@@ -1406,6 +1406,47 @@ and the failure reads as this PR's until you see that no test ran.
 were written against the existing patterns and read adversarially, and the
 `ios` CI job on the PR is the first build they get.
 
+## 2026-10-10 - one clock per run, a voice that says it is the backup, and a morning floor
+
+Three things left open on 2026-10-07, closed on the same branch.
+
+**The ranker takes a clock now.** Review of #68 was right that patching
+`ranking.datetime` from one test file treated the symptom: `score_stories`
+read the wall clock itself, so any test with pinned fixtures was a slow
+clock bomb. It takes `now`, `_build_world_stories` passes it on, and
+`generate_briefing` captures one `run_started` instant. The production
+effect is small but real: every story in a run is aged against the same
+moment, rather than against whenever the ranker happened to run after
+minutes of ingestion and clustering. `test_relevance` also lost its
+`approx`, which existed only because two calls microseconds apart read two
+different clocks.
+
+**The backup voice gets its own field, and the reason is the retry.**
+`narrator_fallback` sits beside `degraded_sources` rather than inside it,
+because `cli.py` regenerates anything listed there, up to three times a
+day. That is right for a credential that comes back at 06:00 and wrong for
+an ElevenLabs quota that is out for the month: three more generations, the
+same fallback voice. `test_a_fallback_voice_is_not_a_reason_to_regenerate`
+pins it. Two quieter cases were also made visible: ElevenLabs failing to
+BUILD used to return the bare Google provider, which read exactly like a run
+configured for Google, and so did a typo in `TTS_PROVIDER`. Both now come
+back wrapped and report `failed_over`. A run genuinely configured for Google
+reports nothing, because the phone must not call someone's own setting a
+degradation.
+
+**The morning floor is the Worker's, as the roadmap said.** Two questions
+had been answered by one check. "Has generation stopped?" belongs to the
+watchdog's age floor (#59). "Does this cover the morning?" belongs to the
+checkpoints, and only they now apply `MORNING_FLOOR_HHMM = "0300"` against
+the id's local time. The part worth remembering is what NOT to do with an
+overnight briefing that came out empty: forcing a repair over it in place
+regenerates under the 00:12 id, which still does not cover the morning, so
+the next checkpoint would dispatch again. A fresh run for the day is the
+repair that holds.
+
+**Deployment, again.** The Worker change does nothing until someone runs
+`wrangler deploy`. Merging is not shipping (see the standing facts below).
+
 ## Standing facts worth not rediscovering
 
 - **The Worker has no CI deploy.** Merging is not shipping. A route on `main`

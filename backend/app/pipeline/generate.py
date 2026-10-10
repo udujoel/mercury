@@ -194,7 +194,11 @@ async def generate_briefing(
     # that forgets — which is exactly when writing to local disk instead of R2
     # would go unnoticed.
     storage = storage or build_storage()
-    briefing_id = briefing_id or datetime.now(UTC).strftime("%Y-%m-%d")
+    # One instant for the whole run. Ranking ages every story against it, so
+    # a story's recency cannot depend on how long ingestion and clustering
+    # took before the ranker happened to read the clock.
+    run_started = datetime.now(UTC)
+    briefing_id = briefing_id or run_started.strftime("%Y-%m-%d")
     briefing_date = _parse_briefing_date(briefing_id)
 
     (emails, events, weather, articles), degraded = await _ingest_concurrently(
@@ -271,6 +275,7 @@ async def generate_briefing(
             length=length,
             interests=interests,
             followed_entities=followed_entities,
+            now=run_started,
         )
 
         # Semantic triage before ordering (ADR-014). Runs on `inbox_emails`
@@ -922,6 +927,7 @@ async def _build_world_stories(
     interests: list[str] | None = None,
     followed_entities: list[str] | None = None,
     judgment_provider: Any = None,
+    now: datetime | None = None,
 ) -> tuple[list[Story], list[Item], list[Story]]:
     """Cluster the day's news and decide what the world segment gets.
 
@@ -997,6 +1003,7 @@ async def _build_world_stories(
         topic_centroid=centroid,
         followed_entities=set(followed_entities or ()),
         judged_personal=judged_personal,
+        now=now,
     )
 
     world = [

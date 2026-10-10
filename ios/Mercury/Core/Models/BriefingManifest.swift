@@ -165,6 +165,11 @@ struct BriefingManifest: Codable, Equatable {
     /// with the OAuth token expired, three briefings with no inbox and no
     /// calendar were presented as ordinary mornings (ROADMAP task 33).
     let degradedSources: [String]
+    /// Read by the backup voice because the configured one was unavailable
+    /// (ROADMAP task 22). Its own field on the backend, not an entry in
+    /// `degradedSources`, because the backend regenerates anything listed
+    /// there and a voice quota does not come back by morning.
+    let narratorFallback: Bool
 
     /// Turns that actually exist in the audio, computed ONCE.
     ///
@@ -191,6 +196,7 @@ struct BriefingManifest: Codable, Equatable {
         case audioUrl = "audio_url"
         case segments, turns, sources
         case degradedSources = "degraded_sources"
+        case narratorFallback = "narrator_fallback"
     }
 
     init(
@@ -201,7 +207,8 @@ struct BriefingManifest: Codable, Equatable {
         segments: [BriefingSegment],
         turns: [Turn],
         sources: [SourceRef],
-        degradedSources: [String] = []
+        degradedSources: [String] = [],
+        narratorFallback: Bool = false
     ) {
         self.briefingId = briefingId
         self.generatedAt = generatedAt
@@ -211,6 +218,7 @@ struct BriefingManifest: Codable, Equatable {
         self.turns = turns
         self.sources = sources
         self.degradedSources = degradedSources
+        self.narratorFallback = narratorFallback
         self.renderedTurns = turns.filter(\.isRendered)
     }
 
@@ -227,7 +235,9 @@ struct BriefingManifest: Codable, Equatable {
             // Lenient, like every field added after the first manifests
             // shipped: absent means healthy, never a decode failure.
             degradedSources: try c.decodeIfPresent(
-                [String].self, forKey: .degradedSources) ?? []
+                [String].self, forKey: .degradedSources) ?? [],
+            narratorFallback: try c.decodeIfPresent(
+                Bool.self, forKey: .narratorFallback) ?? false
         )
     }
 

@@ -355,6 +355,23 @@ def test_a_source_label_is_never_also_a_refusable_segment():
     )
 
 
+def test_a_fallback_voice_is_not_a_reason_to_regenerate(cli, monkeypatch):
+    """Task 22. A voice quota that is out for the month does not come back
+    by 06:00, so a regeneration would only buy the same fallback voice
+    again, three times a day. That is why `narrator_fallback` is its own
+    field rather than an entry in `degraded_sources`, and this pins it."""
+    m = _manifest().model_copy(update={"narrator_fallback": True})
+    cli.save("2026-08-27", b"AUDIO", "wav", m)
+
+    def _never(**_kwargs):
+        raise AssertionError("a fallback voice must not trigger a regeneration")
+
+    monkeypatch.setattr(
+        "app.pipeline.generate.generate_briefing", _never, raising=True
+    )
+    assert main(["generate", "--briefing-id", "2026-08-27"]) == 0
+
+
 def test_the_manifest_records_which_sources_were_missing():
     """The signal has to survive the round trip through storage, or the
     existence check on the next run cannot see it."""

@@ -1086,6 +1086,86 @@ describe("settings", () => {
     assert.deepEqual(calls, []);
   });
 
+  // ── task 31: an overnight briefing does not cover the morning ──
+
+  test("an overnight briefing does not stand the morning checkpoints down", async () => {
+    // GitHub's 00:12 cron names its briefing after the NEW day. Counted as
+    // covering the morning, every checkpoint stood down and the listener
+    // woke to a briefing written before their inbox had a morning in it.
+    const calls = recordFetch();
+    await worker.scheduled(
+      { scheduledTime: GENERATE_CHECKPOINT },
+      envFor({
+        "2026-08-30-0012.manifest.json": PLAYABLE,
+        "2026-08-30-0012.m4a": REAL_AUDIO,
+      }),
+    );
+
+    assert.deepEqual(calls.map(workflowOf), ["briefing.yml"]);
+    assert.equal(calls[0].body.inputs.briefing_day, "2026-08-30");
+    assert.equal(
+      calls[0].body.inputs.force,
+      undefined,
+      "a FRESH run for the day, never a forced overwrite of the overnight one",
+    );
+  });
+
+  test("the alarm fires when only an overnight briefing exists", async () => {
+    const calls = recordFetch();
+    await worker.scheduled(
+      { scheduledTime: ALARM_CHECKPOINT },
+      envFor({
+        "2026-08-30-0012.manifest.json": PLAYABLE,
+        "2026-08-30-0012.m4a": REAL_AUDIO,
+      }),
+    );
+
+    assert.deepEqual(calls.map(workflowOf), ["briefing-watchdog.yml"]);
+    assert.equal(calls[0].body.inputs.briefing_id, "2026-08-30");
+  });
+
+  test("a briefing stamped exactly at the floor covers the morning", async () => {
+    const calls = recordFetch();
+    await worker.scheduled(
+      { scheduledTime: GENERATE_CHECKPOINT },
+      envFor({
+        "2026-08-30-0300.manifest.json": PLAYABLE,
+        "2026-08-30-0300.m4a": REAL_AUDIO,
+      }),
+    );
+    assert.deepEqual(calls, []);
+  });
+
+  test("an overnight briefing beside a morning one changes nothing", async () => {
+    const calls = recordFetch();
+    await worker.scheduled(
+      { scheduledTime: ALARM_CHECKPOINT },
+      envFor({
+        "2026-08-30-0012.manifest.json": PLAYABLE,
+        "2026-08-30-0012.m4a": REAL_AUDIO,
+        "2026-08-30-0441.manifest.json": PLAYABLE,
+        "2026-08-30-0441.m4a": REAL_AUDIO,
+      }),
+    );
+    assert.deepEqual(calls, []);
+  });
+
+  test("an EMPTY overnight briefing is not forced over", async () => {
+    // Repairing it in place would regenerate under the 00:12 id, which
+    // still does not cover the morning, so the next checkpoint would
+    // dispatch again. A fresh run for the day is the repair that holds.
+    const calls = recordFetch();
+    await worker.scheduled(
+      { scheduledTime: GENERATE_CHECKPOINT },
+      envFor({
+        "2026-08-30-0012.manifest.json": { json: { turns: [], duration_ms: 0 } },
+      }),
+    );
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].body.inputs.force, undefined);
+    assert.equal(calls[0].body.inputs.briefing_day, "2026-08-30");
+  });
+
   test("a day with several briefings lists and serves all of them", async () => {
     // The whole six-hourly change lives or dies here. The backend writes
     // `YYYY-MM-DD-HHMM`, and `validBriefingId` accepted only the day form —
@@ -1349,6 +1429,16 @@ describe("briefingState", () => {
     }));
     assert.equal(body.briefing_id, TODAY);
     assert.notEqual(body.state, "missing");
+  });
+
+  test("/status still calls an overnight briefing playable", async () => {
+    // A different question from the checkpoints'. "Is there anything to
+    // play today?" is yes; only "does this cover the morning?" is no.
+    const body = await status(forToday({
+      "2026-08-30-0012.manifest.json": PLAYABLE,
+      "2026-08-30-0012.m4a": REAL_AUDIO,
+    }));
+    assert.equal(body.state, "ok");
   });
 
   test("a zero-byte audio object is not playable", async () => {

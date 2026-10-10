@@ -294,6 +294,19 @@ class BriefingManifest(BaseModel):
     # thousand, so that is not a rounding error.
     degraded_attempts: int = 0
 
+    # True when this briefing is read by the FALLBACK voice rather than the
+    # one configured: ElevenLabs out of quota, refusing a datacenter IP, or
+    # unbuildable, with Google reading instead (ROADMAP task 22).
+    #
+    # Its own field, deliberately NOT an entry in `degraded_sources`.
+    # `cli.py` regenerates any briefing whose `degraded_sources` is non-empty,
+    # up to three times a day, because what lands there is usually a
+    # credential that comes back. A voice quota that is out for the month
+    # does not come back by 06:00, so recording it there would buy three
+    # full generations every morning to produce the same fallback voice. The
+    # phone reads both and says both; only one of them is worth a retry.
+    narrator_fallback: bool = False
+
 
 # ──────────────────────────────────────────────────────────────
 # The digest artifact
