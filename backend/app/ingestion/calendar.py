@@ -16,10 +16,9 @@ import json
 import logging
 import re
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, tzinfo
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from app.core.schemas import CalendarEvent
 from app.core.tz import user_tz
@@ -78,7 +77,7 @@ def needs_prep(description: str, attendee_count: int) -> bool:
 # ──────────────────────────────────────────────────────────────
 
 
-def parse_event_time(time_obj: dict[str, str], tz: ZoneInfo) -> tuple[datetime, bool]:
+def parse_event_time(time_obj: dict[str, str], tz: tzinfo) -> tuple[datetime, bool]:
     """Returns (datetime in the user's timezone, is_all_day)."""
     if "date" in time_obj:
         d = date.fromisoformat(time_obj["date"])
@@ -109,7 +108,7 @@ def user_declined(raw_attendees: list[dict[str, Any]]) -> bool:
 
 def event_to_calendar_event(
     raw: dict[str, Any],
-    tz: ZoneInfo,
+    tz: tzinfo,
     *,
     calendar_id: str | None = None,
     owned: bool = True,

@@ -1559,6 +1559,23 @@ is logged from: before the change, three sites logged under their own
 loggers, the API logged nothing, and calendar raised. Each test checks for
 a record from `app.core.tz`.
 
+**What review of #71 found.** The watchdog workflow was a sixth resolver
+that the AST guard could not see. It ran `TZ="$USER_TIMEZONE" date`, and
+glibc reads a misspelt zone as UTC without a word. It now asks `app.core.tz`
+in a one-line `python -c`. The fallback's log goes to stderr, so `$(...)`
+still captures a clean hour. The guard now also catches aliased imports
+and `dateutil`'s `gettz`, and it takes an explicit `ALLOWED` list with a
+reason for each entry. A zone that is not the user's (an event's own
+`timeZone`) belongs there, not in `resolve_tz`, whose fallback would blame
+USER_TIMEZONE.
+
+Two suggestions were declined. One was to log a bad zone only once per
+process: the API runs for days, so that would log once and then fall silent
+while every date stayed wrong, which is the silence this change exists to
+remove. The other was to validate the zone once in `Settings`: raising at
+load breaks rule 7, and coercing to "UTC" throws away the misspelt value,
+which is the one thing the person fixing it needs to see.
+
 ## Standing facts worth not rediscovering
 
 - **The Worker has no CI deploy.** Merging is not shipping. A route on `main`

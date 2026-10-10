@@ -135,7 +135,10 @@ jobs:
           # every one of them was silently inert. If you add a cron here,
           # add a case to `test_watchdog_schedule.py` in the same change.
           if [ "$EVENT_NAME" = "schedule" ] && [ -z "$BRIEFING_ID" ]; then
-            local_hour=$(TZ="${USER_TIMEZONE:-UTC}" date +%-H)
+            # Through app.core.tz like every other date in the app, not
+            # `TZ="$USER_TIMEZONE" date`: glibc reads a misspelt zone as UTC
+            # without a word, while the resolver falls back AND logs it.
+            local_hour=$(python -c 'from datetime import datetime; from app.core.tz import user_tz; print(datetime.now(user_tz()).hour)')
             if [ "$local_hour" -lt 3 ] || [ "$local_hour" -ge 12 ]; then
               echo "::notice::Backstop fired at ${local_hour}:00 local, outside" \
                    "the 03:00-12:00 window it guards. GitHub's scheduler ran it" \
