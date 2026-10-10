@@ -194,7 +194,12 @@ async def generate_briefing(
     # that forgets — which is exactly when writing to local disk instead of R2
     # would go unnoticed.
     storage = storage or build_storage()
-    briefing_id = briefing_id or datetime.now(UTC).strftime("%Y-%m-%d")
+    # One clock for the whole run. Ranking ages every story against it, so
+    # a run that takes four minutes does not score its last story against a
+    # later "now" than its first, and the default briefing_id names the same
+    # instant.
+    run_started_at = datetime.now(UTC)
+    briefing_id = briefing_id or run_started_at.strftime("%Y-%m-%d")
     briefing_date = _parse_briefing_date(briefing_id)
 
     (emails, events, weather, articles), degraded = await _ingest_concurrently(
@@ -271,6 +276,7 @@ async def generate_briefing(
             length=length,
             interests=interests,
             followed_entities=followed_entities,
+            now=run_started_at,
         )
 
         # Semantic triage before ordering (ADR-014). Runs on `inbox_emails`
@@ -919,6 +925,7 @@ async def _build_world_stories(
     events: list[Any],
     embeddings: EmbeddingProvider | None,
     length: BriefingLength,
+    now: datetime,
     interests: list[str] | None = None,
     followed_entities: list[str] | None = None,
     judgment_provider: Any = None,
@@ -957,6 +964,11 @@ async def _build_world_stories(
     appear twice however many newsletters covered it. Absorbed is computed
     after the cap, so a newsletter whose story missed the cut is still read
     out as email rather than vanishing from the briefing entirely.
+
+    `now` is required rather than defaulted: it is the clock ranking ages
+    every story against, and the one caller that should supply it from
+    the wall clock is `generate_briefing`, once per run. A default here
+    would let a test inherit the real date without saying so.
     """
     clusterable = emails + articles
     if not clusterable:
@@ -997,6 +1009,7 @@ async def _build_world_stories(
         topic_centroid=centroid,
         followed_entities=set(followed_entities or ()),
         judged_personal=judged_personal,
+        now=now,
     )
 
     world = [

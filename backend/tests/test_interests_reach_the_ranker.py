@@ -24,7 +24,6 @@ import logging
 from datetime import UTC, datetime
 
 import numpy as np
-import pytest
 
 from app.core.schemas import BriefingLength, Item, SourceType
 from app.pipeline.generate import _build_world_stories, _topic_centroid
@@ -33,38 +32,19 @@ from app.providers.fake_embeddings import FakeEmbeddingProvider
 NOW = datetime(2026, 9, 20, 6, tzinfo=UTC)
 
 
-# The minute after the newest fixture. `_article` stamps items at
+# The clock every ranking in this file is measured from: the minute after
+# the newest fixture. `_article` stamps items at
 # `NOW.replace(minute=59 - minutes_old)`, so they land between 06:00 and
 # 06:59 and their ages are measured from 07:00 — NOT from NOW, which would
 # put every fixture in the future and clamp all their recency to 1.
+#
+# Passed explicitly as `now=CLOCK`. These tests once let the ranker read
+# the real clock, which held the week they were written: seventeen days
+# later `exp(-hours / 12)` was about 1e-15 for every fixture, the minutes
+# between them vanished into float rounding, and four tests failed on an
+# untouched main on 2026-10-07, one with a message blaming "the same +0.28
+# personal boost" for two stories whose ages had become indistinguishable.
 CLOCK = NOW.replace(hour=7)
-
-
-class _FrozenClock(datetime):
-    """`datetime`, except `now()` is CLOCK."""
-
-    @classmethod
-    def now(cls, tz=None):
-        return CLOCK if tz is None else CLOCK.astimezone(tz)
-
-
-@pytest.fixture(autouse=True)
-def _ranker_reads_the_fixtures_clock(monkeypatch):
-    """Pin the clock `score_stories` reads to the one the fixtures use.
-
-    These articles are stamped minutes apart on 2026-09-20, and the ranker
-    measured their age against the REAL clock. That held the week the
-    suite was written and stopped holding as the calendar moved: at
-    seventeen days old, `exp(-hours / 12)` is about 1e-15 for every
-    fixture, the minutes between them vanish into float rounding, two
-    stories score identically and the sort falls back to input order.
-    Four tests failed on an untouched main on 2026-10-07 — including one
-    whose message blamed "the same +0.28 personal boost" for what was
-    really two stories whose ages had become indistinguishable. A test
-    that passes only in the week it was written is the coin-flip test #66
-    fixed, on a slower clock.
-    """
-    monkeypatch.setattr("app.pipeline.ranking.datetime", _FrozenClock)
 
 
 def _article(name: str, title: str, body: str, minutes_old: int) -> Item:
@@ -93,6 +73,7 @@ async def _world(interests=None, entities=None):
     world, _, _ = await _build_world_stories(
         emails=[], articles=[DARK_MODE, STRIKE], events=[],
         embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
+        now=CLOCK,
         interests=interests, followed_entities=entities,
     )
     return [story.canonical.source_name for story in world]
@@ -157,7 +138,9 @@ async def test_no_interests_leaves_the_ranking_exactly_as_it_was():
 
     assert await _world() == await _world(interests=[])
     # And the ranker really does fall back to its constant.
-    assert score_stories([], calendar_events=[], topic_centroid=None) == []
+    assert score_stories(
+        [], calendar_events=[], topic_centroid=None, now=CLOCK
+    ) == []
 
 
 async def test_an_empty_setting_says_so_every_morning(caplog):
@@ -252,6 +235,12 @@ async def test_generate_briefing_itself_forwards_the_interests(
         "back to a recency sort and every test above still passes"
     )
     assert seen.get("followed_entities") == {"Reuters"}
+    # The run clock, captured once in `generate_briefing`. Dropping it
+    # already fails this test earlier, inside the ranker, on conftest's
+    # wall-clock guard; stated here as well so the contract sits beside
+    # the other forwarded arguments where a reader looks for it.
+    assert isinstance(seen.get("now"), datetime)
+    assert seen["now"].tzinfo is not None
 
 
 async def test_the_scheduled_job_forwards_the_settings(monkeypatch):
@@ -324,6 +313,7 @@ async def test_an_unembeddable_item_does_not_lead_the_world_segment():
     world, _, _ = await _build_world_stories(
         emails=[], articles=[DARK_MODE, STRIKE, JUNK], events=[],
         embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
+        now=CLOCK,
         interests=["war in Ukraine", "Russian missile strikes"],
     )
     leaders = [s.canonical.source_name for s in world]
@@ -349,6 +339,7 @@ async def test_a_degenerate_interest_topic_does_not_nan_every_score():
     world, _, _ = await _build_world_stories(
         emails=[], articles=[DARK_MODE, STRIKE], events=[],
         embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
+        now=CLOCK,
         interests=["war in Ukraine", "!!!"],
     )
     assert all(np.isfinite(s.score) for s in world)
@@ -393,6 +384,7 @@ async def test_following_a_short_name_does_not_match_inside_words():
     world, _, _ = await _build_world_stories(
         emails=[], articles=[DARK_MODE, STRIKE], events=[],
         embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
+        now=CLOCK,
         interests=["war in Ukraine"], followed_entities=["X"],
     )
     assert [s.canonical.source_name for s in world][0] == "reuters"
@@ -402,6 +394,7 @@ async def test_an_all_whitespace_entity_does_not_match_everything():
     world, _, _ = await _build_world_stories(
         emails=[], articles=[DARK_MODE, STRIKE], events=[],
         embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
+        now=CLOCK,
         followed_entities=[" "],
     )
     assert len({s.score for s in world}) > 1, (
@@ -416,6 +409,7 @@ async def test_following_a_publication_by_name_works():
     world, _, _ = await _build_world_stories(
         emails=[], articles=[DARK_MODE, STRIKE], events=[],
         embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
+        now=CLOCK,
         followed_entities=["reuters"],
     )
     assert [s.canonical.source_name for s in world][0] == "reuters"
@@ -425,6 +419,7 @@ async def test_a_trailing_space_does_not_stop_a_match():
     world, _, _ = await _build_world_stories(
         emails=[], articles=[DARK_MODE, STRIKE], events=[],
         embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
+        now=CLOCK,
         followed_entities=["Reuters "],
     )
     assert [s.canonical.source_name for s in world][0] == "reuters"
@@ -454,7 +449,8 @@ async def test_the_interest_term_points_the_right_way():
         world, _, _ = await _build_world_stories(
             emails=[], articles=[old_dark_mode, fresh_strike], events=[],
             embeddings=FakeEmbeddingProvider(),
-            length=BriefingLength.STANDARD, interests=interests,
+            length=BriefingLength.STANDARD,
+            now=CLOCK, interests=interests,
         )
         return [s.canonical.source_name for s in world]
 
@@ -486,6 +482,7 @@ async def test_an_entity_does_not_match_inside_a_longer_word():
     world, _, _ = await _build_world_stories(
         emails=[], articles=[about_metadata, STRIKE], events=[],
         embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
+        now=CLOCK,
         followed_entities=["Meta"],
     )
     assert [s.canonical.source_name for s in world][0] == "reuters", (
@@ -511,6 +508,7 @@ async def test_a_one_letter_entity_does_not_boost_ordinary_prose():
     baseline, _, _ = await _build_world_stories(
         emails=[], articles=[aged_dark_mode, STRIKE], events=[],
         embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
+        now=CLOCK,
     )
     assert [s.canonical.source_name for s in baseline][0] == "reuters", (
         "precondition: without any entity, recency puts the strike first"
@@ -519,6 +517,7 @@ async def test_a_one_letter_entity_does_not_boost_ordinary_prose():
     world, _, _ = await _build_world_stories(
         emails=[], articles=[aged_dark_mode, STRIKE], events=[],
         embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
+        now=CLOCK,
         followed_entities=["I"],
     )
     assert "I" in aged_dark_mode.body, "precondition: a standalone I"

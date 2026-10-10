@@ -15,6 +15,10 @@ from app.core.schemas import CalendarEvent, Item, SourceType, Story
 from app.pipeline.ranking import score_stories
 
 DATE = datetime(2026, 8, 21, 6, 0, tzinfo=UTC)
+# Every fixture is stamped at DATE, so recency is the same for all of them
+# at any clock. Passed explicitly anyway: the ranker must not read the wall
+# clock inside a test (`tests/conftest.py`).
+CLOCK = DATE.replace(hour=7)
 
 
 def _article(n: int, source_name: str) -> Item:
@@ -45,7 +49,7 @@ def test_one_publication_covering_itself_is_not_a_popularity_signal():
     repeat = _story("repeat", verge)
 
     scored = {s.cluster_id: s.score for s in score_stories(
-        [solo, repeat], calendar_events=[]
+        [solo, repeat], calendar_events=[], now=CLOCK
     )}
     assert scored["repeat"] == scored["solo"]
 
@@ -59,7 +63,7 @@ def test_three_publications_still_outrank_one():
     ])
 
     scored = {s.cluster_id: s.score for s in score_stories(
-        [solo, spread], calendar_events=[]
+        [solo, spread], calendar_events=[], now=CLOCK
     )}
     assert scored["spread"] > scored["solo"]
 
@@ -92,9 +96,9 @@ def test_an_attendee_from_later_in_the_window_still_lifts_a_story():
     # so holding the returned list and reading .score afterwards compares one
     # object with itself.
     with_window = score_stories(
-        [story], calendar_events=[_event("thu", "Sam Chen")]
+        [story], calendar_events=[_event("thu", "Sam Chen")], now=CLOCK
     )[0].score
-    without = score_stories([story], calendar_events=[])[0].score
+    without = score_stories([story], calendar_events=[], now=CLOCK)[0].score
     assert with_window > without
 
 
@@ -110,9 +114,11 @@ def test_a_wider_window_does_not_cost_a_today_story_its_score():
     today_only = _event("today", "Priya Raman")
     later = _event("thu", "Sam Chen")
 
-    narrow = score_stories([today_story], calendar_events=[today_only])[0].score
+    narrow = score_stories(
+        [today_story], calendar_events=[today_only], now=CLOCK
+    )[0].score
     wide = score_stories(
-        [today_story], calendar_events=[today_only, later]
+        [today_story], calendar_events=[today_only, later], now=CLOCK
     )[0].score
     assert narrow == wide
 
@@ -141,5 +147,40 @@ async def test_ranking_is_handed_the_whole_fetch_window_not_just_today(monkeypat
         events=[_event("today", "Priya Raman"), _event("thu", "Sam Chen")],
         embeddings=None,
         length=BriefingLength.STANDARD,
+        now=CLOCK,
     )
     assert len(seen["events"]) == 2, seen
+
+
+# ──────────────────────────────────────────────────────────────
+# Which clock recency is measured from
+# ──────────────────────────────────────────────────────────────
+
+
+def test_recency_is_measured_from_the_clock_it_is_handed():
+    """An hour older against the same `now` scores lower; the same story
+    against the same `now` scores the same, however many days later the
+    suite runs."""
+    fresh = _story("fresh", [_article(0, "Reuters")])
+    stale = _story("stale", [_article(1, "Reuters")])
+    stale.canonical.timestamp = DATE.replace(hour=5)
+
+    ranked = score_stories([stale, fresh], calendar_events=[], now=CLOCK)
+    assert [s.cluster_id for s in ranked] == ["fresh", "stale"]
+
+
+def test_no_clock_falls_back_to_the_wall_clock(monkeypatch):
+    """The production default for any caller other than `generate_briefing`.
+
+    conftest makes `_wall_clock` raise for every test, so this swaps in a
+    fixed one to show that `now=None` really does go through it, and that
+    the result matches passing the same instant explicitly.
+    """
+    from app.pipeline import ranking
+
+    monkeypatch.setattr(ranking, "_wall_clock", lambda: CLOCK)
+    story = _story("s", [_article(0, "Reuters")])
+
+    implicit = score_stories([story], calendar_events=[])[0].score
+    explicit = score_stories([story], calendar_events=[], now=CLOCK)[0].score
+    assert implicit == explicit

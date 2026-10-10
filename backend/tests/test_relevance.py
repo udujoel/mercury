@@ -12,8 +12,6 @@ import hashlib
 import logging
 from datetime import UTC, datetime
 
-import pytest
-
 from app.core.schemas import CalendarEvent, Item, SourceType, Story
 from app.pipeline.ranking import score_stories
 from app.pipeline.relevance import EXCERPT_CHARS, judge_personal_relevance
@@ -91,9 +89,9 @@ async def test_an_empty_story_list_makes_no_call():
 
 def test_a_judgment_replaces_the_lexical_personal_term():
     s = story("Anything at all")
-    score_stories([s], calendar_events=[], judged_personal={id(s): 1.0})
+    score_stories([s], calendar_events=[], judged_personal={id(s): 1.0}, now=NOW)
     high = s.score
-    score_stories([s], calendar_events=[], judged_personal={id(s): 0.0})
+    score_stories([s], calendar_events=[], judged_personal={id(s): 0.0}, now=NOW)
     assert high > s.score
 
 
@@ -106,39 +104,39 @@ def test_a_judged_zero_does_not_fall_through_to_the_email_default():
     through to that 0.5, so the judgment could only ever RAISE a score.
     """
     mail = story("A newsletter", kind=SourceType.EMAIL)
-    score_stories([mail], calendar_events=[], judged_personal={id(mail): 0.0})
+    score_stories(
+        [mail], calendar_events=[], judged_personal={id(mail): 0.0}, now=NOW
+    )
     judged_zero = mail.score
-    score_stories([mail], calendar_events=[], judged_personal=None)
+    score_stories([mail], calendar_events=[], judged_personal=None, now=NOW)
     assert judged_zero < mail.score, "a judged 0.0 fell through to the 0.5 default"
 
 
 def test_an_unjudged_story_keeps_its_lexical_score():
-    """`approx`, not `==`, and the reason is not float sloppiness.
+    """Exact, because the clock is pinned.
 
-    `score_stories` reads `datetime.now(UTC)` and `recency` decays
-    continuously, so two calls microseconds apart give scores that differ
-    in the tenth decimal. Written with `==` (as it was, in #63) this
-    passes only when both calls land in the same tick — a coin flip that
-    usually lands heads, and did until 2026-09-22.
-
-    The term under test is `personal`, worth `w_personal` = 0.35. Clock
-    drift across two adjacent calls is ~1e-10, so a relative tolerance of
-    1e-6 still fails loudly if the judgment leaks into an unjudged story.
+    This was `pytest.approx` in #66, because `score_stories` read
+    `datetime.now(UTC)` itself and `recency` decays continuously: two calls
+    microseconds apart differed in the tenth decimal, and an `==` (as
+    written in #63) passed only when both landed in the same tick. With
+    `now=` passed, both calls age the story against the same instant, so
+    any difference at all is the judgment leaking into an unjudged story.
     """
     mail = story("A newsletter", kind=SourceType.EMAIL)
-    score_stories([mail], calendar_events=[], judged_personal={-1: 1.0})
+    score_stories([mail], calendar_events=[], judged_personal={-1: 1.0}, now=NOW)
     with_map = mail.score
-    score_stories([mail], calendar_events=[], judged_personal=None)
-    assert with_map == pytest.approx(mail.score, rel=1e-6)
+    score_stories([mail], calendar_events=[], judged_personal=None, now=NOW)
+    assert with_map == mail.score
 
 
 def test_ranking_is_byte_identical_without_a_judgment_map():
     """Rule 7: an absent judgment must leave ranking exactly as it was."""
     stories = [story(f"S{i}", kind=SourceType.EMAIL if i % 2 else SourceType.RSS)
                for i in range(6)]
-    a = [s.cluster_id for s in score_stories(list(stories), calendar_events=[])]
+    a = [s.cluster_id for s in score_stories(
+        list(stories), calendar_events=[], now=NOW)]
     b = [s.cluster_id for s in score_stories(
-        list(stories), calendar_events=[], judged_personal={})]
+        list(stories), calendar_events=[], judged_personal={}, now=NOW)]
     assert a == b
 
 
@@ -235,6 +233,8 @@ async def test_two_stories_with_a_colliding_cluster_id_get_their_own_verdict():
     )
     assert len(judged) == 2, "two stories collapsed into one verdict"
 
-    ranked = score_stories([sa, sb], calendar_events=[], judged_personal=judged)
+    ranked = score_stories(
+        [sa, sb], calendar_events=[], judged_personal=judged, now=NOW
+    )
     assert ranked[0] is sa, "the relevant story took the other's verdict"
     assert ranked[0].score > ranked[1].score

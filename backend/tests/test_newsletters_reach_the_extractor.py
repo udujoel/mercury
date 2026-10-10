@@ -257,6 +257,8 @@ async def test_a_newsletter_the_world_segment_absorbed_is_not_extracted_again():
     world, inbox_emails, _ = await _build_world_stories(
         emails=inbox, articles=wire, events=[],
         embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
+        # Just after the newest fixture (04:00), not the wall clock.
+        now=datetime(2026, 9, 20, 5, tzinfo=UTC),
     )
     assert world, "precondition: the wire story must reach the world segment"
     absorbed = {e.source_name for e in inbox} - {

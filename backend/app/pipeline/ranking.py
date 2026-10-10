@@ -23,6 +23,7 @@ def score_stories(
     topic_centroid: np.ndarray | None = None,
     followed_entities: set[str] | None = None,
     judged_personal: dict[str, float] | None = None,
+    now: datetime | None = None,
 ) -> list[Story]:
     """Score every story and return sorted descending.
 
@@ -38,9 +39,18 @@ def score_stories(
     `cluster_id` is not unique: `clustering._singleton` derives it from
     `Item.id`, which is a content hash that collides for two emails sharing
     a sender, subject and timestamp.
+
+    `now` is the instant recency is measured from. `generate_briefing`
+    captures one at run start and passes it, so every story in a run is
+    aged against the same clock; None falls back to the wall clock for
+    any other caller. Tests always pass it: read from the wall clock, a
+    fixture stamped on a fixed date ages a day for every day the suite
+    goes unrun, and seventeen days on `exp(-hours / 12)` is ~1e-15 for
+    every story, so scores tie and the sort falls back to input order.
+    That failed four tests on an untouched main on 2026-10-07.
     """
     s = get_settings()
-    now = datetime.now(UTC)
+    now = _wall_clock() if now is None else now
 
     attendee_names = {
         a.lower()
@@ -142,6 +152,12 @@ def score_stories(
         )
 
     return sorted(stories, key=lambda x: x.score, reverse=True)
+
+
+def _wall_clock() -> datetime:
+    """The one place ranking reads real time. A seam so the suite can
+    forbid it (`tests/conftest.py`)."""
+    return datetime.now(UTC)
 
 
 def _aware(dt: datetime) -> datetime:

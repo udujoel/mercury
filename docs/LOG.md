@@ -1406,6 +1406,46 @@ and the failure reads as this PR's until you see that no test ran.
 were written against the existing patterns and read adversarially, and the
 `ios` CI job on the PR is the first build they get.
 
+## 2026-10-10 - the ranker is handed its clock instead of reading one
+
+Review of #68 asked for the structural version of its frozen-clock fixture,
+and this is it. `score_stories` takes `now`, `generate_briefing` captures one
+`run_started_at` and hands it down through `_build_world_stories`, and the
+default `briefing_id` is formatted from the same instant, so a run that takes
+four minutes ages every story against one clock.
+
+**Why `now` is optional in one place and required in the other.**
+`score_stories` keeps `None` as "use the wall clock", because it is a public
+function and a caller outside the pipeline should not have to know about run
+clocks. `_build_world_stories` has exactly one production caller, so `now` is
+a required keyword there: a default would have let every test that calls it
+inherit the real date without saying so, which is the bug.
+
+**A guard, not a convention.** The monkeypatch in #68 fixed one file, while
+`test_relevance.py` had the same hazard and had papered over it with
+`pytest.approx` in #66 (two calls a few microseconds apart decayed
+differently). An instruction to "pass `now=` in tests" would have held until
+the next new test file. So the wall-clock read now lives in
+`ranking._wall_clock`, and `tests/conftest.py` makes it raise for every test.
+One test swaps in a fixed clock to keep the `None` fallback covered. With the
+clock pinned, the `approx` in `test_relevance.py` went back to `==`, and an
+exact comparison there is now the stronger assertion it was meant to be.
+
+Mutation check, by hand: deleting `now=now` inside `_build_world_stories`
+fails the interests tests on the guard's message, and deleting
+`now=run_started_at` from `generate_briefing` fails with a missing required
+argument. Neither survives a test run.
+
+**What still reads the real date.** Tests that enter at `generate_briefing`
+rank against `run_started_at`, which is the wall clock by design. None of
+them asserts an ordering today, but one that starts to would have the
+2026-10-07 problem again; at that point `generate_briefing` should accept an
+injected clock rather than the test freezing `datetime`.
+
+**One test fails in the cloud sandbox and nowhere else.**
+`test_net_guard.py::test_public_url_allowed` resolves `arstechnica.com`, and
+the sandbox's DNS cannot. It failed identically before this change.
+
 ## Standing facts worth not rediscovering
 
 - **The Worker has no CI deploy.** Merging is not shipping. A route on `main`
