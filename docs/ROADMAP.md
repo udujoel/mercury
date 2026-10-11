@@ -1080,7 +1080,7 @@ Most of it is backend behaviour visible only in production logs.
       time, and the probe judged 0 of its 20 pairs. So rule 3's semantic
       grounding gate has only ever run as its keyword fallback, and task 42
       has no data. Fix: count the time judgment calls actually spend.
-- [ ] 48. **The cold open states the wrong weekday.** The 2026-10-11 06:41
+- [x] 48. **The cold open states the wrong weekday.** DONE (#75, 02d0335): `quality.correct_spoken_date` fixes the weekday word in code. The root cause, that the passes after the outline never see the date, is task 57. The 2026-10-11 06:41
       briefing opens "It's Monday, October 11th, 2026"; it was a Sunday.
       Only the outline pass is told the date (as "Sunday, 11 October
       2026"). The draft and both critique passes rewrite the cold open
@@ -1089,25 +1089,25 @@ Most of it is backend behaviour visible only in production logs.
       bug (see `script_chain.py`'s comment on the August one). Fix: check
       the weekday in code against the briefing's date, and give every
       pass the date.
-- [ ] 49. **Browsing a past day stops the briefing you're listening to.**
+- [x] 49. **Browsing a past day stops the briefing you're listening to.** DONE (#76, checked on the simulator).
       Tapping a day in the calendar strip replaces the loaded manifest, so
       today's playback is dropped and the mini player shows the other day
       at 0:00. Looking at Saturday's desk shouldn't lose your place in
       Sunday's briefing.
-- [ ] 50. **Show Notes lists one source once per turn that cites it.**
+- [x] 50. **Show Notes lists one source once per turn that cites it.** DONE (#76, checked on the simulator).
       "Flight to Casablanca (AT 556)" appeared four times in a row, because
       `ShowNotesLogic.grouped` doesn't de-duplicate. The section header is
       `sourceType.capitalized`, so RSS items sit under "Rss".
-- [ ] 51. **Onboarding shows literal backticks.** "Mercury asks Google for
+- [x] 51. **Onboarding shows literal backticks.** DONE (#76, checked on the simulator). "Mercury asks Google for
       \`gmail.readonly\`". `DataPromiseView.promise` takes a `String`, so
       `Text` never parses the markdown.
-- [ ] 52. **Outlet marks hide their letters.** `SourceStack`'s overlapping
+- [x] 52. **Outlet marks hide their letters.** DONE (#76, checked on the simulator). `SourceStack`'s overlapping
       monograms cover each other's text ("AJ" reads as "\J" under "F"),
       and four-letter marks like "CNBC" are too small to read.
-- [ ] 53. **The story page's floating back button covers scrolled text.**
+- [x] 53. **The story page's floating back button covers scrolled text.** DONE (#76, checked on the simulator).
       With no bar background behind it, the first letters of the points
       card sit under the button once you scroll.
-- [ ] 54. **Swift 6 readiness.** Two main-actor isolation violations
+- [~] 54. **Swift 6 readiness.** HALF DONE (#76): the two `AppState` isolation errors and `ShowNotesView`'s colours are fixed. The test-only warnings remain. Two main-actor isolation violations
       (`AppState.swift:799, 924`, calling `briefingId(for:)`) are errors
       in the Swift 6 language mode. `ShowNotesView` still uses the colour
       tokens ADR-012 deprecated, and three tests mutate a captured var
@@ -1120,6 +1120,24 @@ Most of it is backend behaviour visible only in production logs.
 - [ ] 56. **ElevenLabs returns 401 on every run.** Each run fails over to
       Google, and the phone now says so (task 22's notice works). The
       quota isn't coming back by itself; it's an owner call (ADR-006).
+
+- [ ] 57. **Give every script pass the date.** Only the outline pass is told
+      "DATE: Sunday, 11 October 2026"; the draft and both critique passes
+      rewrite the cold open without it. #75's guard holds the weekday in
+      code, but no regex catches "tomorrow is Tuesday" or a past event
+      framed as today (task 55). A prompt change, so it needs the regression
+      set run (CLAUDE.md), which costs Gemini quota against the monthly cap:
+      do it together with task 55.
+- [ ] 58. **Make `AppState`'s player injectable.** `AppState` builds its own
+      `PlaybackCoordinator`, so no unit test can put it in a playing state.
+      The browse-while-playing wiring (#76) is tested only as pure decisions
+      and on the simulator. Injecting the coordinator would let a test pin
+      "browsing never calls `downloadAudio` while another briefing plays".
+- [ ] 59. **A branch with unmerged work: `feat/transactional-mail-off-the-desk`.**
+      A WIP commit (`cba74fc`) with no PR, kept when the merged branches were
+      pruned on 2026-10-11. Task 27's desk half shipped in #55, probably
+      making it obsolete, but that is the owner's call to confirm before the
+      branch is deleted.
 
 Still open from earlier sections, in the order they now rank: **21** (word
 timings that survive the cache, plus `BriefingManifest.schema_version`),
