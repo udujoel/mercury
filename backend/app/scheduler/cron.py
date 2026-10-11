@@ -25,7 +25,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -39,6 +38,7 @@ from app.core.providers import (
     build_embedding_provider,
 )
 from app.core.schemas import BriefingLength
+from app.core.tz import resolve_tz
 from app.notifications.apns import (
     APNsConfigurationError,
     PushProvider,
@@ -82,14 +82,6 @@ def _compute_fire_time(wake_time: str, lead_minutes: int) -> tuple[int, int, boo
     return fire.hour, fire.minute, fire.day != anchor.day
 
 
-def _user_tz(tz_name: str) -> ZoneInfo:
-    try:
-        return ZoneInfo(tz_name)
-    except Exception:
-        log.error("invalid user_timezone %r, falling back to UTC", tz_name)
-        return ZoneInfo("UTC")
-
-
 def _target_briefing_id(tz_name: str, *, crosses_midnight: bool = False) -> str:
     """The id of the briefing this run is preparing, in the USER's timezone.
 
@@ -97,7 +89,7 @@ def _target_briefing_id(tz_name: str, *, crosses_midnight: bool = False) -> str:
     midnight the briefing is for TOMORROW's wake, so the id advances — see
     `_compute_fire_time`.
     """
-    now = datetime.now(_user_tz(tz_name))
+    now = datetime.now(resolve_tz(tz_name))
     if crosses_midnight:
         now = now + timedelta(days=1)
     return now.strftime("%Y-%m-%d")
@@ -316,7 +308,7 @@ def start_scheduler(app: FastAPI) -> AsyncIOScheduler | None:
         settings.wake_time, settings.generation_lead_minutes
     )
     trigger = CronTrigger(
-        hour=hour, minute=minute, timezone=_user_tz(settings.user_timezone)
+        hour=hour, minute=minute, timezone=resolve_tz(settings.user_timezone)
     )
 
     scheduler = AsyncIOScheduler()
