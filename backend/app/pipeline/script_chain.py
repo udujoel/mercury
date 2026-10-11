@@ -68,7 +68,7 @@ from app.pipeline.prompts import (  # noqa: F401
     _fence_untrusted,
     _strip_fence_markers,
 )
-from app.pipeline.quality import correct_spoken_date, run_all_gates
+from app.pipeline.quality import correct_spoken_date, run_all_gates, spoken_date
 from app.pipeline.semantic_quality import (
     check_relayed_semantic,
     run_all_gates_semantic,
@@ -1067,7 +1067,7 @@ _CRITIQUE_SCHEMA = {
                         "type": "string",
                         "enum": ["FLAT", "MONOLOGUE", "UNGROUNDED",
                                  "AGREEABLE", "GENERIC", "FILLER",
-                                 "RELAYED_INSTRUCTION"],
+                                 "RELAYED_INSTRUCTION", "STALE"],
                     },
                     "detail": {"type": "string"},
                     "fix": {"type": "string"},
@@ -1316,6 +1316,7 @@ async def _run_critique_and_revise(
     budget: int,
     segments: list[Segment] | None = None,
     judgment_provider: Any = None,
+    date: str,
 ) -> list[Turn]:
     """Passes 3 and 4: critique -> revise. Always returns a usable script —
     the draft itself, if anything along the way goes wrong or makes things
@@ -1326,7 +1327,7 @@ async def _run_critique_and_revise(
     draft_json = _turns_to_json(draft_turns)
 
     critique_prompt = CRITIQUE_PROMPT.format(
-        script=json.dumps(draft_json), source_data=source_data
+        date=date, script=json.dumps(draft_json), source_data=source_data
     )
     try:
         critique = await _complete_json(
@@ -1357,7 +1358,7 @@ async def _run_critique_and_revise(
         return draft_turns
 
     revise_prompt = REVISE_PROMPT.format(
-        script=json.dumps(draft_json), critique=json.dumps(critique)
+        date=date, script=json.dumps(draft_json), critique=json.dumps(critique)
     )
     try:
         # Still inside the try on purpose. JSON mode can return perfectly
@@ -1757,7 +1758,7 @@ async def _generate_script_once(
         # for one, because a prompt that demands a time it was not given makes
         # the model derive it, which is how the cold open once announced
         # "Thursday" for a Friday.
-        date=date.strftime("%A, %d %B %Y"),
+        date=spoken_date(date),
         weather=_format_weather(weather),
         n_events=len(events),
         # Fenced, like the draft pass has always fenced its source block.
@@ -1832,8 +1833,11 @@ async def _generate_script_once(
         validate=_validate_outline,
     )
 
+    # Every pass is told the date, not only the outline (ROADMAP task 57).
+    # The draft and critique passes rewrite the cold open, and without it
+    # they derived the weekday again: "It's Monday" on a Sunday.
     draft_prompt = DRAFT_PROMPT.format(
-        outline=json.dumps(outline), source_data=source_data
+        date=spoken_date(date), outline=json.dumps(outline), source_data=source_data
     )
     draft_turns = await _complete_json(
         llm=llm, prompt=draft_prompt, temperature=_DRAFT_TEMPERATURE,
@@ -1854,6 +1858,7 @@ async def _generate_script_once(
             budget=budget,
             segments=segments,
             judgment_provider=judgment_provider,
+            date=spoken_date(date),
         )
     else:
         final_turns = draft_turns

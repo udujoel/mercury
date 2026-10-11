@@ -273,6 +273,7 @@ async def test_critique_parse_failure_falls_back_to_draft():
         revise_response="[]",  # never reached
     )
     result = await _run_critique_and_revise(
+        date="Friday, 21 August 2026",
         llm=llm, draft_turns=draft, source_data="irrelevant", budget=budget,
     )
     assert result == draft
@@ -294,6 +295,7 @@ async def test_revise_parse_failure_falls_back_to_draft():
         revise_response="also not JSON",
     )
     result = await _run_critique_and_revise(
+        date="Friday, 21 August 2026",
         llm=llm, draft_turns=draft, source_data="irrelevant", budget=budget,
     )
     assert result == draft
@@ -319,6 +321,7 @@ async def test_revise_missing_segment_falls_back_to_draft():
         revise_response=json.dumps(incomplete),
     )
     result = await _run_critique_and_revise(
+        date="Friday, 21 August 2026",
         llm=llm, draft_turns=draft, source_data="irrelevant", budget=budget,
     )
     assert result == draft
@@ -332,6 +335,7 @@ async def test_revise_empty_array_falls_back_to_draft():
         revise_response="[]",
     )
     result = await _run_critique_and_revise(
+        date="Friday, 21 August 2026",
         llm=llm, draft_turns=draft, source_data="irrelevant", budget=budget,
     )
     assert result == draft
@@ -353,6 +357,7 @@ async def test_revise_outside_word_budget_falls_back_to_draft():
         revise_response=json.dumps(bloated),
     )
     result = await _run_critique_and_revise(
+        date="Friday, 21 August 2026",
         llm=llm, draft_turns=draft, source_data="irrelevant", budget=budget,
     )
     assert result == draft
@@ -379,6 +384,7 @@ async def test_revise_that_scores_worse_than_draft_falls_back_to_draft():
         revise_response=json.dumps(worse),
     )
     result = await _run_critique_and_revise(
+        date="Friday, 21 August 2026",
         llm=llm, draft_turns=draft, source_data=source_text, budget=budget,
     )
     assert result == draft, "a revision that scores worse must be rejected"
@@ -408,6 +414,7 @@ async def test_revise_that_improves_on_draft_is_accepted():
         revise_response=json.dumps(fixed),
     )
     result = await _run_critique_and_revise(
+        date="Friday, 21 August 2026",
         llm=llm, draft_turns=draft, source_data=source_text, budget=budget,
     )
     result_texts = [t.text for t in result]
@@ -497,3 +504,55 @@ def test_segment_repeating_out_of_order_is_rejected():
 
     out_of_order = [*canonical, Turn(speaker="B", segment=Segment.CALENDAR, text="x")]
     assert _has_valid_segment_coverage_and_order(out_of_order) is False
+
+
+# ──────────────────────────────────────────────────────────────
+# STALE (ROADMAP tasks 55, 57; review of #78)
+# ──────────────────────────────────────────────────────────────
+
+
+async def test_a_stale_issue_reaches_the_revision_and_its_fix_ships():
+    """A finished trip framed as today's plan is a STALE issue: it must
+    reach the revise prompt, with the date, and the revision that fixes it
+    must be the script that ships."""
+    import json
+
+    draft = _canonical_turns()
+    draft[2] = Turn(speaker="A", segment=Segment.CALENDAR,
+                    text="Your bus to Aveiro leaves at one this afternoon.")
+    budget = _word_count(draft)
+    source_text = "Rede Expressos ticket: Porto to Aveiro, departed 10 October 13:00."
+
+    fixed = [
+        {"speaker": t.speaker, "segment": t.segment.value, "text": t.text}
+        for t in draft
+    ]
+    fixed[2]["text"] = "Your bus to Aveiro left yesterday afternoon."
+    critique = {"issues": [{
+        "turn_index": 2, "type": "STALE",
+        "detail": "the trip departed yesterday, not today",
+        "fix": "say it left yesterday",
+    }]}
+
+    class _Recording(ScriptedLLMProvider):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self.revise_prompt = ""
+
+        async def complete(self, system, prompt, **kw):
+            if "Apply these fixes to the script" in prompt:
+                self.revise_prompt = prompt
+            return await super().complete(system, prompt, **kw)
+
+    llm = _Recording(
+        critique_response=json.dumps(critique),
+        revise_response=json.dumps(fixed),
+    )
+    result = await _run_critique_and_revise(
+        date="Sunday, 11 October 2026",
+        llm=llm, draft_turns=draft, source_data=source_text, budget=budget,
+    )
+
+    assert '"STALE"' in llm.revise_prompt
+    assert "DATE: Sunday, 11 October 2026" in llm.revise_prompt
+    assert result[2].text == "Your bus to Aveiro left yesterday afternoon."

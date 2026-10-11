@@ -226,6 +226,19 @@ _TODAY_WEEKDAY = re.compile(
 )
 
 
+def spoken_date(date: datetime) -> str:
+    """The date as every script pass is told it: "Sunday, 11 October 2026".
+
+    From the English tables above, not `strftime`, whose `%A` and `%B`
+    follow the host's locale. One helper so the passes, and the guard
+    below, cannot disagree about how the day is written.
+    """
+    return (
+        f"{_WEEKDAYS[date.weekday()]}, {date.day:02d} "
+        f"{_MONTHS[date.month - 1]} {date.year}"
+    )
+
+
 def _said_date(m: re.Match) -> tuple[int, int, int | None]:
     """(month, day, year or None) from a `_DATED_WEEKDAY` match."""
     month = _MONTHS.index((m.group("m1") or m.group("m2")).capitalize()) + 1
