@@ -594,7 +594,7 @@ something in this project:
 
 ### Tasks
 
-- [x] 16. **Inbox triage that answers a question.** Replace "top emails plus
+- [ ] 16. **Inbox triage that answers a question.** Replace "top emails plus
       a count" with a structured read: what needs a reply, what is waiting on
       someone else, what is informational, what is noise. The digest carries
       the buckets; the audio names the first two and the count of the rest.
@@ -1111,10 +1111,14 @@ timings that survive the cache, plus `BriefingManifest.schema_version`),
 **34** (continuity between briefings), and **28 / 31**, which wait on the
 owner decision above.
 
-Corrected in the same change that wrote this section: tasks 16 and 18 were
-done (#51 and #48; "6 researched" appears in a production run) but still
+Corrected in the same change that wrote this section: task 18 was done
+(#48; "6 researched" appears in production run 35534389198) but still
 unchecked, and two of the LOG's standing facts described a system that no
-longer exists.
+longer exists. **Task 16 stays open**, despite the "DONE" in its text. That
+note refers to subject extraction. The deliverable, the four buckets
+(needs a reply / waiting on someone / informational / noise), was never
+built: the code has `priority` and `requires_response` and no others.
+cubic caught this on #72 after the first draft had ticked it.
 
 ## Phase 4 — Depth (weeks 16 to 19)
 

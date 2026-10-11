@@ -1490,9 +1490,12 @@ branches above it.
 **Standing facts decay without anyone noticing.** Two of the facts below
 were wrong. "There is no iOS job and no Worker job in CI" had been false
 since #44 on 2026-09-13. "`follow_ups` ... still open as task 24" was false
-from the day task 24 closed. Two roadmap tasks, 16 and 18, were done but
-unchecked. Every one of them reads as authoritative, which is worse than
-reading as uncertain. Both facts are corrected. A fact here is only as
+from the day task 24 closed. Task 18 was done but unchecked. Task 16 shows
+the opposite failure: it says "DONE" in its text, but about a different
+deliverable, and the first draft of this pass ticked it on that word alone.
+The four triage buckets it promises were never built (cubic, on #72). Every
+one of these reads as authoritative, which is worse than reading as
+uncertain. Both facts are corrected. A fact here is only as
 current as the last time someone checked it.
 
 **The date that matters is 25 October.** That's the DST change. #68's
