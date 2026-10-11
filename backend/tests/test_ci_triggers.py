@@ -99,20 +99,123 @@ def _ios_steps() -> list[dict]:
     return _spec("ios.yml")["jobs"]["test"]["steps"]
 
 
-def test_ios_ci_builds_with_the_newest_xcode_on_the_image():
-    """ROADMAP task 60. `macos-15` defaults to Xcode 16.4 (Swift 6.1, the
-    iOS 18 SDK) while the app is built and checked with a far newer one, so
-    CI could not compile an iOS 26 API at all: the first push of #76 failed
-    there and nowhere else. Select the newest Xcode the image has instead of
-    taking its default."""
-    runs = "\n".join(step.get("run", "") for step in _ios_steps())
+def _step(name_prefix: str) -> dict:
+    return next(s for s in _ios_steps() if s.get("name", "").startswith(name_prefix))
 
-    assert "xcode-select" in runs, "ios.yml must choose its Xcode, not take the default"
+
+def _run_step(step: dict, tmp_path, *, stubs: dict[str, str], env: dict[str, str]):
+    """Run a workflow step's script under bash, with commands stubbed on PATH."""
+    import os
+    import subprocess
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name, body in stubs.items():
+        stub = bin_dir / name
+        stub.write_text("#!/bin/bash\n" + body + "\n")
+        stub.chmod(0o755)
+    script = tmp_path / "step.sh"
+    script.write_text(step["run"])
+    return subprocess.run(
+        ["bash", str(script)],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", **env},
+    )
+
+
+def test_ios_ci_selects_the_newest_released_xcode_26(tmp_path):
+    """ROADMAP task 60. `macos-15` defaults to Xcode 16.4 (Swift 6.1, the
+    iOS 18 SDK), so CI could not compile an iOS 26 API: the first push of
+    #76 failed there and nowhere else. The step is RUN here, against fake
+    app bundles, so a wrong choice fails rather than a missing word."""
+    apps = tmp_path / "Applications"
+    for name in (
+        "Xcode_16.4.app",
+        "Xcode_26.0.1.app",
+        "Xcode_26.3.0.app",
+        "Xcode_26.4_beta_2.app",
+        "Xcode_26.4_Release_Candidate.app",
+    ):
+        (apps / name).mkdir(parents=True)
+    step = _step("Use the newest released Xcode")
+
+    result = _run_step(
+        step,
+        tmp_path,
+        stubs={"sudo": 'echo "sudo $*"'},
+        env={"XCODE_APPS_DIR": str(apps), **step["env"]},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert f"sudo xcode-select -s {apps}/Xcode_26.3.0.app" in result.stdout
+
+
+def test_ios_ci_fails_loudly_without_an_xcode_26(tmp_path):
+    apps = tmp_path / "Applications"
+    (apps / "Xcode_16.4.app").mkdir(parents=True)
+    step = _step("Use the newest released Xcode")
+
+    result = _run_step(
+        step,
+        tmp_path,
+        stubs={"sudo": 'echo "sudo $*"'},
+        env={"XCODE_APPS_DIR": str(apps), **step["env"]},
+    )
+
+    assert result.returncode != 0
+    assert "No released Xcode 26.x" in result.stdout
+    assert "xcode-select" not in result.stdout
+
+
+def test_ios_ci_picks_an_iphone_on_the_newest_runtime(tmp_path):
+    """Not a pinned model name: a newer Xcode ships different simulators."""
+    import json
+
+    devices = {
+        "devices": {
+            "com.apple.CoreSimulator.SimRuntime.iOS-18-5": [
+                {"name": "iPhone 16", "udid": "OLD-IPHONE"},
+            ],
+            "com.apple.CoreSimulator.SimRuntime.iOS-26-2": [
+                {"name": "iPad Pro 13-inch", "udid": "NEW-IPAD"},
+                {"name": "iPhone 17 Pro", "udid": "NEW-IPHONE"},
+            ],
+            "com.apple.CoreSimulator.SimRuntime.watchOS-26-0": [
+                {"name": "Apple Watch", "udid": "WATCH"},
+            ],
+        }
+    }
+    (tmp_path / "devices.json").write_text(json.dumps(devices))
+    out = tmp_path / "github_output"
+
+    result = _run_step(
+        _step("Pick a simulator"),
+        tmp_path,
+        stubs={"xcrun": f"cat {tmp_path / 'devices.json'}"},
+        env={"GITHUB_OUTPUT": str(out)},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert out.read_text().strip() == "udid=NEW-IPHONE"
+
+
+def test_ios_ci_fails_loudly_without_an_iphone(tmp_path):
+    import json
+
+    (tmp_path / "devices.json").write_text(json.dumps({"devices": {}}))
+
+    result = _run_step(
+        _step("Pick a simulator"),
+        tmp_path,
+        stubs={"xcrun": f"cat {tmp_path / 'devices.json'}"},
+        env={"GITHUB_OUTPUT": str(tmp_path / "github_output")},
+    )
+
+    assert result.returncode != 0
 
 
 def test_ios_ci_does_not_pin_a_simulator_model():
-    """A newer Xcode ships different simulators. A pinned model name turns
-    an Xcode change into a red build for a reason unrelated to the code."""
     test_step = next(s for s in _ios_steps() if s.get("name") == "Test")
 
     assert "name=iPhone" not in test_step["run"]

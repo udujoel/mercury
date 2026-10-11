@@ -76,11 +76,14 @@ jobs:
           XCODE_MAJOR: "26"
         run: |
           set -euo pipefail
-          newest=$(ls -d /Applications/Xcode_${XCODE_MAJOR}*.app 2>/dev/null \
+          # XCODE_APPS_DIR exists for backend/tests/test_ci_triggers.py, which
+          # runs this script against fake app bundles.
+          apps="${XCODE_APPS_DIR:-/Applications}"
+          newest=$(ls -d "$apps"/Xcode_${XCODE_MAJOR}*.app 2>/dev/null \
             | grep -Eiv 'beta|release.?candidate|_rc' | sort -V | tail -1 || true)
           if [ -z "$newest" ]; then
             echo "::error::No released Xcode ${XCODE_MAJOR}.x on this image:"
-            ls -d /Applications/Xcode*.app
+            ls -d "$apps"/Xcode*.app || true
             exit 1
           fi
           echo "Selecting $newest"
