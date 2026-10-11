@@ -15,6 +15,7 @@ body reaches this file in full, and this file never reads an `Item`.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 
@@ -108,22 +109,36 @@ class JevJudgmentProvider:
         # briefing, it would make it miss the morning.
         self._budget = settings.judgment_total_budget_seconds
         # Shared across every call on this instance — see
-        # judgment_briefing_budget_seconds. Started lazily on first use so
-        # building the provider early does not spend the budget.
+        # judgment_briefing_budget_seconds.
+        #
+        # Counted as time spent INSIDE judgment calls, not time since the
+        # first one. It used to be a wall-clock window opened by the first
+        # call, and triage and cluster verification make that call before
+        # the script exists. The semantic gates run about two minutes later,
+        # after script generation, so the window had always closed: every
+        # production run checked (2026-10-08 to 10-11) judged 0 of its
+        # 67-93 claims, and rule 3's grounding gate only ever ran as its
+        # keyword fallback. ROADMAP task 47.
         self._briefing_budget = settings.judgment_briefing_budget_seconds
-        self._started_at: float | None = None
+        self._spent = 0.0
 
     def _remaining(self) -> float:
         """Seconds of judgment budget left for this briefing.
 
-        Starts the clock on first use. Zero or less means every remaining
-        call returns immediately and its callers fall back to the
-        heuristics, which is the intended behaviour rather than a failure.
+        Zero or less means every remaining call returns immediately and its
+        callers fall back to the heuristics, which is the intended
+        behaviour rather than a failure.
         """
-        now = time.monotonic()
-        if self._started_at is None:
-            self._started_at = now
-        return self._briefing_budget - (now - self._started_at)
+        return self._briefing_budget - self._spent
+
+    @contextlib.asynccontextmanager
+    async def _spending(self):
+        """Charge the time inside the block to this briefing's budget."""
+        started = time.monotonic()
+        try:
+            yield
+        finally:
+            self._spent += time.monotonic() - started
 
     def _deadline(self) -> float:
         """The effective ceiling for ONE call: whichever bound bites first."""
@@ -160,7 +175,10 @@ class JevJudgmentProvider:
         ]
         semaphore = asyncio.Semaphore(self._concurrency)
 
-        async with AsyncTypeSafeClient(api_key=self._api_key) as client:
+        async with (
+            self._spending(),
+            AsyncTypeSafeClient(api_key=self._api_key) as client,
+        ):
 
             async def ask(chunk: list[Claim]) -> None:
                 # Positional ids, not `Claim.key`: the key is the caller's
@@ -221,7 +239,10 @@ class JevJudgmentProvider:
         # judgment that landed before the deadline survives the deadline.
         out: list[EmailJudgment | None] = [None] * len(states)
 
-        async with AsyncTypeSafeClient(api_key=self._api_key) as client:
+        async with (
+            self._spending(),
+            AsyncTypeSafeClient(api_key=self._api_key) as client,
+        ):
 
             async def judge(index: int, state: dict) -> None:
                 async with semaphore:

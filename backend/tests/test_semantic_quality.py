@@ -341,3 +341,117 @@ def test_a_gate_with_no_polarity_is_refused():
         _regrade_per_turn(
             [turn("x")], {"ground:0": 0.5}, [], "ground", kind="k",
         )
+
+
+# ── review findings (2026-10-11, ROADMAP task 47) ─────────────────────
+
+
+async def test_time_between_calls_does_not_spend_the_budget():
+    """The budget is time spent JUDGING, not time since the first judgment.
+
+    It was a wall-clock window opened by the first call. Triage and
+    cluster verification make that call before the script exists, and the
+    semantic gates run about two minutes later, after script generation. So
+    in every production run checked (2026-10-08 to 2026-10-11) the window
+    had closed before the gates ran: 67-93 claims a run, all unjudged, and
+    rule 3's grounding gate only ever ran as its keyword fallback.
+
+    The clock is faked so the two minutes cost nothing to simulate.
+    """
+    import typesafe_sdk
+
+    from app.core.config import Settings
+    from app.providers import typesafe_jev
+
+    now = [1000.0]
+    asked = []
+
+    class _Answer:
+        def __init__(self, value):
+            self.noul = value
+
+    class _Response:
+        def __init__(self, questions):
+            self.nouls = {qid: _Answer(0.9) for qid in questions}
+
+    class _Instant:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *e): return False
+        async def system_one(self, *, state, questions):
+            asked.append(len(questions))
+            return _Response(questions)
+
+    import pytest as _pytest
+    monkeypatch = _pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(
+            "app.core.config.get_settings",
+            lambda: Settings(
+                typesafe_api_key="k", judgment_briefing_budget_seconds=20.0
+            ),
+        )
+        monkeypatch.setattr(typesafe_sdk, "AsyncTypeSafeClient", _Instant)
+        monkeypatch.setattr(typesafe_jev.time, "monotonic", lambda: now[0])
+        provider = typesafe_jev.JevJudgmentProvider()
+
+        # Cluster verification, before the script exists.
+        first = await provider.judge_claims({"x": 1}, [Claim("verify:0", "i")])
+        # Script generation: two minutes in which nothing is judged.
+        now[0] += 120.0
+        # The semantic gates, on the finished script.
+        second = await provider.judge_claims({"x": 1}, [Claim("ground:0", "i")])
+
+        assert first == {"verify:0": 0.9}
+        assert second == {"ground:0": 0.9}, (
+            "the gates were refused a budget that judging had barely touched"
+        )
+        assert asked == [1, 1]
+    finally:
+        monkeypatch.undo()
+
+
+async def test_time_spent_judging_still_spends_the_budget():
+    """The other half: the ceiling still holds across calls, counted in time
+    actually spent inside them."""
+    import typesafe_sdk
+
+    from app.core.config import Settings
+    from app.providers import typesafe_jev
+
+    now = [1000.0]
+
+    class _Answer:
+        noul = 0.9
+
+    class _Slow:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *e): return False
+        async def system_one(self, *, state, questions):
+            now[0] += 15.0  # each call costs fifteen seconds of judging
+            return type("R", (), {"nouls": {q: _Answer() for q in questions}})()
+
+    class _Forbidden:
+        def __init__(self, *a, **k):
+            raise AssertionError("a third call was made past the budget")
+
+    import pytest as _pytest
+    monkeypatch = _pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(
+            "app.core.config.get_settings",
+            lambda: Settings(
+                typesafe_api_key="k", judgment_briefing_budget_seconds=20.0
+            ),
+        )
+        monkeypatch.setattr(typesafe_sdk, "AsyncTypeSafeClient", _Slow)
+        monkeypatch.setattr(typesafe_jev.time, "monotonic", lambda: now[0])
+        provider = typesafe_jev.JevJudgmentProvider()
+
+        await provider.judge_claims({}, [Claim("a", "i")])  # 15s spent
+        await provider.judge_claims({}, [Claim("b", "i")])  # 30s spent
+        monkeypatch.setattr(typesafe_sdk, "AsyncTypeSafeClient", _Forbidden)
+        assert await provider.judge_claims({}, [Claim("c", "i")]) == {"c": None}
+    finally:
+        monkeypatch.undo()
