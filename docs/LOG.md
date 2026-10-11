@@ -1715,6 +1715,61 @@ The test suite couldn't see this. Each test builds a fresh provider and
 calls it straight away, so no test ever had two minutes between calls. The
 new test fakes the clock and puts them there.
 
+## 2026-10-11 - "It's Monday", said on a Sunday
+
+Heard on the simulator while testing #68's features against production: the
+06:41 briefing for Sunday 11 October opens "Good morning, Joel. It's Monday,
+October 11th, 2026." This is the third weekday bug. `script_chain.py` keeps
+a comment about the August one, which ended with "never make the model
+derive a fact you can simply state", and the outline prompt does state it:
+"DATE: Sunday, 11 October 2026". But only the outline pass gets that line.
+The draft and both critique passes rewrite the cold open without it, so
+whichever pass rewrote it last derived the weekday again.
+
+The keyword grounding gate can't catch this. It checks that a word occurs
+somewhere in the source, and with 35 emails in the input "Monday" always
+does. The semantic gate could have caught it, but it had never judged
+anything in production (the judgment budget bug, task 47).
+
+**Fixed in code, not in the prompt.** `quality.correct_spoken_date` runs on
+the script that ships and changes only the weekday word, and only where the
+sentence is unambiguously about today: a weekday followed by today's month
+and day (numeric or spelled, with an optional year), or "it's / today is /
+happy <weekday>" in the cold open. When the cold open's "It's <weekday>"
+comes with a DIFFERENT date or year, the words are left as written and
+logged as an error, because then the date itself is wrong, and swapping the
+weekday would make it wrong in a new way. Anywhere else, a weekday with
+another date is about another day ("your dentist on Monday, October 12th")
+and is left alone without a log. Names come from English tables, not
+`strftime`, whose `%A` follows the host's locale. The prompts are untouched,
+so the regression set doesn't need regenerating for this change.
+
+## 2026-10-11 - what the simulator found in #68, and what fixing it uncovered
+
+#68's iOS work was compiled and unit-tested in CI but never looked at. On an
+iPhone 18 Pro simulator (iOS 27) against production data, its features held
+up: the backup-voice notice, the desk with outlet marks, the story page,
+coverage rows, and the calendar strip. Five smaller things didn't (ROADMAP
+tasks 49-53). The one worth recording is 49, because of what fixing it
+surfaced.
+
+**Browsing a day stopped the briefing you were listening to.**
+`openBriefing(andPlay: false)` still put the browsed day's audio in the
+engine; `andPlay` only skipped the final `play()`. Now a day being LOOKED AT
+while another plays leaves the engine and its persistence alone, the mini
+player names what is actually playing, and opening the player from it
+returns the screen to that briefing.
+
+**The fix made a new state reachable, and the next tap found it.** Before,
+"the briefing on screen" and "the briefing in the engine" were always the
+same while anything played, because browsing replaced one with the other.
+Once they could differ, Saturday's card drew a PAUSE icon while Sunday
+played, since it read `playback.isPlaying` alone, and tapping it would have
+paused Sunday. No unit test of the first fix could see that; the second
+look on the simulator did. The card now asks whether the briefing on screen
+is the one playing, and a tap on a browsed day plays that day. This is
+CLAUDE.md's "review for what is newly reachable" in a single afternoon.
+
 ## 2026-10-11 - a backlog, and three docs that had stopped being true
 
 A pass over the roadmap, this log, the open PRs and the code produced the

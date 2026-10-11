@@ -241,18 +241,18 @@ final class OnboardingStatePersistenceTests: XCTestCase {
     /// does not call back.
     func testCompletingOnboardingPublishesAnObservationChange() {
         let state = AppState()
-        var didChange = false
+        let didChange = ChangeFlag()
 
         withObservationTracking {
             _ = state.hasCompletedOnboarding
         } onChange: {
-            didChange = true
+            didChange.set()
         }
 
         state.hasCompletedOnboarding = true
 
         XCTAssertTrue(
-            didChange,
+            didChange.isSet,
             "RootView switches on hasCompletedOnboarding; without an "
             + "observation event it never re-renders and Done appears dead"
         )
@@ -260,32 +260,32 @@ final class OnboardingStatePersistenceTests: XCTestCase {
 
     func testWakeTimeChangePublishesAnObservationChange() {
         let state = AppState()
-        var didChange = false
+        let didChange = ChangeFlag()
 
         withObservationTracking {
             _ = state.wakeTimeMinutesFromMidnight
         } onChange: {
-            didChange = true
+            didChange.set()
         }
 
         state.wakeTimeMinutesFromMidnight = 6 * 60 + 15
 
-        XCTAssertTrue(didChange, "the schedule picker binds to this")
+        XCTAssertTrue(didChange.isSet, "the schedule picker binds to this")
     }
 
     func testBriefingLengthChangePublishesAnObservationChange() {
         let state = AppState()
-        var didChange = false
+        let didChange = ChangeFlag()
 
         withObservationTracking {
             _ = state.briefingLength
         } onChange: {
-            didChange = true
+            didChange.set()
         }
 
         state.briefingLength = .express
 
-        XCTAssertTrue(didChange, "the length picker binds to this")
+        XCTAssertTrue(didChange.isSet, "the length picker binds to this")
     }
 
     func testWakeTimeAndLengthRoundTripAndPersist() {
@@ -303,4 +303,17 @@ final class OnboardingStatePersistenceTests: XCTestCase {
         XCTAssertEqual(relaunched.wakeTimeMinutesFromMidnight, 6 * 60 + 45)
         XCTAssertEqual(relaunched.briefingLength, .full)
     }
+}
+
+/// A flag the `@Sendable` `onChange` of `withObservationTracking` can set.
+///
+/// The tests captured a `var` and mutated it from that closure, which is a
+/// data race the compiler warns is an error in the Swift 6 language mode
+/// (ROADMAP task 54).
+final class ChangeFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+
+    func set() { lock.withLock { value = true } }
+    var isSet: Bool { lock.withLock { value } }
 }

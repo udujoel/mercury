@@ -191,6 +191,63 @@ final class AppState {
         return playback.loadedBriefingId == id
     }
 
+    enum BrowseAction: Equatable {
+        /// Fetch the audio and put it in the engine (it may also play).
+        case load
+        /// Put the briefing on screen and leave the engine alone.
+        case showOnly
+    }
+
+    /// Whether opening a briefing should touch the player (ROADMAP task 49).
+    ///
+    /// Browsing a day while another one plays used to load the browsed
+    /// day's audio, which stopped the one you were listening to: on the
+    /// simulator, Sunday's briefing gave way to "Saturday, 0:00" the moment
+    /// Saturday was tapped in the calendar strip. Looking is not choosing.
+    static func browseAction(requestedId: String, andPlay: Bool,
+                             isPlaying: Bool, loadedId: String?) -> BrowseAction {
+        if andPlay { return .load }
+        // Already in the engine: reloading would restart it at zero.
+        if loadedId == requestedId { return .showOnly }
+        if isPlaying { return .showOnly }
+        // Nothing playing. Loading keeps the browsed day's play button
+        // instant and offline, and a paused briefing's position is already
+        // persisted per briefing, so replacing it loses nothing.
+        return .load
+    }
+
+    /// Bring the screen back to the briefing that is playing, after
+    /// browsing another day. Opening the player from the mini bar does
+    /// this, so the transcript and the controls describe what you hear.
+    @MainActor
+    func showPlaying() {
+        guard let playing = playback.loadedManifest,
+              playing.briefingId != manifest?.briefingId else { return }
+        manifest = playing
+    }
+
+    /// Whether the Home card draws a pause icon: only when the briefing ON
+    /// SCREEN is the one playing. While another day is being browsed, the
+    /// engine plays one briefing and the card describes another.
+    static func cardShowsPlaying(isPlaying: Bool, isCurrent: Bool) -> Bool {
+        isPlaying && isCurrent
+    }
+
+    enum CardTapAction: Equatable {
+        /// Nothing in the engine: fetch today's.
+        case fetch
+        /// The engine holds the briefing on screen: play or pause it.
+        case toggle
+        /// The engine holds a DIFFERENT briefing: load and play the one on
+        /// screen, which is what its card offers.
+        case openShown
+    }
+
+    static func cardTapAction(isLoaded: Bool, isCurrent: Bool) -> CardTapAction {
+        guard isLoaded else { return .fetch }
+        return isCurrent ? .toggle : .openShown
+    }
+
     /// Play, pause, or fetch — whichever the current state calls for.
     ///
     /// Every control that starts playback goes through here. Tapping the Home
@@ -200,9 +257,19 @@ final class AppState {
     /// and pressing it began the briefing again.
     @MainActor
     func togglePlayback() async {
-        guard isPlaybackLoaded else {
+        switch Self.cardTapAction(isLoaded: isPlaybackLoaded,
+                                  isCurrent: isPlaybackCurrent) {
+        case .fetch:
             await playBriefing()
             return
+        case .openShown:
+            // A browsed day's card (ROADMAP task 49): play THAT day.
+            if let shown = manifest {
+                await openBriefing(id: shown.briefingId, andPlay: true)
+            }
+            return
+        case .toggle:
+            break
         }
         // A rebuild we asked for may have landed since this audio loaded.
         //
@@ -252,8 +319,22 @@ final class AppState {
     /// one it moved the playhead and left the audio stopped.
     @MainActor
     func play(fromMs ms: Int) async {
-        if !isPlaybackLoaded { await playBriefing() }
-        guard isPlaybackLoaded else { return }
+        // The offset belongs to the briefing ON SCREEN. While another day is
+        // being browsed the engine holds a different one, and seeking it to
+        // this offset would play the wrong briefing from an arbitrary point
+        // (review of #76): the same three cases as the Home card.
+        switch Self.cardTapAction(isLoaded: isPlaybackLoaded,
+                                  isCurrent: isPlaybackCurrent) {
+        case .fetch:
+            await playBriefing()
+        case .openShown:
+            if let shown = manifest {
+                await openBriefing(id: shown.briefingId, andPlay: true)
+            }
+        case .toggle:
+            break
+        }
+        guard isPlaybackLoaded, isPlaybackCurrent else { return }
         playback.seek(toMs: ms)
         // `seek` past the real end of the audio calls `finish()`, and `play()`
         // reads `hasFinished` as a request to replay from zero — so a chapter
@@ -705,6 +786,18 @@ final class AppState {
         loadState = .loading
         do {
             let fetched = try await api.fetchManifest(briefingId: id)
+            if Self.browseAction(requestedId: id, andPlay: andPlay,
+                                 isPlaying: playback.isPlaying,
+                                 loadedId: playback.loadedBriefingId) == .showOnly {
+                // On screen only. The engine, and the persistence wired to
+                // what it is playing, are left exactly as they were: rewiring
+                // persistence here would save the PLAYING briefing's position
+                // against the one being looked at.
+                self.manifest = fetched
+                loadState = .ready
+                await loadDigest()
+                return
+            }
             await persist(fetched, audioPath: nil)
             let audioURL = try await api.downloadAudio(briefingId: id)
             await persist(fetched, audioPath: audioURL.path)

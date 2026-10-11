@@ -59,6 +59,7 @@ struct StoryDetailView: View {
         }
         .background(MercuryColor.surface.color.ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
+        .hardTopScrollEdge()
         .sheet(item: $openURL) { url in
             // In-app, not a jump to Safari. The morning ritual is the app;
             // being thrown out of it to read one article and having to find
@@ -435,5 +436,32 @@ extension URL: @retroactive Identifiable {
                 coveredInAudio: true, turnIndex: 4),
             onPlay: { _ in }
         )
+    }
+}
+
+
+private extension View {
+    /// A hard top edge where the platform has one (iOS 26), so scrolled
+    /// text stops under the floating back button instead of running beneath
+    /// it: the points card's first letters sat under the button on the
+    /// simulator (ROADMAP task 53). Earlier systems draw a bar background
+    /// already.
+    ///
+    /// Guarded at COMPILE time as well as run time. `#available` is a runtime
+    /// check, but the symbol has to exist in the SDK being built against, and
+    /// CI builds with Xcode 16.4 (Swift 6.1, the iOS 18 SDK), where it does
+    /// not: the first push of #76 failed there with "cannot find
+    /// 'scrollEdgeEffectStyle' in scope". Swift 6.2 is Xcode 26's.
+    @ViewBuilder
+    func hardTopScrollEdge() -> some View {
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *) {
+            scrollEdgeEffectStyle(.hard, for: .top)
+        } else {
+            self
+        }
+        #else
+        self
+        #endif
     }
 }
