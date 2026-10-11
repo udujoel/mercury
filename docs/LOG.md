@@ -1654,11 +1654,15 @@ anything in production (the judgment budget bug, task 47).
 **Fixed in code, not in the prompt.** `quality.correct_spoken_date` runs on
 the script that ships and changes only the weekday word, and only where the
 sentence is unambiguously about today: a weekday followed by today's month
-and day, or "it's / today is / happy <weekday>" in the cold open. A weekday
-followed by a different date is left as written and logged as an error,
-because then the date itself is wrong, and swapping the weekday would make
-it wrong in a new way. The prompts are untouched, so the regression set
-doesn't need regenerating for this change.
+and day (numeric or spelled, with an optional year), or "it's / today is /
+happy <weekday>" in the cold open. When the cold open's "It's <weekday>"
+comes with a DIFFERENT date or year, the words are left as written and
+logged as an error, because then the date itself is wrong, and swapping the
+weekday would make it wrong in a new way. Anywhere else, a weekday with
+another date is about another day ("your dentist on Monday, October 12th")
+and is left alone without a log. Names come from English tables, not
+`strftime`, whose `%A` follows the host's locale. The prompts are untouched,
+so the regression set doesn't need regenerating for this change.
 
 ## Standing facts worth not rediscovering
 
