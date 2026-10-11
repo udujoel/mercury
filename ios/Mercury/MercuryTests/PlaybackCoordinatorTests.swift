@@ -535,7 +535,11 @@ final class AudioSessionCategoryTests: XCTestCase {
     /// likely to play it. `.playback` already routes to A2DP by default.
     func testHandsFreeProfileIsNotRequestedForPlayback() {
         XCTAssertFalse(
-            PlaybackCoordinator.playbackCategoryOptions.contains(.allowBluetooth),
+            // By raw value: `.allowBluetooth` is deprecated, and the name that
+            // replaces it (`.allowBluetoothHFP`) exists only in the iOS 26 SDK,
+            // which CI's Xcode 16.4 does not have.
+            PlaybackCoordinator.playbackCategoryOptions.contains(
+                AVAudioSession.CategoryOptions(rawValue: 0x4)),
             "HFP is for phone calls; a briefing wants A2DP, which .playback gives by default"
         )
     }
