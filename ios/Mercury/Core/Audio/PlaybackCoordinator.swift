@@ -209,6 +209,14 @@ final class PlaybackCoordinator {
     }
 
     func load(manifest: BriefingManifest, audioURL: URL) throws {
+        // Opened FIRST, before anything is stopped or reset. It used to be
+        // opened after `self.manifest` was assigned, so a file that would not
+        // open left the NEW manifest paired with the PREVIOUS file, and
+        // `loadedBriefingId` named a briefing that was never in the engine
+        // (cubic, review of #76). Now a failed open changes nothing at all:
+        // whatever was playing keeps playing.
+        let opened = try AVAudioFile(forReading: audioURL)
+
         // Loading a second briefing into an already-loaded coordinator: stop
         // and clear whatever the previous file had scheduled so state
         // doesn't leak across briefings.
@@ -230,7 +238,7 @@ final class PlaybackCoordinator {
         currentSegment = nil
 
         self.manifest = manifest
-        self.file = try AVAudioFile(forReading: audioURL)
+        self.file = opened
 
         guard let file else { return }
 
