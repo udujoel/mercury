@@ -1139,6 +1139,14 @@ Most of it is backend behaviour visible only in production logs.
       making it obsolete, but that is the owner's call to confirm before the
       branch is deleted.
 
+- [ ] 60. **CI builds iOS with Xcode 16.4; the app is built with Xcode 27.**
+      `ios.yml` runs on `macos-15`, whose Xcode is 16.4 (Swift 6.1, the
+      iOS 18 SDK). The first push of #76 used an iOS 26 API behind
+      `#available` and failed to compile in CI only; it is now also behind
+      `#if compiler(>=6.2)`. Either pin a newer Xcode on the runner, or keep
+      guarding every new-SDK call at compile time and accept that CI never
+      compiles those paths. Decide before more iOS 26 APIs land.
+
 Still open from earlier sections, in the order they now rank: **21** (word
 timings that survive the cache, plus `BriefingManifest.schema_version`),
 **34** (continuity between briefings), and **28 / 31**, which wait on the
