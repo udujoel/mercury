@@ -54,11 +54,7 @@ def score_stories(
     s = get_settings()
     now = _aware(_wall_clock() if now is None else now)
 
-    attendee_names = {
-        a.lower()
-        for ev in calendar_events
-        for a in ev.attendees
-    }
+    attendee_names = {a.lower() for ev in calendar_events for a in ev.attendees}
     # Stripped, and short names dropped.
     #
     # Review of #58: matching was an unanchored substring worth 0.28 —
@@ -72,15 +68,15 @@ def score_stories(
     # ("AI" is a word in "AI" and in nothing useful else), so the floor is
     # three and the match is anchored.
     followed = {
-        e.strip().lower() for e in (followed_entities or set())
-        if len(e.strip()) >= 3
+        e.strip().lower() for e in (followed_entities or set()) if len(e.strip()) >= 3
     }
     followed_re = (
         re.compile(
             "|".join(rf"\b{re.escape(e)}\b" for e in sorted(followed)),
             re.I,
         )
-        if followed else None
+        if followed
+        else None
     )
 
     judged = judged_personal or {}

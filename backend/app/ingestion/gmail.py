@@ -46,9 +46,7 @@ log = logging.getLogger(__name__)
 # `includeSpamTrash` and it defaults to false. It is passed explicitly at
 # the call site anyway, so the guarantee is visible where the query runs
 # rather than resting on an API default nobody can see.
-GMAIL_QUERY = (
-    "in:inbox newer_than:1d -category:promotions -category:social"
-)
+GMAIL_QUERY = "in:inbox newer_than:1d -category:promotions -category:social"
 
 # app/core/config.py has no dedicated "user email" setting (user_name is a
 # display name, e.g. "Joel"), and the Gmail account address is whatever
@@ -259,9 +257,15 @@ def detect_newsletter(headers: dict[str, str]) -> tuple[bool, str | None]:
 # by a publisher; `notifications@`, `alerts@` and `donotreply@` are sent by
 # a system with no editorial voice at all.
 TRANSACTIONAL_SENDER_SIGNALS: list[str] = [
-    "notifications@", "notification@", "notify@",
-    "alerts@", "alerting@", "donotreply@", "do-not-reply@",
-    "mailer-daemon@", "postmaster@",
+    "notifications@",
+    "notification@",
+    "notify@",
+    "alerts@",
+    "alerting@",
+    "donotreply@",
+    "do-not-reply@",
+    "mailer-daemon@",
+    "postmaster@",
 ]
 
 # Providers whose mail is about the reader's own money or account, never
@@ -273,9 +277,16 @@ TRANSACTIONAL_SENDER_SIGNALS: list[str] = [
 # Matched against the whole From header, so an entry can be a domain
 # ("@gtbank.com") or a subdomain suffix that covers a family of senders.
 FINANCIAL_SENDER_DOMAINS: list[str] = [
-    "@gtbank.com", "@trading212.com", "@wise.com", "@revolut.com",
-    "@paypal.com", "@stripe.com", "@monzo.com", "@starlingbank.com",
-    "@accounts.google.com", "@account.microsoft.com",
+    "@gtbank.com",
+    "@trading212.com",
+    "@wise.com",
+    "@revolut.com",
+    "@paypal.com",
+    "@stripe.com",
+    "@monzo.com",
+    "@starlingbank.com",
+    "@accounts.google.com",
+    "@account.microsoft.com",
 ]
 
 # Subjects that can only be about the reader's own account.
@@ -292,11 +303,21 @@ FINANCIAL_SENDER_DOMAINS: list[str] = [
 # What remains is anchored on a possessive or a completed action, which a
 # headline about the world does not have.
 TRANSACTIONAL_SUBJECT_SIGNALS: list[str] = [
-    "transaction notification", "transaction alert",
-    "deposit successful", "withdrawal request", "withdrawal successful",
-    "payment received", "your receipt", "your invoice", "invoice #",
-    "order confirmation", "your statement", "statement is ready",
-    "account statement", "password reset", "reset your password",
+    "transaction notification",
+    "transaction alert",
+    "deposit successful",
+    "withdrawal request",
+    "withdrawal successful",
+    "payment received",
+    "your receipt",
+    "your invoice",
+    "invoice #",
+    "order confirmation",
+    "your statement",
+    "statement is ready",
+    "account statement",
+    "password reset",
+    "reset your password",
 ]
 
 
@@ -411,7 +432,10 @@ URGENT_BODY_CHARS = 800
 
 
 def detect_urgent(
-    subject: str, body: str, *, is_newsletter: bool = False,
+    subject: str,
+    body: str,
+    *,
+    is_newsletter: bool = False,
     is_financial: bool = False,
 ) -> tuple[bool, str | None]:
     """Does this mail carry a consequence worth naming out loud?
@@ -550,12 +574,12 @@ def message_to_item(raw: dict[str, Any], user_email: str) -> Item:
     body = clean_body(body_raw)
 
     is_newsletter, signal = detect_newsletter(headers)
-    is_transactional, transactional_signal = detect_transactional(
-        headers, subject
-    )
+    is_transactional, transactional_signal = detect_transactional(headers, subject)
     is_urgent, urgent_signal = detect_urgent(
-        subject, body,
-        is_newsletter=is_newsletter, is_financial=is_financial_sender(headers),
+        subject,
+        body,
+        is_newsletter=is_newsletter,
+        is_financial=is_financial_sender(headers),
     )
     priority, requires_response = classify_priority(
         is_newsletter=is_newsletter,

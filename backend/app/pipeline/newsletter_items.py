@@ -216,9 +216,7 @@ def _format_newsletters(newsletters: list[Item]) -> str:
     return "\n\n---\n\n".join(blocks)
 
 
-def _parse(
-    raw: str, newsletters: list[Item]
-) -> list[tuple[NewsletterItem, Item]]:
+def _parse(raw: str, newsletters: list[Item]) -> list[tuple[NewsletterItem, Item]]:
     """Turn the model's JSON into items, dropping anything malformed.
 
     Per-item rather than all-or-nothing. One unusable entry in a list of
@@ -282,14 +280,20 @@ def _parse(
         per_source[index] = per_source.get(index, 0) + 1
 
         source = newsletters[index]
-        out.append((
-            NewsletterItem(
-                headline=headline, gist=gist, subject=subject,
-                source_name=source.source_name, sender=source.author,
-                received_at=source.timestamp, email_id=source.id,
-            ),
-            source,
-        ))
+        out.append(
+            (
+                NewsletterItem(
+                    headline=headline,
+                    gist=gist,
+                    subject=subject,
+                    source_name=source.source_name,
+                    sender=source.author,
+                    received_at=source.timestamp,
+                    email_id=source.id,
+                ),
+                source,
+            )
+        )
     return out
 
 
@@ -329,7 +333,9 @@ async def extract_items(
         log.warning(
             "newsletters: %d issue(s) is over the %d the extraction prompt "
             "budgets for; taking the %d most recent and dropping %d",
-            len(newsletters), MAX_NEWSLETTERS, MAX_NEWSLETTERS,
+            len(newsletters),
+            MAX_NEWSLETTERS,
+            MAX_NEWSLETTERS,
             len(newsletters) - MAX_NEWSLETTERS,
         )
         newsletters = newsletters[:MAX_NEWSLETTERS]
@@ -344,14 +350,17 @@ async def extract_items(
     try:
         raw = await llm.complete(
             "You are a news editor preparing a morning briefing.",
-            prompt, temperature=0.2, json_mode=True,
+            prompt,
+            temperature=0.2,
+            json_mode=True,
             response_schema=_EXTRACT_SCHEMA,
         )
     except ContentBlocked as blocked:
         log.warning(
             "newsletter extraction refused (%s, %s); the briefing ships "
             "without the newsletter segment",
-            blocked.reason, blocked.stage,
+            blocked.reason,
+            blocked.stage,
         )
         return []
     except Exception:
@@ -363,7 +372,9 @@ async def extract_items(
     items = [item for item, _ in pairs]
     log.info(
         "newsletters: %d issue(s) yielded %d item(s) across %d subject(s)",
-        len(newsletters), len(items), len({i.subject.lower() for i in items}),
+        len(newsletters),
+        len(items),
+        len({i.subject.lower() for i in items}),
     )
     return items
 
@@ -426,7 +437,8 @@ async def research(
 
     return await research_ranked(
         {s.subject: len(s.outlets) for s in stories},
-        provider, max_subjects=max_subjects,
+        provider,
+        max_subjects=max_subjects,
         budget_seconds=RESEARCH_BUDGET_SECONDS,
     )
 
@@ -518,7 +530,7 @@ def _best_window(body: str, needle: str, *, width: int = WINDOW_CHARS) -> str:
     step = max(width // 3, 1)
     best, best_score = body[:width], -1
     for start in range(0, max(len(body) - width, 0) + 1, step):
-        window = body[start:start + width]
+        window = body[start : start + width]
         score = len(wanted & set(_WORD_RE.findall(window.lower())))
         if score > best_score:
             best, best_score = window, score
@@ -562,7 +574,9 @@ async def verify_extracted(
     except Exception as exc:
         log.warning(
             "newsletter item verification failed (%s) — keeping all %d "
-            "extracted item(s)", exc, len(pairs),
+            "extracted item(s)",
+            exc,
+            len(pairs),
         )
         return pairs
 
@@ -615,7 +629,9 @@ def _keep_supported(
             dropped += 1
             log.warning(
                 "newsletter item dropped as unsupported by %r (p=%.2f): %r",
-                source.source_name, probability, item.headline[:70],
+                source.source_name,
+                probability,
+                item.headline[:70],
             )
             continue
         kept.append((item, source))
@@ -624,7 +640,9 @@ def _keep_supported(
         log.warning(
             "newsletters: %d of %d extracted item(s) were not supported by "
             "the issue they came from and were dropped before becoming "
-            "source data", dropped, len(pairs),
+            "source data",
+            dropped,
+            len(pairs),
         )
     else:
         log.info(

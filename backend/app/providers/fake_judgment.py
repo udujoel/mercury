@@ -29,19 +29,50 @@ from app.core.providers import Claim, EmailJudgment
 
 # Money, access, or a same-day obligation — the "Serious" level.
 _SERIOUS = (
-    "restricted", "suspended", "unauthorised", "unauthorized", "overdue",
-    "expires today", "password", "invoice", "payment failed", "declined",
-    "locked", "security alert", "fraud", "verify your", "confirm your",
+    "restricted",
+    "suspended",
+    "unauthorised",
+    "unauthorized",
+    "overdue",
+    "expires today",
+    "password",
+    "invoice",
+    "payment failed",
+    "declined",
+    "locked",
+    "security alert",
+    "fraud",
+    "verify your",
+    "confirm your",
 )
 # A dated commitment or a named person waiting — the "Real" level.
 _REAL = (
-    "by thursday", "by friday", "by monday", "tomorrow", "this week",
-    "let me know", "can you", "could you", "review", "deadline", "before",
-    "waiting", "your thoughts", "sign off",
+    "by thursday",
+    "by friday",
+    "by monday",
+    "tomorrow",
+    "this week",
+    "let me know",
+    "can you",
+    "could you",
+    "review",
+    "deadline",
+    "before",
+    "waiting",
+    "your thoughts",
+    "sign off",
 )
 _MARKETING = (
-    "unsubscribe", "% off", "save 20", "upgrade your", "ready to",
-    "limited time", "newsletter", "webinar", "don't miss", "special offer",
+    "unsubscribe",
+    "% off",
+    "save 20",
+    "upgrade your",
+    "ready to",
+    "limited time",
+    "newsletter",
+    "webinar",
+    "don't miss",
+    "special offer",
 )
 
 
@@ -108,6 +139,7 @@ _PATH_RE = re.compile(
     r"|extracted\[\d+\](?:\.[a-z_]+)?)`"
 )
 
+
 def _resolve(state: dict, path: str) -> str:
     """`lines[3]` / `segments.inbox` -> that piece of the state, or ""."""
     match = re.fullmatch(r"lines\[(\d+)\]", path)
@@ -170,8 +202,11 @@ def _flatten(summary) -> str:
 # `_NORMAL` is what each family looks like when nothing is wrong;
 # `_FLIP` is the marker a test puts in a turn to make that family abnormal.
 _NORMAL = {
-    "ground": 0.98, "relay": 0.02, "challenge": 0.98,
-    "cluster": 0.98, "support": 0.98,
+    "ground": 0.98,
+    "relay": 0.02,
+    "challenge": 0.98,
+    "cluster": 0.98,
+    "support": 0.98,
     # Inverted against `cluster`, and the same question. The probe asks
     # about pairs the embeddings SEPARATED, so "nothing is wrong" means
     # the threshold was right and they are different events — a low
@@ -228,9 +263,7 @@ class FakeClaimJudge:
     ) -> dict[str, float | None]:
         self.claim_calls.append((state, claims))
         return {
-            c.key: (
-                None if c.key in self.unjudged_keys else judge_claim(c, state)
-            )
+            c.key: (None if c.key in self.unjudged_keys else judge_claim(c, state))
             for c in claims
         }
 

@@ -43,7 +43,8 @@ def _manifest(briefing_id: str, age_hours: float) -> BriefingManifest:
         duration_ms=420_000,
         audio_url=f"/briefing/{briefing_id}/audio",
         turns=[{"speaker": "A", "segment": "cold_open", "text": "Morning."}],
-        segments=[], sources=[],
+        segments=[],
+        sources=[],
     )
 
 
@@ -71,9 +72,11 @@ class _Storage:
 def storage(monkeypatch):
     def _install(manifests, **kw):
         import app.synthesis.storage as st
+
         built = _Storage(manifests, **kw)
         monkeypatch.setattr(st, "build_storage", lambda: built)
         return built
+
     return _install
 
 
@@ -114,11 +117,13 @@ def test_a_dropped_overnight_slot_is_caught(storage):
 def test_the_newest_is_what_counts_not_the_first(storage):
     """Ids are date-prefixed and fixed-width, so `max()` is the newest —
     the same property the archive and retention already rely on."""
-    storage({
-        "2026-09-19-0612": _manifest("2026-09-19-0612", 48.0),
-        "2026-09-21-0012": _manifest("2026-09-21-0012", 2.0),
-        "2026-09-20-1812": _manifest("2026-09-20-1812", 20.0),
-    })
+    storage(
+        {
+            "2026-09-19-0612": _manifest("2026-09-19-0612", 48.0),
+            "2026-09-21-0012": _manifest("2026-09-21-0012", 2.0),
+            "2026-09-20-1812": _manifest("2026-09-20-1812", 20.0),
+        }
+    )
     assert _run(8) == 0
 
 
@@ -149,8 +154,7 @@ def test_a_listing_failure_is_not_reported_as_a_stall(storage):
 
 
 def test_an_unreadable_newest_manifest_is_not_a_stall(storage):
-    storage({"2026-09-21-0012": _manifest("2026-09-21-0012", 1.0)},
-            load_raises=True)
+    storage({"2026-09-21-0012": _manifest("2026-09-21-0012", 1.0)}, load_raises=True)
     assert _run(8) == 4
 
 
@@ -173,9 +177,7 @@ def test_a_naive_timestamp_does_not_crash_the_alarm(storage):
     assert _run(8) == 0
 
 
-def test_a_briefing_from_the_future_is_reported_not_silently_accepted(
-    storage, caplog
-):
+def test_a_briefing_from_the_future_is_reported_not_silently_accepted(storage, caplog):
     """Clock skew gives a negative age, which passes every floor silently
     and forever — the alarm quietly stops meaning anything."""
     m = _manifest("2026-09-21-0012", -6.0)

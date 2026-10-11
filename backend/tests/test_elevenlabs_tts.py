@@ -344,6 +344,7 @@ async def test_with_no_fallback_available_the_original_failure_is_raised():
     """An ElevenLabs-only deployment. The honest error is the one that
     actually happened, not the one from trying to build a provider the
     machine was never configured for."""
+
     def _no_fallback():
         raise RuntimeError("GOOGLE_TTS_CREDENTIALS is not set")
 
@@ -516,9 +517,9 @@ async def test_a_paid_plan_402_names_the_voice(caplog, monkeypatch):
     with caplog.at_level(logging.ERROR), pytest.raises(httpx.HTTPStatusError):
         await provider.synthesize("hello", "voice-xyz")
 
-    assert any("PREMADE" in r.getMessage() for r in caplog.records), (
-        "a paid_plan_required 402 must say what to do about it"
-    )
+    assert any(
+        "PREMADE" in r.getMessage() for r in caplog.records
+    ), "a paid_plan_required 402 must say what to do about it"
     assert any("voice-xyz" in r.getMessage() for r in caplog.records)
 
 
@@ -546,9 +547,9 @@ async def test_a_spent_quota_402_does_not_blame_the_voice(caplog, monkeypatch):
 
     rendered = " ".join(r.getMessage() for r in caplog.records)
     assert "insufficient_credits" in rendered, "the body still goes to the log"
-    assert "PREMADE" not in rendered, (
-        "a spent quota is not a reason to change the voice"
-    )
+    assert (
+        "PREMADE" not in rendered
+    ), "a spent quota is not a reason to change the voice"
 
 
 # ── the manifest says when the fallback voice read it (task 22) ───────
@@ -560,8 +561,11 @@ def test_an_unbuildable_elevenlabs_is_reported_as_a_fallback(monkeypatch):
     voice" from "the voice you chose was unavailable"."""
     import app.core.config as config
 
-    monkeypatch.setattr(config, "get_settings", _settings(
-        tts_provider="elevenlabs", elevenlabs_api_key="sk-set-but-refused"))
+    monkeypatch.setattr(
+        config,
+        "get_settings",
+        _settings(tts_provider="elevenlabs", elevenlabs_api_key="sk-set-but-refused"),
+    )
     _build_with_stubs(monkeypatch, elevenlabs_raises=True)
 
     assert getattr(build_tts_provider(), "failed_over", False) is True

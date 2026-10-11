@@ -171,9 +171,9 @@ def test_the_run_summary_is_silent_outside_actions(monkeypatch):
 
 def _exhausted() -> Exception:
     """The real exception from that run, by name and shape."""
-    return type(
-        "ResourceExhausted", (Exception,), {}
-    )("429 Your project has exceeded its monthly spending cap.")
+    return type("ResourceExhausted", (Exception,), {})(
+        "429 Your project has exceeded its monthly spending cap."
+    )
 
 
 def test_a_failing_run_is_not_reported_as_a_wiring_defect(caplog):
@@ -281,9 +281,7 @@ def test_a_doubled_status_code_is_not_repeated_back():
     # The REAL library exception, because the doubling is the library's
     # doing — a hand-rolled stand-in does not reproduce it, and a test
     # that cannot see the defect cannot protect the fix.
-    real = ResourceExhausted(
-        "429 Your project has exceeded its monthly spending cap."
-    )
+    real = ResourceExhausted("429 Your project has exceeded its monthly spending cap.")
     assert "429 429" in str(real), "precondition: the library doubles it"
     assert _detail_of(real).startswith("429 Your project")
     assert "429 429" not in _detail_of(real)
@@ -311,8 +309,8 @@ def test_a_later_failure_cannot_explain_an_earlier_stage(caplog):
 
     degraded: list[str] = []
     census = RunCensus(degraded=degraded)
-    census.record("newsletters", took=13, made=0)   # nothing had failed yet
-    degraded.append("world")                        # the refusal, afterwards
+    census.record("newsletters", took=13, made=0)  # nothing had failed yet
+    degraded.append("world")  # the refusal, afterwards
     census.record("script", took=6, made=29)
 
     with caplog.at_level(logging.WARNING):
@@ -351,12 +349,12 @@ def test_only_unexplained_stages_reach_the_run_summary():
     seen: list[list[str]] = []
     degraded = ["calendar"]
     census = RunCensus(on_starved=seen.append, degraded=degraded)
-    census.record("inbox", took=21, made=0)          # explained by calendar
-    census.record("newsletters", took=13, made=0)    # explained too
+    census.record("inbox", took=21, made=0)  # explained by calendar
+    census.record("newsletters", took=13, made=0)  # explained too
 
-    census.stages.append(type(census.stages[0])(
-        name="widgets", took=9, made=0, degraded_before=()
-    ))                                                # nothing explains this
+    census.stages.append(
+        type(census.stages[0])(name="widgets", took=9, made=0, degraded_before=())
+    )  # nothing explains this
     census.report()
 
     assert seen == [["widgets"]], (

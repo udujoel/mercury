@@ -220,3 +220,16 @@ def test_ios_ci_does_not_pin_a_simulator_model():
 
     assert "name=iPhone" not in test_step["run"]
     assert "steps.sim.outputs.udid" in test_step["run"]
+
+
+def test_backend_ci_keeps_the_code_formatted():
+    """ROADMAP task 43. CLAUDE.md says "format on save", and by 2026-10-11
+    88 of 124 backend files had drifted from it. The whole backend was
+    formatted once; this keeps CI checking so it cannot drift again."""
+    runs = [
+        step.get("run", "")
+        for job in _spec("backend.yml")["jobs"].values()
+        for step in job["steps"]
+    ]
+
+    assert any("ruff format --check" in run for run in runs)

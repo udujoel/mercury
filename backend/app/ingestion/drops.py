@@ -79,8 +79,10 @@ def report_drops(log: logging.Logger, label: str, *, total: int, dropped: int) -
 
     summary = f"{label}: {dropped} of {total} items failed to normalise"
 
-    if total and dropped >= ESCALATION_MIN_DROPPED and dropped / total >= (
-        ESCALATION_RATIO
+    if (
+        total
+        and dropped >= ESCALATION_MIN_DROPPED
+        and dropped / total >= (ESCALATION_RATIO)
     ):
         log.error(
             "%s — treating this source as failed rather than reporting an "

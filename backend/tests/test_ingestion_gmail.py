@@ -42,8 +42,7 @@ async def test_newsletter_is_low_priority_never_requires_response():
     """
     items = await gmail.fetch_emails(fixture=FIXTURE)
     newsletters = [
-        i for i in items
-        if i.raw.get("is_newsletter") and not i.raw.get("is_urgent")
+        i for i in items if i.raw.get("is_newsletter") and not i.raw.get("is_urgent")
     ]
     assert newsletters, "fixture should contain at least one newsletter"
     for item in newsletters:

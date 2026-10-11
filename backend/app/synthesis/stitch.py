@@ -166,7 +166,8 @@ async def synthesize_briefing(
             log.error(
                 "turn %d failed to synthesize; dropping it from the manifest "
                 "so transcript sync stays aligned: %.60s",
-                idx, turn.text,
+                idx,
+                turn.text,
             )
             continue
 
@@ -284,9 +285,14 @@ async def synthesize_briefing(
         narrator_fallback=bool(getattr(tts, "failed_over", False)),
     )
 
-    log.info("synthesized %s: %d turns, %.1fs, %.1fKB, format=%s",
-             briefing_id, len(turns), len(combined) / 1000,
-             len(audio_bytes) / 1024, audio_format)
+    log.info(
+        "synthesized %s: %d turns, %.1fs, %.1fKB, format=%s",
+        briefing_id,
+        len(turns),
+        len(combined) / 1000,
+        len(audio_bytes) / 1024,
+        audio_format,
+    )
 
     return audio_bytes, manifest, audio_format
 
@@ -311,7 +317,8 @@ def _remap_source_refs(
         if new_index is None:
             log.debug(
                 "dropping source ref for un-synthesised turn %d (%s)",
-                ref.turn_index, ref.title[:60],
+                ref.turn_index,
+                ref.title[:60],
             )
             continue
         remapped.append(ref.model_copy(update={"turn_index": new_index}))
@@ -332,7 +339,8 @@ def _exported_duration_ms(
     except Exception:
         log.warning(
             "could not measure the exported %s; using the pre-export length, "
-            "which may differ by a frame", audio_format,
+            "which may differ by a frame",
+            audio_format,
         )
         return len(fallback)
 
@@ -371,11 +379,7 @@ def _duck(
         # than stopping the instant a host speaks.
         window = min(DUCK_MS, len(music.intro), duration - intro_ms)
         if window > 0:
-            tail = (
-                music.intro[-window:]
-                .apply_gain(DUCK_GAIN_DB)
-                .fade_out(window)
-            )
+            tail = music.intro[-window:].apply_gain(DUCK_GAIN_DB).fade_out(window)
             combined = combined.overlay(tail, position=intro_ms)
 
     if music.outro is not None:
@@ -383,11 +387,7 @@ def _duck(
         # arrives with the voice rather than after it.
         window = min(DUCK_MS, len(music.outro), duration)
         if window > 0:
-            head = (
-                music.outro[:window]
-                .apply_gain(DUCK_GAIN_DB)
-                .fade_in(window)
-            )
+            head = music.outro[:window].apply_gain(DUCK_GAIN_DB).fade_in(window)
             combined = combined.overlay(head, position=duration - window)
             outro_played_ms = window
 
@@ -411,7 +411,10 @@ def _export(combined: AudioSegment) -> tuple[bytes, str]:
                 tmp_path = Path(tmp.name)
             try:
                 combined.export(
-                    str(tmp_path), format="ipod", codec="aac", bitrate="64k",
+                    str(tmp_path),
+                    format="ipod",
+                    codec="aac",
+                    bitrate="64k",
                     parameters=["-ac", "1"],
                 )
                 data = tmp_path.read_bytes()
@@ -422,8 +425,7 @@ def _export(combined: AudioSegment) -> tuple[bytes, str]:
             return data, COMPRESSED_EXTENSION
         except Exception:
             log.exception(
-                "ffmpeg is installed but m4a/aac export failed; falling "
-                "back to WAV"
+                "ffmpeg is installed but m4a/aac export failed; falling " "back to WAV"
             )
     else:
         log.warning(
@@ -456,9 +458,7 @@ async def _synthesize_all(
                 speech = await tts.synthesize(turn.text, voice)
                 raw = speech.audio
                 return (
-                    AudioSegment.from_file(
-                        io.BytesIO(raw), format=_sniff_format(raw)
-                    ),
+                    AudioSegment.from_file(io.BytesIO(raw), format=_sniff_format(raw)),
                     speech.words,
                 )
             except Exception as exc:
@@ -468,8 +468,11 @@ async def _synthesize_all(
                 # only way to tell a rate limit from a bad payload.
                 log.error(
                     "TTS failed for turn (%s, %d chars) [%s: %s]: %.60s",
-                    turn.speaker, len(turn.text),
-                    type(exc).__name__, exc, turn.text,
+                    turn.speaker,
+                    len(turn.text),
+                    type(exc).__name__,
+                    exc,
+                    turn.text,
                 )
                 return None
 
@@ -502,9 +505,11 @@ def _segment_offsets(turns: list[Turn]) -> list[dict]:
         if key in seen or turn.start_ms is None:
             continue
         seen.add(key)
-        out.append({
-            "id": key,
-            "label": SEGMENT_LABELS[turn.segment],
-            "start_ms": turn.start_ms,
-        })
+        out.append(
+            {
+                "id": key,
+                "label": SEGMENT_LABELS[turn.segment],
+                "start_ms": turn.start_ms,
+            }
+        )
     return out

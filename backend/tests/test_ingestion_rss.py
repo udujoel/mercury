@@ -203,9 +203,9 @@ async def test_long_summary_never_triggers_extraction(monkeypatch):
 
     monkeypatch.setattr(rss, "_extract_full_text", spy_extract)
     await _fetch(feeds=[TECH_FEED], hours=24)
-    assert not any("build-systems" in u for u in extraction_urls), (
-        "the >=500 char summary entry should skip extraction"
-    )
+    assert not any(
+        "build-systems" in u for u in extraction_urls
+    ), "the >=500 char summary entry should skip extraction"
 
 
 # ──────────────────────────────────────────────────────────────
@@ -245,7 +245,10 @@ async def test_one_dead_live_feed_never_takes_down_the_others(monkeypatch):
 
     monkeypatch.setattr(rss, "_fetch_feed_live", fake_fetch_feed_live)
     items = await rss.fetch_articles(
-        feeds=["https://good.example.com/feed.xml", "https://dead.example.com/feed.xml"],
+        feeds=[
+            "https://good.example.com/feed.xml",
+            "https://dead.example.com/feed.xml",
+        ],
         fixture=None,
         now=FIXED_NOW,
     )
@@ -437,10 +440,12 @@ async def test_extraction_runs_on_exactly_one_thread(monkeypatch):
     monkeypatch.setattr(rss, "safe_get", _fake_get)
 
     semaphore = asyncio.Semaphore(rss.EXTRACTION_CONCURRENCY)
-    await asyncio.gather(*(
-        rss._extract_full_text(None, f"https://example.test/{i}", semaphore)
-        for i in range(12)
-    ))
+    await asyncio.gather(
+        *(
+            rss._extract_full_text(None, f"https://example.test/{i}", semaphore)
+            for i in range(12)
+        )
+    )
 
     assert len(seen) == 12, "every extraction should have run"
     assert len(set(seen)) == 1, (

@@ -29,8 +29,14 @@ NOW = datetime(2026, 9, 21, 7, 0, tzinfo=UTC)
 
 
 def email(
-    *, name="Sender", subject="Subject", body="body", newsletter=False,
-    when=NOW, priority=Priority.MEDIUM, requires_response=False,
+    *,
+    name="Sender",
+    subject="Subject",
+    body="body",
+    newsletter=False,
+    when=NOW,
+    priority=Priority.MEDIUM,
+    requires_response=False,
 ) -> Item:
     return Item(
         source_type=SourceType.EMAIL,
@@ -59,8 +65,13 @@ def test_state_is_an_allowlist_not_the_whole_item():
     item.raw["oauth_refresh_token"] = "must-not-leave"
     state = email_state(item)
     assert set(state) == {
-        "sender_name", "sender_address", "subject", "to",
-        "looks_like_bulk_mail", "received", "body_excerpt",
+        "sender_name",
+        "sender_address",
+        "subject",
+        "to",
+        "looks_like_bulk_mail",
+        "received",
+        "body_excerpt",
     }
     assert "must-not-leave" not in str(state)
 
@@ -71,12 +82,12 @@ def test_state_is_an_allowlist_not_the_whole_item():
 @pytest.mark.parametrize(
     "consequence,expected",
     [
-        (3.00, Priority.HIGH),    # measured: bank account-restriction warning
-        (1.99, Priority.HIGH),    # measured: colleague's dated request
-        (1.50, Priority.HIGH),    # boundary
+        (3.00, Priority.HIGH),  # measured: bank account-restriction warning
+        (1.99, Priority.HIGH),  # measured: colleague's dated request
+        (1.50, Priority.HIGH),  # boundary
         (1.49, Priority.MEDIUM),
         (0.50, Priority.MEDIUM),
-        (0.00, Priority.LOW),     # measured: "Ready to upgrade?"
+        (0.00, Priority.LOW),  # measured: "Ready to upgrade?"
     ],
 )
 def test_consequence_maps_to_priority(consequence, expected):
@@ -149,8 +160,8 @@ async def test_one_unjudged_email_keeps_its_heuristic_priority():
     await triage_emails(
         [judged, unjudged], FakeJudgmentProvider(fail_indices=frozenset({1}))
     )
-    assert judged.priority is Priority.HIGH      # Jev overrode the heuristic
-    assert unjudged.priority is Priority.HIGH    # heuristic survived
+    assert judged.priority is Priority.HIGH  # Jev overrode the heuristic
+    assert unjudged.priority is Priority.HIGH  # heuristic survived
     assert unjudged.consequence is None
 
 
@@ -168,6 +179,7 @@ async def test_a_provider_that_raises_does_not_take_the_briefing_down():
 async def test_a_short_result_list_is_discarded_rather_than_misaligned():
     """Zipping 1 judgment onto 2 emails would hand the second email the
     first one's verdict. Wrong-in-a-known-way beats wrong-and-invisible."""
+
     class Truncating:
         async def triage_emails(self, states, *, timeout=20.0):
             return [
@@ -214,7 +226,8 @@ def test_judged_items_sort_ahead_of_unjudged_in_the_same_tier():
     judged.consequence = 2.0
     unjudged = email(name="Unjudged", when=NOW, priority=Priority.HIGH)
     assert [i.source_name for i in score_emails([unjudged, judged])] == [
-        "Judged", "Unjudged",
+        "Judged",
+        "Unjudged",
     ]
 
 
@@ -387,7 +400,7 @@ async def test_a_hung_provider_is_bounded_by_the_total_budget(monkeypatch):
         lambda: Settings(
             typesafe_api_key="k",
             judgment_concurrency=2,
-            judgment_timeout_seconds=30.0,   # per-request: far beyond the budget
+            judgment_timeout_seconds=30.0,  # per-request: far beyond the budget
             judgment_total_budget_seconds=0.3,
         ),
     )
@@ -415,7 +428,6 @@ def test_the_production_workflow_passes_the_key():
     caller that is a config file is the one a reader of Python does not see.
     """
     workflow = (
-        pathlib.Path(__file__).resolve().parents[2]
-        / ".github/workflows/briefing.yml"
+        pathlib.Path(__file__).resolve().parents[2] / ".github/workflows/briefing.yml"
     ).read_text()
     assert "TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}" in workflow

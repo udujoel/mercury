@@ -62,6 +62,7 @@ def _digest(briefing_id: str) -> BriefingDigest:
         ],
     )
 
+
 def _storage_with(tmp_path, *briefing_ids: str) -> LocalFilesystemStorage:
     storage = LocalFilesystemStorage(base_dir=tmp_path)
     for briefing_id in briefing_ids:
@@ -259,7 +260,10 @@ def test_retention_removes_the_digest_too(tmp_path):
     """
     storage = LocalFilesystemStorage(base_dir=tmp_path)
     storage.save(
-        "2026-01-01", b"audio bytes", "wav", _manifest("2026-01-01"),
+        "2026-01-01",
+        b"audio bytes",
+        "wav",
+        _manifest("2026-01-01"),
         _digest("2026-01-01"),
     )
     digest_path = tmp_path / "2026-01-01.digest.json"
@@ -271,6 +275,7 @@ def test_retention_removes_the_digest_too(tmp_path):
     assert not digest_path.exists()
     assert storage.load_digest("2026-01-01") is None
     assert sorted(p.name for p in tmp_path.iterdir()) == []
+
 
 def test_a_failed_delete_is_not_reported_as_deleted(tmp_path, monkeypatch):
     """prune returns what it deleted, and the caller logs that list. A
@@ -324,9 +329,7 @@ def test_prune_dry_run_names_what_would_go_without_deleting_it(
     assert storage.load_manifest("2026-01-01") is not None
 
 
-def test_prune_reports_a_bad_window_as_a_configuration_error(
-    monkeypatch, tmp_path
-):
+def test_prune_reports_a_bad_window_as_a_configuration_error(monkeypatch, tmp_path):
     storage = _storage_with(tmp_path, TODAY)
     monkeypatch.setattr(
         "app.synthesis.storage.build_storage", lambda: storage, raising=True
@@ -400,21 +403,22 @@ def test_retention_keeps_or_drops_a_whole_day(tmp_path):
 
     storage = LocalFilesystemStorage(base_dir=tmp_path)
     ids = [
-        "2026-09-07-0412", "2026-09-07-1012",   # today, two runs
-        "2026-09-06-0412", "2026-09-06-2212",   # yesterday, two runs
-        "2026-09-01",                            # old, and day-only
-        "2026-09-01-1612",                       # old, and timed
+        "2026-09-07-0412",
+        "2026-09-07-1012",  # today, two runs
+        "2026-09-06-0412",
+        "2026-09-06-2212",  # yesterday, two runs
+        "2026-09-01",  # old, and day-only
+        "2026-09-01-1612",  # old, and timed
     ]
     for briefing_id in ids:
         (tmp_path / f"{briefing_id}.manifest.json").write_text("{}")
 
-    deleted = prune_briefings(
-        storage, retention_days=3, today_id="2026-09-07-1012"
-    )
+    deleted = prune_briefings(storage, retention_days=3, today_id="2026-09-07-1012")
 
-    assert sorted(deleted) == ["2026-09-01", "2026-09-01-1612"], (
-        "the old day goes whole, in both id shapes"
-    )
+    assert sorted(deleted) == [
+        "2026-09-01",
+        "2026-09-01-1612",
+    ], "the old day goes whole, in both id shapes"
     kept = set(storage.list_briefing_ids())
     assert "2026-09-07-0412" in kept, "an earlier run of TODAY is not old"
     assert "2026-09-06-2212" in kept
@@ -438,9 +442,7 @@ def test_a_new_id_never_sorts_before_one_that_exists(tmp_path, monkeypatch):
 
     storage = LocalFilesystemStorage(base_dir=tmp_path)
     monkeypatch.setattr(cli, "build_storage", lambda: storage, raising=False)
-    monkeypatch.setattr(
-        "app.synthesis.storage.build_storage", lambda: storage
-    )
+    monkeypatch.setattr("app.synthesis.storage.build_storage", lambda: storage)
 
     # An empty day takes the clock, unchanged.
     assert cli._free_briefing_id("2026-09-07", "0412") == "2026-09-07-0412"
@@ -507,7 +509,8 @@ def test_a_full_late_hour_finds_the_next_free_minute(tmp_path, monkeypatch):
     # get a name — a NAMING concern costing the morning is the failure rule
     # 7 exists to prevent — and it must not be one already taken.
     got = cli._free_briefing_id("2026-09-07", "0412")
-    assert got not in {"2026-09-07-2359", "2026-09-07-2357"}, (
-        f"collided with an existing briefing: {got}"
-    )
+    assert got not in {
+        "2026-09-07-2359",
+        "2026-09-07-2357",
+    }, f"collided with an existing briefing: {got}"
     assert got.startswith("2026-09-07-"), got

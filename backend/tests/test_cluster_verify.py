@@ -23,6 +23,8 @@ def _slug(title: str) -> str:
     """Deterministic. `hash()` on a str is salted per process, so using it
     here would give the fixture different ids on every run."""
     return hashlib.sha256(title.encode()).hexdigest()[:12]
+
+
 DIFFERENT = "__DIFFERENT_EVENT__"
 
 
@@ -33,17 +35,18 @@ def item(title, *, source="Reuters", body="body", url=None):
     # silently empties. Derived from the title rather than passed in, so a
     # test cannot forget.
     return Item(
-        source_type=SourceType.RSS, source_name=source, title=title,
-        body=body, url=url or f"https://example.test/{_slug(title)}",
+        source_type=SourceType.RSS,
+        source_name=source,
+        title=title,
+        body=body,
+        url=url or f"https://example.test/{_slug(title)}",
         timestamp=NOW,
     )
 
 
 def story(canonical, *members):
     all_members = [canonical, *members]
-    return Story(
-        cluster_id="c1", canonical=canonical, members=all_members
-    )
+    return Story(cluster_id="c1", canonical=canonical, members=all_members)
 
 
 # ── fallback ──────────────────────────────────────────────────────────
@@ -83,8 +86,9 @@ async def test_an_empty_list_makes_no_call():
 async def test_a_rejected_member_is_pulled_out_as_its_own_story():
     """The SpaceX / Rocket Lab case: one cluster, two different events."""
     canonical = item("SpaceX launches 23 Starlink satellites")
-    intruder = item(f"Rocket Lab Electron reaches orbit {DIFFERENT}",
-                    source="Ars Technica")
+    intruder = item(
+        f"Rocket Lab Electron reaches orbit {DIFFERENT}", source="Ars Technica"
+    )
     result = await verify_stories([story(canonical, intruder)], FakeClaimJudge())
 
     assert len(result) == 2
@@ -97,17 +101,14 @@ async def test_a_rejected_member_is_pulled_out_as_its_own_story():
 async def test_an_accepted_member_stays():
     canonical = item("TechCorp acquires DataFlow")
     commentary = item("What the DataFlow buy means", source="Stratechery")
-    result = await verify_stories(
-        [story(canonical, commentary)], FakeClaimJudge()
-    )
+    result = await verify_stories([story(canonical, commentary)], FakeClaimJudge())
     assert len(result) == 1
     assert len(result[0].members) == 2
 
 
 async def test_no_item_is_lost_when_a_cluster_splits():
     """Ejection must move an item, never drop it — it is still news."""
-    members = [item("A"), item(f"B {DIFFERENT}"), item("C"),
-               item(f"D {DIFFERENT}")]
+    members = [item("A"), item(f"B {DIFFERENT}"), item("C"), item(f"D {DIFFERENT}")]
     result = await verify_stories([story(*members)], FakeClaimJudge())
     seen = {m.id for s in result for m in s.members}
     assert seen == {m.id for m in members}
@@ -129,7 +130,7 @@ async def test_the_canonical_is_never_a_candidate_for_ejection():
     judge = FakeClaimJudge()
     result = await verify_stories([story(canonical, member)], judge)
     _, claims = judge.claim_calls[0]
-    assert len(claims) == 1                    # only the non-canonical member
+    assert len(claims) == 1  # only the non-canonical member
     assert any(s.canonical.id == canonical.id for s in result)
 
 
@@ -161,8 +162,8 @@ async def test_every_cluster_is_judged_in_one_request():
     await verify_stories([a, b, story(item("solo"))], judge)
     assert len(judge.claim_calls) == 1
     state, claims = judge.claim_calls[0]
-    assert len(claims) == 1 + 2                # non-canonical members only
-    assert len(state["clusters"]) == 2         # the singleton is not sent
+    assert len(claims) == 1 + 2  # non-canonical members only
+    assert len(state["clusters"]) == 2  # the singleton is not sent
 
 
 async def test_the_payload_is_an_allowlist_and_truncated():
@@ -208,8 +209,12 @@ def colliding(title="Your daily brief", body="body"):
     object identity for this exact reason.
     """
     return Item(
-        source_type=SourceType.EMAIL, source_name="Morning Brew",
-        title=title, body=body, url=None, timestamp=NOW,
+        source_type=SourceType.EMAIL,
+        source_name="Morning Brew",
+        title=title,
+        body=body,
+        url=None,
+        timestamp=NOW,
     )
 
 
@@ -229,9 +234,7 @@ async def test_a_cluster_that_was_never_judged_is_not_touched():
     judged = story(canonical, twin_a)
     untouched = Story(cluster_id="c9", canonical=twin_b, members=[twin_b])
 
-    result = await verify_stories(
-        [judged, untouched], _RejectEverything()
-    )
+    result = await verify_stories([judged, untouched], _RejectEverything())
     survivor = next(s for s in result if s.cluster_id == "c9")
     assert survivor.members == [twin_b]
     assert any(m is survivor.canonical for m in survivor.members)
@@ -243,16 +246,15 @@ async def test_an_approved_member_is_not_ejected_by_its_id_twin():
 
     class _RejectFirstOnly:
         async def judge_claims(self, state, claims, *, timeout=20.0):
-            return {c.key: (0.02 if i == 0 else 0.98)
-                    for i, c in enumerate(claims)}
+            return {c.key: (0.02 if i == 0 else 0.98) for i, c in enumerate(claims)}
 
     result = await verify_stories(
         [story(canonical, twin_a, twin_b)], _RejectFirstOnly()
     )
     narrowed = next(s for s in result if s.cluster_id == "c1")
-    assert any(m is twin_b for m in narrowed.members), (
-        "the approved twin was ejected because its id-twin was rejected"
-    )
+    assert any(
+        m is twin_b for m in narrowed.members
+    ), "the approved twin was ejected because its id-twin was rejected"
 
 
 async def test_two_ejected_id_twins_get_distinct_cluster_ids():
@@ -278,8 +280,12 @@ async def test_an_email_member_is_truncated_like_any_other():
     """
     canonical = item("TechCorp acquires DataFlow")
     newsletter = Item(
-        source_type=SourceType.EMAIL, source_name="Stratechery",
-        title="The DataFlow deal", body="y" * 5000, url=None, timestamp=NOW,
+        source_type=SourceType.EMAIL,
+        source_name="Stratechery",
+        title="The DataFlow deal",
+        body="y" * 5000,
+        url=None,
+        timestamp=NOW,
     )
     judge = FakeClaimJudge()
     await verify_stories([story(canonical, newsletter)], judge)
@@ -298,9 +304,10 @@ async def test_a_malformed_response_degrades_instead_of_raising():
     what the briefing survives, and "answered strangely" has to degrade the
     same way "timed out" does.
     """
+
     class _Malformed:
         async def judge_claims(self, state, claims, *, timeout=20.0):
-            return [0.9]                      # a list, not the documented dict
+            return [0.9]  # a list, not the documented dict
 
     stories = [story(item("A"), item("B"))]
     assert await verify_stories(stories, _Malformed()) == stories
@@ -309,7 +316,7 @@ async def test_a_malformed_response_degrades_instead_of_raising():
 async def test_a_response_missing_keys_leaves_those_members_alone():
     class _Empty:
         async def judge_claims(self, state, claims, *, timeout=20.0):
-            return {}                         # well-formed, but answers nothing
+            return {}  # well-formed, but answers nothing
 
     stories = [story(item("A"), item("B"))]
     result = await verify_stories(stories, _Empty())

@@ -92,9 +92,7 @@ def _broken_event(event_id: str) -> dict:
 # ──────────────────────────────────────────────────────────────
 
 
-async def test_gmail_logs_each_dropped_message_with_id_and_traceback(
-    tmp_path, caplog
-):
+async def test_gmail_logs_each_dropped_message_with_id_and_traceback(tmp_path, caplog):
     fixture = _gmail_fixture(
         tmp_path, [_good_message("ok1"), _good_message("ok2"), _broken_message("bad1")]
     )
@@ -126,9 +124,7 @@ async def test_gmail_reports_the_drop_count(tmp_path, caplog):
     assert any("1 of 7" in m for m in summaries), summaries
 
 
-async def test_calendar_logs_each_dropped_event_with_id_and_traceback(
-    tmp_path, caplog
-):
+async def test_calendar_logs_each_dropped_event_with_id_and_traceback(tmp_path, caplog):
     fixture = _calendar_fixture(
         tmp_path, [_good_event("ok1"), _good_event("ok2"), _broken_event("bad1")]
     )
@@ -143,9 +139,7 @@ async def test_calendar_logs_each_dropped_event_with_id_and_traceback(
     assert drop_records[0].exc_info is not None
 
 
-async def test_cancelled_and_declined_events_are_not_counted_as_drops(
-    tmp_path, caplog
-):
+async def test_cancelled_and_declined_events_are_not_counted_as_drops(tmp_path, caplog):
     """A filtered-out event is not a failure. `event_to_calendar_event`
     returns None for cancelled events and for ones the user declined, and
     counting those as drops would fire the escalation on a perfectly healthy
@@ -161,9 +155,7 @@ async def test_cancelled_and_declined_events_are_not_counted_as_drops(
         events = await calendar_mod.fetch_events(fixture=fixture)
 
     assert len(events) == 1
-    assert not [
-        r for r in caplog.records if "failed to normalise" in r.getMessage()
-    ]
+    assert not [r for r in caplog.records if "failed to normalise" in r.getMessage()]
 
 
 # ──────────────────────────────────────────────────────────────

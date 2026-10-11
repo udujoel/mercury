@@ -86,7 +86,10 @@ class GeminiEmbeddingProvider:
                 delay = BASE_DELAY_S * (2 ** (attempt - 1)) + random.uniform(0, 0.5)
                 logger.warning(
                     "gemini embeddings %s on attempt %d/%d, retrying in %.1fs",
-                    status, attempt, MAX_ATTEMPTS, delay,
+                    status,
+                    attempt,
+                    MAX_ATTEMPTS,
+                    delay,
                 )
                 await asyncio.sleep(delay)
         raise last_error  # pragma: no cover - unreachable, loop always returns/raises

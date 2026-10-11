@@ -43,8 +43,11 @@ def test_check_filler_words_passes_known_good():
 def test_check_filler_words_no_false_positive_on_substring():
     # "um" is a substring of "bump" and "album" — must not false-positive.
     turns = [
-        Turn(speaker="A", segment=Segment.COLD_OPEN,
-             text="The lxml version bump landed, and so did the new album."),
+        Turn(
+            speaker="A",
+            segment=Segment.COLD_OPEN,
+            text="The lxml version bump landed, and so did the new album.",
+        ),
     ]
     assert check_filler_words(turns) == []
 
@@ -97,8 +100,11 @@ def test_check_disagreement_flags_known_bad_in_calendar():
 def test_check_disagreement_passes_known_good_in_calendar():
     turns = [
         Turn(speaker="A", segment=Segment.CALENDAR, text="Meeting at nine."),
-        Turn(speaker="B", segment=Segment.CALENDAR,
-             text="Actually, I'd push back on moving it that early."),
+        Turn(
+            speaker="B",
+            segment=Segment.CALENDAR,
+            text="Actually, I'd push back on moving it that early.",
+        ),
     ]
     result = check_disagreement(turns)
     segments = [g["segment"] for g in result]
@@ -150,8 +156,11 @@ def test_check_disagreement_ignores_single_turn_segments():
 
 def test_check_grounding_flags_known_bad():
     turns = [
-        Turn(speaker="A", segment=Segment.INBOX,
-             text="Zorbex acquired Fintastic for 40 million dollars."),
+        Turn(
+            speaker="A",
+            segment=Segment.INBOX,
+            text="Zorbex acquired Fintastic for 40 million dollars.",
+        ),
     ]
     source_text = '{"title": "an unrelated email about lunch"}'
     hits = check_grounding(turns, source_text)
@@ -174,9 +183,12 @@ def test_check_grounding_does_not_flag_sentence_openers():
     # positional filter approach was tried and rejected (see quality.py);
     # this asserts the vocabulary-based stopword set does its job.
     turns = [
-        Turn(speaker="A", segment=Segment.WORLD,
-             text="Looking at this closely, Exactly what you'd expect. "
-                  "However, that's not the whole story."),
+        Turn(
+            speaker="A",
+            segment=Segment.WORLD,
+            text="Looking at this closely, Exactly what you'd expect. "
+            "However, that's not the whole story.",
+        ),
     ]
     hits = check_grounding(turns, "completely unrelated source text")
     tokens = {h["token"] for h in hits}
@@ -191,8 +203,11 @@ def test_check_grounding_still_catches_a_name_that_opens_a_sentence():
     # sentence, which is exactly why the filter is vocabulary-based rather
     # than positional.
     turns = [
-        Turn(speaker="A", segment=Segment.WORLD,
-             text="Thompson argued the point well in his latest piece."),
+        Turn(
+            speaker="A",
+            segment=Segment.WORLD,
+            text="Thompson argued the point well in his latest piece.",
+        ),
     ]
     hits = check_grounding(turns, "an email about the rollout plan and lunch")
     tokens = {h["token"] for h in hits}
@@ -228,8 +243,12 @@ def test_run_all_gates_aggregates_every_gate():
     ]
     report = run_all_gates(turns, "meeting at nine source text")
     assert set(report.keys()) == {
-        "filler", "monologues", "disagreement", "grounding",
-        "relayed_instructions", "total_issues",
+        "filler",
+        "monologues",
+        "disagreement",
+        "grounding",
+        "relayed_instructions",
+        "total_issues",
     }
     assert len(report["filler"]) == 1
     assert len(report["disagreement"]) == 1
@@ -244,8 +263,11 @@ def test_run_all_gates_aggregates_every_gate():
 def test_run_all_gates_on_clean_script_reports_zero_issues():
     turns = [
         Turn(speaker="A", segment=Segment.CALENDAR, text="Meeting at nine sharp."),
-        Turn(speaker="B", segment=Segment.CALENDAR,
-             text="Actually, I'd push that back given the room's still booked."),
+        Turn(
+            speaker="B",
+            segment=Segment.CALENDAR,
+            text="Actually, I'd push that back given the room's still booked.",
+        ),
     ]
     source_text = "meeting at nine sharp room booked"
     report = run_all_gates(turns, source_text)

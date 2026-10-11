@@ -66,8 +66,9 @@ def cluster_items(
     unembedded = [i for i in items if not i.embedding]
 
     if unembedded:
-        log.warning("%d items had no embedding, passing through unclustered",
-                    len(unembedded))
+        log.warning(
+            "%d items had no embedding, passing through unclustered", len(unembedded)
+        )
 
     if len(embedded) < 2:
         return [_singleton(i) for i in embedded + unembedded]
@@ -101,8 +102,12 @@ def cluster_items(
     stories.extend(_singleton(i) for i in unembedded)
 
     merged = sum(len(s.members) - 1 for s in stories)
-    log.info("clustered %d items into %d stories (%d duplicates collapsed)",
-             len(items), len(stories), merged)
+    log.info(
+        "clustered %d items into %d stories (%d duplicates collapsed)",
+        len(items),
+        len(stories),
+        merged,
+    )
 
     return stories
 
@@ -118,6 +123,7 @@ def authority_sorted(members: list[Item]) -> list[Item]:
     the source of one claim — is not something a test of either module alone
     would notice.
     """
+
     def rank(item: Item) -> tuple:
         try:
             authority = AUTHORITY_ORDER.index(item.source_type)

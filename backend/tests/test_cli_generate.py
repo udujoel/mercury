@@ -66,14 +66,10 @@ def _fails_with(monkeypatch, exc: Exception) -> None:
     async def _boom(**_kwargs):
         raise exc
 
-    monkeypatch.setattr(
-        "app.pipeline.generate.generate_briefing", _boom, raising=True
-    )
+    monkeypatch.setattr("app.pipeline.generate.generate_briefing", _boom, raising=True)
 
 
-def test_force_keeps_the_old_briefing_when_regeneration_fails(
-    cli, monkeypatch
-):
+def test_force_keeps_the_old_briefing_when_regeneration_fails(cli, monkeypatch):
     """The finding. --force used to delete the audio BEFORE regenerating, so a
     failed retry stranded a manifest pointing at audio that no longer existed:
     the phone got 200 on the manifest and 404 on the audio, and that was the
@@ -113,16 +109,12 @@ def test_without_force_an_existing_briefing_is_a_no_op(cli, monkeypatch):
     def _never(**_kwargs):
         raise AssertionError("generation must not run when a briefing exists")
 
-    monkeypatch.setattr(
-        "app.pipeline.generate.generate_briefing", _never, raising=True
-    )
+    monkeypatch.setattr("app.pipeline.generate.generate_briefing", _never, raising=True)
 
     assert main(["generate", "--briefing-id", "2026-08-27"]) == 0
 
 
-def test_an_empty_briefing_failure_is_reported_distinctly(
-    cli, monkeypatch, capsys
-):
+def test_an_empty_briefing_failure_is_reported_distinctly(cli, monkeypatch, capsys):
     """Nothing was stored, so the operator must not be told to re-run with
     --force — the action is to go and look at the TTS provider."""
     _fails_with(monkeypatch, EmptyBriefingError("no audible turns"))
@@ -145,14 +137,10 @@ def _succeeds_but_degraded(monkeypatch, storage, failures):
         generate_module._record_failed_sources(failures)
         return manifest
 
-    monkeypatch.setattr(
-        "app.pipeline.generate.generate_briefing", _ok, raising=True
-    )
+    monkeypatch.setattr("app.pipeline.generate.generate_briefing", _ok, raising=True)
 
 
-def test_a_degraded_briefing_fails_the_run_but_still_ships(
-    cli, monkeypatch, capsys
-):
+def test_a_degraded_briefing_fails_the_run_but_still_ships(cli, monkeypatch, capsys):
     """The 2026-08-27 lesson. A briefing that shipped without the user's inbox
     exited 0, so Actions went green and no email was sent, and it was found
     days later by reading `gh run list`. The audio must still be stored — rule
@@ -174,9 +162,7 @@ def test_a_degraded_briefing_fails_the_run_but_still_ships(
 def test_allow_degraded_opts_back_out(cli, monkeypatch):
     _succeeds_but_degraded(monkeypatch, cli, {"calendar": RuntimeError("boom")})
 
-    assert (
-        main(["generate", "--allow-degraded", "--briefing-id", "2026-08-27"]) == 0
-    )
+    assert main(["generate", "--allow-degraded", "--briefing-id", "2026-08-27"]) == 0
 
 
 def test_a_healthy_briefing_is_still_a_clean_zero(cli, monkeypatch, capsys):
@@ -272,8 +258,9 @@ def test_a_degraded_briefing_is_regenerated_rather_than_reported_as_done(
         "a briefing missing its whole personal half is the one most worth "
         "replacing, and idempotency made it the one that never could be"
     )
-    assert any("shipped without email, calendar" in r.getMessage()
-               for r in caplog.records)
+    assert any(
+        "shipped without email, calendar" in r.getMessage() for r in caplog.records
+    )
 
 
 def test_a_healthy_briefing_is_still_left_alone(cli, monkeypatch):
@@ -285,9 +272,7 @@ def test_a_healthy_briefing_is_still_left_alone(cli, monkeypatch):
     def _never(**_kwargs):
         raise AssertionError("a healthy briefing must stay a no-op")
 
-    monkeypatch.setattr(
-        "app.pipeline.generate.generate_briefing", _never, raising=True
-    )
+    monkeypatch.setattr("app.pipeline.generate.generate_briefing", _never, raising=True)
 
     assert main(["generate", "--briefing-id", "2026-08-27"]) == 0
 
@@ -301,9 +286,7 @@ def test_a_refused_segment_is_reported_not_regenerated(cli, monkeypatch, caplog)
     def _never(**_kwargs):
         raise AssertionError("a refusal must not be regenerated")
 
-    monkeypatch.setattr(
-        "app.pipeline.generate.generate_briefing", _never, raising=True
-    )
+    monkeypatch.setattr("app.pipeline.generate.generate_briefing", _never, raising=True)
     with caplog.at_level("WARNING"):
         assert main(["generate", "--briefing-id", "2026-08-27"]) == 0
     assert any("model refused" in r.getMessage() for r in caplog.records)
@@ -366,9 +349,7 @@ def test_a_fallback_voice_is_not_a_reason_to_regenerate(cli, monkeypatch):
     def _never(**_kwargs):
         raise AssertionError("a fallback voice must not trigger a regeneration")
 
-    monkeypatch.setattr(
-        "app.pipeline.generate.generate_briefing", _never, raising=True
-    )
+    monkeypatch.setattr("app.pipeline.generate.generate_briefing", _never, raising=True)
     assert main(["generate", "--briefing-id", "2026-08-27"]) == 0
 
 
@@ -383,10 +364,12 @@ def test_the_manifest_records_which_sources_were_missing():
 
 def _degraded_manifest_at(attempts: int, briefing_id: str = "2026-08-27"):
     m = _manifest(briefing_id)
-    return m.model_copy(update={
-        "degraded_sources": ["email", "calendar"],
-        "degraded_attempts": attempts,
-    })
+    return m.model_copy(
+        update={
+            "degraded_sources": ["email", "calendar"],
+            "degraded_attempts": attempts,
+        }
+    )
 
 
 def test_the_retry_gives_up_after_the_cap(cli, monkeypatch, caplog):
@@ -403,9 +386,7 @@ def test_the_retry_gives_up_after_the_cap(cli, monkeypatch, caplog):
     def _never(**_kwargs):
         raise AssertionError("the cap must stop regeneration")
 
-    monkeypatch.setattr(
-        "app.pipeline.generate.generate_briefing", _never, raising=True
-    )
+    monkeypatch.setattr("app.pipeline.generate.generate_briefing", _never, raising=True)
 
     with caplog.at_level("ERROR"):
         code = main(["generate", "--briefing-id", "2026-08-27"])
@@ -428,16 +409,19 @@ def test_the_cap_allows_three_generations_in_total(cli, monkeypatch):
         if not blocked:
             attempts_that_regenerate.append(stored)
     assert MAX_DEGRADED_ATTEMPTS == 3
-    assert attempts_that_regenerate == [0, 1, 2], (
-        "three generations in total: the first, plus two retries"
-    )
+    assert attempts_that_regenerate == [
+        0,
+        1,
+        2,
+    ], "three generations in total: the first, plus two retries"
 
 
 def test_below_the_cap_it_still_retries(cli, monkeypatch):
     """The control. Giving up too early is the failure this whole PR is
     about — a source that recovers at 06:00 must heal the same morning."""
-    cli.save("2026-08-27", b"OLD", "wav",
-             _degraded_manifest_at(MAX_DEGRADED_ATTEMPTS - 1))
+    cli.save(
+        "2026-08-27", b"OLD", "wav", _degraded_manifest_at(MAX_DEGRADED_ATTEMPTS - 1)
+    )
     generated: list[int] = []
 
     async def _records(**kwargs):

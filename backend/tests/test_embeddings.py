@@ -49,15 +49,11 @@ def test_embed_text_is_unit_normalised():
 
 
 def test_shared_vocabulary_lands_close():
-    a = embed_text(
-        "TechCorp to acquire DataFlow for $2.3 billion in largest AI deal"
-    )
+    a = embed_text("TechCorp to acquire DataFlow for $2.3 billion in largest AI deal")
     b = embed_text(
         "TechCorp buys DataFlow: notes on the $2.3bn acquisition and distribution"
     )
-    unrelated = embed_text(
-        "The 12 best new restaurants to open in Lisbon this summer"
-    )
+    unrelated = embed_text("The 12 best new restaurants to open in Lisbon this summer")
     sim_related = cosine(a, b)
     sim_unrelated = cosine(a, unrelated)
     assert sim_related > sim_unrelated

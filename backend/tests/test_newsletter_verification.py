@@ -29,15 +29,23 @@ UNSUPPORTED = "__UNSUPPORTED__"
 
 def newsletter(body, name="Morning Brew", url="https://n/1"):
     return Item(
-        source_type=SourceType.EMAIL, source_name=name, title="Issue 42",
-        body=body, url=url, timestamp=NOW,
+        source_type=SourceType.EMAIL,
+        source_name=name,
+        title="Issue 42",
+        body=body,
+        url=url,
+        timestamp=NOW,
     )
 
 
 def extracted(headline="A headline", gist="A gist", subject="subj"):
     return NewsletterItem(
-        headline=headline, gist=gist, subject=subject,
-        source_name="Morning Brew", sender="x@y.z", received_at=NOW,
+        headline=headline,
+        gist=gist,
+        subject=subject,
+        source_name="Morning Brew",
+        sender="x@y.z",
+        received_at=NOW,
         email_id="e1",
     )
 
@@ -102,8 +110,10 @@ async def test_no_pairs_makes_no_call():
 
 async def test_an_unsupported_item_is_dropped_before_it_becomes_source():
     keep = (extracted(headline="Real story"), newsletter("a real passage"))
-    drop = (extracted(headline="Invented"), newsletter(f"passage {UNSUPPORTED}",
-                                                       url="https://n/2"))
+    drop = (
+        extracted(headline="Invented"),
+        newsletter(f"passage {UNSUPPORTED}", url="https://n/2"),
+    )
     kept = await verify_extracted([keep, drop], FakeClaimJudge())
     assert [i.headline for i, _ in kept] == ["Real story"]
 
@@ -119,9 +129,10 @@ async def test_uncertainty_keeps_the_item():
     A false drop silently loses a real story — the failure this module was
     written to stop — while a false keep costs only the pre-ADR behaviour.
     """
+
     class _Uncertain:
         async def judge_claims(self, state, claims, *, timeout=20.0):
-            return {c.key: 0.45 for c in claims}      # above the 0.2 floor
+            return {c.key: 0.45 for c in claims}  # above the 0.2 floor
 
     pairs = [(extracted(), newsletter("body"))]
     assert len(await verify_extracted(pairs, _Uncertain())) == 1
@@ -150,10 +161,22 @@ async def test_items_are_paired_by_index_not_by_colliding_email_id():
     by email_id can hand an item the wrong newsletter to be verified
     against. `_parse` keeps the index pairing instead.
     """
-    a = Item(source_type=SourceType.EMAIL, source_name="Brew",
-             title="Issue", body="ALPHA passage", url=None, timestamp=NOW)
-    b = Item(source_type=SourceType.EMAIL, source_name="Brew",
-             title="Issue", body="BRAVO passage", url=None, timestamp=NOW)
+    a = Item(
+        source_type=SourceType.EMAIL,
+        source_name="Brew",
+        title="Issue",
+        body="ALPHA passage",
+        url=None,
+        timestamp=NOW,
+    )
+    b = Item(
+        source_type=SourceType.EMAIL,
+        source_name="Brew",
+        title="Issue",
+        body="BRAVO passage",
+        url=None,
+        timestamp=NOW,
+    )
     assert a.id == b.id, "fixture must actually collide"
 
     judge = FakeClaimJudge()
@@ -190,6 +213,7 @@ async def test_a_malformed_response_degrades_instead_of_raising():
     Same defect review found in `cluster_verify` on #62, two PRs later.
     Wrapping the await alone is not wrapping the work.
     """
+
     class _Malformed:
         async def judge_claims(self, state, claims, *, timeout=20.0):
             return [0.9]

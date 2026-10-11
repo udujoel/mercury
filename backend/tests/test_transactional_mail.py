@@ -88,8 +88,10 @@ THE_JOURNALISM = [
     ("1440 <sunday@email.join1440.com>", "Rock 'N' Roll, Weapons in Orbit"),
     # The four that review found gated by news words that are also banking
     # words. Each one cost the desk a real story.
-    ("Reuters Daily <noreply@reuters.test>",
-     "US Announces Troop Withdrawal From Syria"),
+    (
+        "Reuters Daily <noreply@reuters.test>",
+        "US Announces Troop Withdrawal From Syria",
+    ),
     ("The Markup <hello@themarkup.org>", "How to verify your identity online"),
     ("Risky Biz <newsletter@risky.biz>", "Security alert roundup: this week's bugs"),
     ("Fintech Brainfood <hi@fintechbf.test>", "Why payment failed rates matter"),
@@ -114,8 +116,7 @@ def test_real_publications_survive(sender: str, subject: str):
     """
     item = _item(sender, subject)
     assert not item.raw["is_transactional"], (
-        f"{sender} / {subject!r} was gated by "
-        f"{item.raw['transactional_signal']}"
+        f"{sender} / {subject!r} was gated by " f"{item.raw['transactional_signal']}"
     )
 
 
@@ -129,8 +130,9 @@ def test_a_bank_alert_can_finally_be_urgent():
     "newsletter", and `detect_urgent` refuses newsletters — so the category
     the owner named as the whole point of the section could never reach it.
     """
-    before, _ = detect_urgent("Your account has been restricted", "",
-                              is_newsletter=True, is_financial=False)
+    before, _ = detect_urgent(
+        "Your account has been restricted", "", is_newsletter=True, is_financial=False
+    )
     assert not before, "precondition: the newsletter guard suppressed this"
 
     item = _item("GTBank <gens@gtbank.com>", "Your account has been restricted")
@@ -139,19 +141,34 @@ def test_a_bank_alert_can_finally_be_urgent():
     assert item.requires_response is True
 
 
-@pytest.mark.parametrize(("sender", "subject", "body"), [
-    # The PR's own counter-example — which production got WRONG, because it
-    # computes is_transactional=True from noreply@ where the first cut of
-    # this test hardcoded False.
-    ("Medium Daily <noreply@medium.com>", "Your daily digest",
-     "Cloudflare users saw unusual sign-in alerts after the outage."),
-    ("Risky Biz <newsletter@risky.biz>", "Security alert roundup",
-     "A security alert for every Log4j-shaped bug of the week."),
-    ("The Markup <hello@themarkup.org>", "How to verify your identity online",
-     "Verify your account before anyone else does."),
-    ("Fintech Brainfood <hi@fintechbf.test>", "Why payment failed rates matter",
-     "Payment failed rates are the metric nobody tracks."),
-])
+@pytest.mark.parametrize(
+    ("sender", "subject", "body"),
+    [
+        # The PR's own counter-example — which production got WRONG, because it
+        # computes is_transactional=True from noreply@ where the first cut of
+        # this test hardcoded False.
+        (
+            "Medium Daily <noreply@medium.com>",
+            "Your daily digest",
+            "Cloudflare users saw unusual sign-in alerts after the outage.",
+        ),
+        (
+            "Risky Biz <newsletter@risky.biz>",
+            "Security alert roundup",
+            "A security alert for every Log4j-shaped bug of the week.",
+        ),
+        (
+            "The Markup <hello@themarkup.org>",
+            "How to verify your identity online",
+            "Verify your account before anyone else does.",
+        ),
+        (
+            "Fintech Brainfood <hi@fintechbf.test>",
+            "Why payment failed rates matter",
+            "Payment failed rates are the metric nobody tracks.",
+        ),
+    ],
+)
 def test_journalism_about_incidents_is_not_an_incident(sender, subject, body):
     """Four of five realistic publications came out HIGH before this.
 
@@ -161,9 +178,9 @@ def test_journalism_about_incidents_is_not_an_incident(sender, subject, body):
     action-required list.
     """
     item = _item(sender, subject, body)
-    assert not item.raw["is_urgent"], (
-        f"{subject!r} escalated on {item.raw.get('urgent_signal')!r}"
-    )
+    assert not item.raw[
+        "is_urgent"
+    ], f"{subject!r} escalated on {item.raw.get('urgent_signal')!r}"
     assert item.priority is not Priority.HIGH
 
 
@@ -171,7 +188,8 @@ def test_an_ordinary_colleague_is_not_escalated_by_a_bare_noun_phrase():
     """A bare `security alert` pattern promoted an email that says so
     itself: "no action needed"."""
     item = _item(
-        "Sam <sam@work.test>", "Ops note",
+        "Sam <sam@work.test>",
+        "Ops note",
         "FYI we are rolling out a new security alert system next week. "
         "No action needed.",
     )
@@ -223,12 +241,17 @@ def test_the_newsletters_shelf_is_gated_too():
     bank = _item("GTBank <gens@gtbank.com>", "Transaction Notification")
     brew = _item("Morning Brew <crew@morningbrew.com>", "Gaming Brew")
     digest = build_digest(
-        briefing_id="2026-09-20", stories=[], emails=[bank, brew],
+        briefing_id="2026-09-20",
+        stories=[],
+        emails=[bank, brew],
         manifest=BriefingManifest(
             briefing_id="2026-09-20",
             generated_at=datetime(2026, 9, 20, tzinfo=UTC),
-            duration_ms=1, audio_url="/a", turns=[],
-            segments=[], sources=[],
+            duration_ms=1,
+            audio_url="/a",
+            turns=[],
+            segments=[],
+            sources=[],
         ),
     )
     shelf = [n.source_name for n in digest.newsletters]

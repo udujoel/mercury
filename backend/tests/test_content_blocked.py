@@ -78,8 +78,13 @@ class _BlocksOnPhrase:
         self.prompts: list[str] = []
 
     async def complete(
-        self, system: str, prompt: str, *, temperature: float = 0.85,
-        json_mode: bool = False, response_schema: dict | None = None,
+        self,
+        system: str,
+        prompt: str,
+        *,
+        temperature: float = 0.85,
+        json_mode: bool = False,
+        response_schema: dict | None = None,
     ) -> str:
         self.prompts.append(prompt)
         is_draft = "ECHOED-OUTLINE" in prompt
@@ -98,8 +103,13 @@ class _AlwaysBlocks:
         self.calls = 0
 
     async def complete(
-        self, system: str, prompt: str, *, temperature: float = 0.85,
-        json_mode: bool = False, response_schema: dict | None = None,
+        self,
+        system: str,
+        prompt: str,
+        *,
+        temperature: float = 0.85,
+        json_mode: bool = False,
+        response_schema: dict | None = None,
     ) -> str:
         self.calls += 1
         raise ContentBlocked("PROHIBITED_CONTENT", stage="prompt")
@@ -167,15 +177,21 @@ class _Response:
     first version of this file did exactly that.
     """
 
-    def __init__(self, *, block_reason=None, finish_reason=None, text="ok",
-                 candidates=None, parts=None) -> None:
+    def __init__(
+        self,
+        *,
+        block_reason=None,
+        finish_reason=None,
+        text="ok",
+        candidates=None,
+        parts=None,
+    ) -> None:
         self.prompt_feedback = type("F", (), {"block_reason": block_reason})()
         if candidates is None:
             parts = [text] if parts is None else parts
             content = type("Content", (), {"parts": parts})()
             candidates = [
-                type("C", (), {"finish_reason": finish_reason,
-                               "content": content})()
+                type("C", (), {"finish_reason": finish_reason, "content": content})()
             ]
         self.candidates = candidates
         self.text = text
@@ -239,9 +255,10 @@ def test_text_with_a_refusal_shaped_finish_reason_is_still_returned():
     from app.providers.gemini import _text_of
 
     for reason in ("RECITATION", "OTHER", "LANGUAGE"):
-        assert _text_of(
-            _Response(finish_reason=_Enum(reason), text='{"partial": true}')
-        ) == '{"partial": true}'
+        assert (
+            _text_of(_Response(finish_reason=_Enum(reason), text='{"partial": true}'))
+            == '{"partial": true}'
+        )
 
 
 def test_stop_with_no_parts_is_a_refusal_not_a_crash():
@@ -303,9 +320,9 @@ async def test_the_retry_turns_the_world_segment_off_not_merely_empty():
         stories=[_story("c1", "Reports", "A MASSACRE was reported.")],
     )
     retry_prompt = llm.prompts[-1]
-    assert "- world" not in retry_prompt, (
-        "the world segment is still being requested with nothing to write it from"
-    )
+    assert (
+        "- world" not in retry_prompt
+    ), "the world segment is still being requested with nothing to write it from"
 
 
 async def test_a_poisoned_EMAIL_costs_the_inbox_and_the_briefing_still_ships():
@@ -340,10 +357,9 @@ def test_the_fakes_satisfy_the_protocol():
     """
     for fake in (_BlocksOnPhrase("x"), _AlwaysBlocks()):
         assert isinstance(fake, LLMProvider)
-        assert (
-            inspect.signature(type(fake).complete, eval_str=True)
-            == inspect.signature(LLMProvider.complete, eval_str=True)
-        )
+        assert inspect.signature(
+            type(fake).complete, eval_str=True
+        ) == inspect.signature(LLMProvider.complete, eval_str=True)
 
 
 async def test_the_ladder_at_the_setting_production_actually_uses():
@@ -425,8 +441,9 @@ def test_an_unset_block_reason_is_falsy_on_the_real_enum():
         for name in ("SAFETY", "OTHER", "BLOCKLIST", "PROHIBITED_CONTENT")
     )
     # And the guard behaves accordingly: unset falls through to the text.
-    assert _text_of(
-        _Response(block_reason=reasons.BLOCK_REASON_UNSPECIFIED, text="hello")
-    ) == "hello"
+    assert (
+        _text_of(_Response(block_reason=reasons.BLOCK_REASON_UNSPECIFIED, text="hello"))
+        == "hello"
+    )
     with pytest.raises(ContentBlocked):
         _text_of(_Response(block_reason=reasons.PROHIBITED_CONTENT))

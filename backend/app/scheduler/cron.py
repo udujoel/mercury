@@ -103,7 +103,8 @@ def _configured_length(raw: str) -> BriefingLength:
     except ValueError:
         log.error(
             "invalid BRIEFING_LENGTH %r; using %s",
-            raw, BriefingLength.STANDARD.value,
+            raw,
+            BriefingLength.STANDARD.value,
         )
         return BriefingLength.STANDARD
 
@@ -207,9 +208,7 @@ async def run_daily_briefing_job(
     # to_thread: this runs on the API process's event loop when the scheduler
     # is mounted on the FastAPI app, and R2Storage is synchronous boto3.
     if await asyncio.to_thread(existing_manifest, storage, briefing_id) is not None:
-        log.info(
-            "briefing %s already exists; scheduled run is a no-op", briefing_id
-        )
+        log.info("briefing %s already exists; scheduled run is a no-op", briefing_id)
         return
 
     # Saved settings, applied here as well as in `app/cli.py`.
@@ -257,9 +256,7 @@ async def run_daily_briefing_job(
             storage=storage,
             embeddings=embeddings,
             length=(
-                user_settings.length_or(
-                    _configured_length(settings.briefing_length)
-                )
+                user_settings.length_or(_configured_length(settings.briefing_length))
                 if user_settings is not None
                 else _configured_length(settings.briefing_length)
             ),
@@ -331,8 +328,12 @@ def start_scheduler(app: FastAPI) -> AsyncIOScheduler | None:
     log.info(
         "scheduler started: job %r daily at %02d:%02d %s (wake_time=%s minus "
         "%d min lead)",
-        JOB_ID, hour, minute, settings.user_timezone,
-        settings.wake_time, settings.generation_lead_minutes,
+        JOB_ID,
+        hour,
+        minute,
+        settings.user_timezone,
+        settings.wake_time,
+        settings.generation_lead_minutes,
     )
     return scheduler
 

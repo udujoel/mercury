@@ -112,8 +112,12 @@ def test_canonical_keeps_a_url_when_any_member_has_one():
     no `url` (see app/ingestion/gmail.py), so a newsletter winning the
     canonical slot strips the story's show-notes link entirely."""
     members = [
-        _item(SourceType.EMAIL, "Stratechery", datetime(2026, 8, 20, 6, 0, tzinfo=UTC),
-              url=None),
+        _item(
+            SourceType.EMAIL,
+            "Stratechery",
+            datetime(2026, 8, 20, 6, 0, tzinfo=UTC),
+            url=None,
+        ),
         _item(SourceType.RSS, "Reuters", AWARE, url="https://reuters.com/x"),
     ]
     assert _pick_canonical(members).url == "https://reuters.com/x"

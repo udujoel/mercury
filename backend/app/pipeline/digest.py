@@ -122,9 +122,7 @@ _ENRICHMENT_SCHEMA: dict[str, Any] = {
 
 def _is_newsletter(item: Item) -> bool:
     """An email the user subscribed to, per `gmail.detect_newsletter`."""
-    return item.source_type is SourceType.EMAIL and bool(
-        item.raw.get("is_newsletter")
-    )
+    return item.source_type is SourceType.EMAIL and bool(item.raw.get("is_newsletter"))
 
 
 def _is_transactional(item: Item) -> bool:
@@ -290,8 +288,8 @@ _BULLET_MARKERS = ("-", "*", "•", "\u2013", "\u2014", "\u2022")
 
 def _strip_bullet(text: str) -> str:
     for marker in _BULLET_MARKERS:
-        if text.startswith(marker) and text[len(marker):len(marker) + 1].isspace():
-            return text[len(marker):].strip()
+        if text.startswith(marker) and text[len(marker) : len(marker) + 1].isspace():
+            return text[len(marker) :].strip()
     return text
 
 
@@ -369,15 +367,11 @@ def _validate_cards(raw: Any) -> list[dict]:
     raising anything else turns one bad response into no summaries at all.
     """
     if not isinstance(raw, list):
-        raise JSONParseError(
-            f"digest cards must be a JSON array, got {type(raw)}", ""
-        )
+        raise JSONParseError(f"digest cards must be a JSON array, got {type(raw)}", "")
     return [card for card in raw if isinstance(card, dict) and card.get("id")]
 
 
-async def enrich_stories(
-    llm: LLMProvider, prompt: str
-) -> dict[str, StoryCard]:
+async def enrich_stories(llm: LLMProvider, prompt: str) -> dict[str, StoryCard]:
     """Run the enrichment pass. Returns cluster_id -> card, possibly empty.
 
     Never raises. Rule 7 applied to a screen rather than a segment: the
@@ -422,7 +416,8 @@ async def enrich_stories(
             # policy promises. The id is a cluster label and says nothing.
             log.warning(
                 "dropping an unusable digest card for %s (fields: %s)",
-                card.get("id"), ", ".join(sorted(map(str, card))) or "none",
+                card.get("id"),
+                ", ".join(sorted(map(str, card))) or "none",
             )
     return out
 
@@ -499,8 +494,10 @@ async def research_subjects(
         outlets = len({source.source_name for source in story.sources})
         ranked[subject] = max(ranked.get(subject, 0), outlets)
     return await research_ranked(
-        ranked, provider,
-        max_subjects=max_subjects, budget_seconds=budget_seconds,
+        ranked,
+        provider,
+        max_subjects=max_subjects,
+        budget_seconds=budget_seconds,
     )
 
 
@@ -525,8 +522,7 @@ async def research_ranked(
         return {}
 
     chosen = [
-        subject for subject, _ in
-        sorted(ranked.items(), key=lambda kv: (-kv[1], kv[0]))
+        subject for subject, _ in sorted(ranked.items(), key=lambda kv: (-kv[1], kv[0]))
     ][:max_subjects]
 
     found: dict[str, Research] = {}
@@ -547,7 +543,9 @@ async def research_ranked(
         log.warning(
             "research: budget of %.0fs exhausted with %d of %d subject(s) "
             "still running; the briefing ships with the rest",
-            budget_seconds, len(pending), len(chosen),
+            budget_seconds,
+            len(pending),
+            len(chosen),
         )
         # Let the cancellations settle before returning, so no task is still
         # touching the network after this function has handed back its
@@ -574,7 +572,9 @@ async def research_ranked(
 
     log.info(
         "research: %d subject(s) offered, %d attempted, %d usable",
-        len(ranked), len(chosen), len(found),
+        len(ranked),
+        len(chosen),
+        len(found),
     )
     return found
 
@@ -659,9 +659,7 @@ def _coverage(
     for ref in manifest.sources:
         if ref.cluster_id is None:
             continue
-        if (ref.source_name, ref.title) not in published.get(
-            ref.cluster_id, set()
-        ):
+        if (ref.source_name, ref.title) not in published.get(ref.cluster_id, set()):
             continue
         current = earliest.get(ref.cluster_id)
         if current is None or ref.turn_index < current:
@@ -690,8 +688,7 @@ def build_digest(
     browsable = digest_stories(stories)
     published = {
         story.cluster_id: {
-            (member.source_name, member.title)
-            for member in digest_members(story)
+            (member.source_name, member.title) for member in digest_members(story)
         }
         for story in browsable
     }
@@ -718,7 +715,10 @@ def build_digest(
             log.error(
                 "story %s claims turn %d of %d in briefing %s; dropping the "
                 "deep-link rather than shipping one that points off the end",
-                story.cluster_id, turn_index, turn_count, briefing_id,
+                story.cluster_id,
+                turn_index,
+                turn_count,
+                briefing_id,
             )
             turn_index = None
 
@@ -778,9 +778,7 @@ def build_digest(
     # the same gate as `digest_members`. This is the list that carried the
     # bank alert, the deposit notice and the PR-review bots.
     incoming = [
-        item
-        for item in emails
-        if _is_newsletter(item) and not _is_transactional(item)
+        item for item in emails if _is_newsletter(item) and not _is_transactional(item)
     ]
     ambiguous = {
         subject
@@ -789,9 +787,7 @@ def build_digest(
         ).items()
         if count > 1
     }
-    cited = {
-        (ref.source_name, ref.title) for ref in manifest.sources
-    } - ambiguous
+    cited = {(ref.source_name, ref.title) for ref in manifest.sources} - ambiguous
 
     out_newsletters = [
         DigestNewsletter(
@@ -802,9 +798,7 @@ def build_digest(
             received_at=_timestamp(item.timestamp),
             url=item.url,
             story_ids=(
-                [_story_id(item.cluster_id)]
-                if item.cluster_id in browsable_ids
-                else []
+                [_story_id(item.cluster_id)] if item.cluster_id in browsable_ids else []
             ),
             in_briefing=(
                 (item.cluster_id is not None and item.cluster_id in covered)
@@ -817,8 +811,11 @@ def build_digest(
     log.info(
         "digest %s: %d newsletter(s), %d browsable stor(ies), %d of them "
         "covered in the audio, %d written up",
-        briefing_id, len(out_newsletters), len(out_stories),
-        sum(1 for s in out_stories if s.covered_in_audio), len(cards),
+        briefing_id,
+        len(out_newsletters),
+        len(out_stories),
+        sum(1 for s in out_stories if s.covered_in_audio),
+        len(cards),
     )
 
     return BriefingDigest(

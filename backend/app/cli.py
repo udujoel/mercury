@@ -104,9 +104,7 @@ def _free_briefing_id(day: str, preferred_hhmm: str) -> str:
     candidate = f"{day}-{preferred_hhmm}"
     try:
         existing = [
-            i
-            for i in build_storage().list_briefing_ids()
-            if briefing_day(i) == day
+            i for i in build_storage().list_briefing_ids() if briefing_day(i) == day
         ]
     except Exception:
         # Cannot list, so cannot know. The clock is the honest guess, and a
@@ -154,7 +152,10 @@ def _free_briefing_id(day: str, preferred_hhmm: str) -> str:
     if anywhere is not None:
         log.warning(
             "%s already holds a briefing at %s, so this run cannot sort "
-            "last; naming it %s instead", day, max(taken), anywhere,
+            "last; naming it %s instead",
+            day,
+            max(taken),
+            anywhere,
         )
         return anywhere
 
@@ -195,7 +196,8 @@ def _morning_briefing_id(storage, day: str, now_hhmm: str) -> str | None:
 
     floor_applies = now_hhmm >= MORNING_FLOOR_HHMM
     ids = [
-        i for i in storage.list_briefing_ids()
+        i
+        for i in storage.list_briefing_ids()
         if briefing_day(i) == day and (not floor_applies or covers_morning(i))
     ]
     return max(ids) if ids else None
@@ -247,7 +249,8 @@ def _resolve_briefing_id(explicit: str | None, fallback: str) -> str | None:
     if not is_briefing_id(briefing_id):
         log.error(
             "briefing id %r is not a real date, optionally with a -HHMM time; "
-            "refusing to act on an id nothing will look for", briefing_id,
+            "refusing to act on an id nothing will look for",
+            briefing_id,
         )
         return None
     return briefing_id
@@ -334,7 +337,9 @@ def _freshness(max_age_hours: float) -> int:
         # passes every floor silently and forever.
         log.warning(
             "newest briefing %s is stamped %.1fh in the FUTURE; freshness "
-            "cannot mean anything until that is fixed", newest, -age_hours,
+            "cannot mean anything until that is fixed",
+            newest,
+            -age_hours,
         )
         return 0
 
@@ -353,13 +358,17 @@ def _freshness(max_age_hours: float) -> int:
         )
         log.error(
             "newest briefing %s is %.1fh old, past the %.1fh floor",
-            newest, age_hours, max_age_hours,
+            newest,
+            age_hours,
+            max_age_hours,
         )
         return 5
 
     log.info(
         "newest briefing %s is %.1fh old, inside the %.1fh floor",
-        newest, age_hours, max_age_hours,
+        newest,
+        age_hours,
+        max_age_hours,
     )
     return 0
 
@@ -462,7 +471,9 @@ def _check(briefing_id: str) -> int:
 
     log.info(
         "briefing %s is present and playable: %d turns, %.0fs of audio",
-        briefing_id, len(manifest.turns), manifest.duration_ms / 1000,
+        briefing_id,
+        len(manifest.turns),
+        manifest.duration_ms / 1000,
     )
     return 0
 
@@ -514,14 +525,15 @@ def _prune(retention_days: int, today_id: str, *, dry_run: bool) -> int:
         log.info(
             "--dry-run: retention is %d days (cutoff %s); would delete %d "
             "briefing(s): %s",
-            retention_days, cutoff, len(doomed), ", ".join(doomed) or "none",
+            retention_days,
+            cutoff,
+            len(doomed),
+            ", ".join(doomed) or "none",
         )
         return 0
 
     try:
-        prune_briefings(
-            storage, retention_days=retention_days, today_id=today_id
-        )
+        prune_briefings(storage, retention_days=retention_days, today_id=today_id)
     except ValueError as exc:
         log.error("retention is misconfigured: %s", exc)
         return 2
@@ -589,7 +601,8 @@ async def _generate(
             "briefing %s has shipped without %s on %d attempts — not "
             "regenerating again today. This needs a person: check the "
             "credentials for that source. --force overrides.",
-            briefing_id, ", ".join(existing.degraded_sources),
+            briefing_id,
+            ", ".join(existing.degraded_sources),
             existing.degraded_attempts,
         )
         return 3
@@ -618,7 +631,8 @@ async def _generate(
             "briefing %s shipped without %s because the model refused to "
             "write %s — reporting rather than regenerating, since a content "
             "refusal is deterministic and a retry would only spend quota",
-            briefing_id, ", ".join(existing.degraded_sources),
+            briefing_id,
+            ", ".join(existing.degraded_sources),
             "them" if len(existing.degraded_sources) > 1 else "it",
         )
         return 0
@@ -638,7 +652,8 @@ async def _generate(
             "briefing %s exists but shipped without %s — regenerating rather "
             "than reporting success, since that is the state most worth "
             "replacing",
-            briefing_id, ", ".join(existing.degraded_sources),
+            briefing_id,
+            ", ".join(existing.degraded_sources),
         )
         previous_degraded_attempts = existing.degraded_attempts
         existing = None
@@ -664,8 +679,7 @@ async def _generate(
         # other formats immediately AFTER the new audio lands, and before the
         # manifest that points at it. Nothing is ever deleted on the strength
         # of a regeneration that has not happened yet.
-        log.info("--force: regenerating %s over the existing briefing",
-                 briefing_id)
+        log.info("--force: regenerating %s over the existing briefing", briefing_id)
 
     # The settings the app saved, if it ever has.
     #
@@ -767,7 +781,9 @@ async def _generate(
 
     log.info(
         "generated %s: %d turns, %.0fs of audio",
-        manifest.briefing_id, len(manifest.turns), manifest.duration_ms / 1000,
+        manifest.briefing_id,
+        len(manifest.turns),
+        manifest.duration_ms / 1000,
     )
 
     # Surface a degraded briefing to the runner.
@@ -819,7 +835,8 @@ async def _generate(
     if allow_degraded:
         log.warning(
             "briefing %s is degraded but --allow-degraded was passed; "
-            "reporting success", manifest.briefing_id,
+            "reporting success",
+            manifest.briefing_id,
         )
         return 0
 

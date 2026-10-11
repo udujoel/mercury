@@ -53,6 +53,9 @@ jobs:
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - run: pip install -r requirements.txt
       - run: ruff check .
+      # The whole backend was formatted once on 2026-10-11 (88 of 124 files
+      # had drifted from CLAUDE.md's "format on save"); this keeps it so.
+      - run: ruff format --check .
       # Catches vulnerable TRANSITIVE dependencies, which Dependabot's
       # manifest scan misses. It found ten advisories nothing else did —
       # eight of them in starlette, the core of the framework serving

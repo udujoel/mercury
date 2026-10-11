@@ -116,7 +116,9 @@ def load_music_set(name: str | None) -> MusicSet | None:
         log.error(
             "music set %r not found in %s; this briefing has no music. "
             "Known sets: %s",
-            chosen, MUSIC_ROOT, ", ".join(available_sets()) or "none",
+            chosen,
+            MUSIC_ROOT,
+            ", ".join(available_sets()) or "none",
         )
         return None
 

@@ -28,12 +28,18 @@ from app.pipeline.digest import (
 
 def _story(sid: str, subject: str | None, outlets: list[str]) -> DigestStory:
     return DigestStory(
-        id=sid, headline=f"headline {sid}", subject=subject,
+        id=sid,
+        headline=f"headline {sid}",
+        subject=subject,
         source_count=len(set(outlets)),
         sources=[
-            DigestSource(source_name=o, title="t", url=None,
-                         published_at=datetime(2026, 9, 13, tzinfo=UTC),
-                         source_type=SourceType.RSS)
+            DigestSource(
+                source_name=o,
+                title="t",
+                url=None,
+                published_at=datetime(2026, 9, 13, tzinfo=UTC),
+                source_type=SourceType.RSS,
+            )
             for o in outlets
         ],
     )
@@ -65,7 +71,8 @@ class _Fake:
         if self._answer is not None:
             return self._answer(subject)
         return Findings(
-            subject=subject, summary=f"about {subject}",
+            subject=subject,
+            summary=f"about {subject}",
             sources=[ResearchSource(title="reuters.com", url="https://r.com/a")],
         )
 
@@ -156,13 +163,15 @@ async def test_what_finished_inside_the_budget_still_ships():
             if subject == "slow":
                 await asyncio.sleep(5.0)
             return Findings(
-                subject=subject, summary=f"about {subject}",
+                subject=subject,
+                summary=f"about {subject}",
                 sources=[ResearchSource(title="reuters.com", url="https://r.com/a")],
             )
 
     found = await research_subjects(
         [_story("a", "slow", ["A", "B"]), _story("b", "quick", ["C"])],
-        _OneHangs(), budget_seconds=0.2,
+        _OneHangs(),
+        budget_seconds=0.2,
     )
     assert "quick" in found
     assert "slow" not in found
@@ -183,9 +192,8 @@ def test_the_fake_satisfies_the_protocol():
     # annotations`, so ITS annotations are the strings "str" and "Findings"
     # while this module's are the objects. Without it the comparison fails
     # on two signatures that are in fact identical.
-    assert (
-        inspect.signature(_Fake.research, eval_str=True)
-        == inspect.signature(ResearchProvider.research, eval_str=True)
+    assert inspect.signature(_Fake.research, eval_str=True) == inspect.signature(
+        ResearchProvider.research, eval_str=True
     )
 
 
@@ -210,8 +218,11 @@ async def test_sources_survive_onto_the_wire():
 
 async def test_a_finding_reaches_every_story_that_shares_its_subject():
     houthi = "Houthi forces advancing on Red Sea shipping lanes"
-    stories = [_story("a", houthi, ["CNBC"]), _story("b", houthi, ["BBC"]),
-               _story("c", "something else", ["A"])]
+    stories = [
+        _story("a", houthi, ["CNBC"]),
+        _story("b", houthi, ["BBC"]),
+        _story("c", "something else", ["A"]),
+    ]
     found = await research_subjects(stories[:2], _Fake())
     attached = attach_research(stories, found)
     assert attached[0].research is not None
@@ -234,7 +245,8 @@ def test_findings_need_both_halves_to_be_usable():
         subject="s", sources=[ResearchSource(title="t", url="u")]
     ).is_usable
     assert Findings(
-        subject="s", summary="text",
+        subject="s",
+        summary="text",
         sources=[ResearchSource(title="t", url="u")],
     ).is_usable
 

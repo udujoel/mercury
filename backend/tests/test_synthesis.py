@@ -82,7 +82,10 @@ async def test_synthesize_briefing_produces_monotonic_non_overlapping_turns(
     tts = FakeTTSProvider()
     sources = [
         SourceRef(
-            turn_index=0, title="x", url=None, source_name="y",
+            turn_index=0,
+            title="x",
+            url=None,
+            source_name="y",
             source_type=SourceType.EMAIL,
         )
     ]
@@ -119,8 +122,11 @@ async def test_synthesize_briefing_gap_is_larger_across_speakers():
     tts = FakeTTSProvider()
 
     _, manifest, _ = await synthesize_briefing(
-        turns, tts=tts, briefing_id="x",
-        audio_url_for=lambda fmt: "url", sources=[],
+        turns,
+        tts=tts,
+        briefing_id="x",
+        audio_url_for=lambda fmt: "url",
+        sources=[],
     )
 
     gap_same = manifest.turns[1].start_ms - manifest.turns[0].end_ms
@@ -135,8 +141,11 @@ async def test_synthesize_briefing_segments_point_at_first_turn_of_segment():
     tts = FakeTTSProvider()
 
     _, manifest, _ = await synthesize_briefing(
-        turns, tts=tts, briefing_id="x",
-        audio_url_for=lambda fmt: "url", sources=[],
+        turns,
+        tts=tts,
+        briefing_id="x",
+        audio_url_for=lambda fmt: "url",
+        sources=[],
     )
 
     seg_ids = [s["id"] for s in manifest.segments]
@@ -162,8 +171,11 @@ async def test_synthesize_briefing_skips_failed_turn_without_failing_run():
     ]
 
     audio_bytes, manifest, _ = await synthesize_briefing(
-        turns, tts=FlakyTTS(), briefing_id="x",
-        audio_url_for=lambda fmt: "url", sources=[],
+        turns,
+        tts=FlakyTTS(),
+        briefing_id="x",
+        audio_url_for=lambda fmt: "url",
+        sources=[],
     )
 
     assert len(audio_bytes) > 0
@@ -200,8 +212,11 @@ async def test_falls_back_to_wav_when_ffmpeg_is_missing(monkeypatch):
     monkeypatch.setattr(stitch, "ffmpeg_available", lambda: False)
 
     _, manifest, audio_format = await synthesize_briefing(
-        turns=_turns(), tts=FakeTTSProvider(), briefing_id="x",
-        audio_url_for=lambda fmt: f"url.{fmt}", sources=[],
+        turns=_turns(),
+        tts=FakeTTSProvider(),
+        briefing_id="x",
+        audio_url_for=lambda fmt: f"url.{fmt}",
+        sources=[],
     )
     assert audio_format == FALLBACK_FORMAT
     assert manifest.audio_url.endswith(FALLBACK_FORMAT)
@@ -218,8 +233,11 @@ async def test_synthesize_briefing_uses_compressed_format_when_ffmpeg_present():
     still runs everywhere.
     """
     _, manifest, audio_format = await synthesize_briefing(
-        turns=_turns(), tts=FakeTTSProvider(), briefing_id="x",
-        audio_url_for=lambda fmt: f"url.{fmt}", sources=[],
+        turns=_turns(),
+        tts=FakeTTSProvider(),
+        briefing_id="x",
+        audio_url_for=lambda fmt: f"url.{fmt}",
+        sources=[],
     )
     assert audio_format != FALLBACK_FORMAT
     assert manifest.audio_url.endswith(audio_format)
@@ -251,22 +269,34 @@ async def test_source_refs_are_remapped_when_a_turn_is_dropped():
     ]
     sources = [
         SourceRef(
-            turn_index=0, title="kept-first", url=None,
-            source_name="A", source_type=SourceType.EMAIL,
+            turn_index=0,
+            title="kept-first",
+            url=None,
+            source_name="A",
+            source_type=SourceType.EMAIL,
         ),
         SourceRef(
-            turn_index=1, title="belongs-to-dropped-turn", url=None,
-            source_name="B", source_type=SourceType.EMAIL,
+            turn_index=1,
+            title="belongs-to-dropped-turn",
+            url=None,
+            source_name="B",
+            source_type=SourceType.EMAIL,
         ),
         SourceRef(
-            turn_index=2, title="kept-last", url=None,
-            source_name="C", source_type=SourceType.EMAIL,
+            turn_index=2,
+            title="kept-last",
+            url=None,
+            source_name="C",
+            source_type=SourceType.EMAIL,
         ),
     ]
 
     _, manifest, _ = await synthesize_briefing(
-        turns, tts=FlakyTTS(), briefing_id="x",
-        audio_url_for=lambda fmt: "url", sources=sources,
+        turns,
+        tts=FlakyTTS(),
+        briefing_id="x",
+        audio_url_for=lambda fmt: "url",
+        sources=sources,
     )
 
     # The ref for the dropped turn is gone, not silently reattached.
@@ -299,8 +329,11 @@ async def test_total_tts_failure_raises_instead_of_producing_a_manifest():
     same way — this one used to exit 0 with a green tick."""
     with pytest.raises(EmptyBriefingError) as excinfo:
         await synthesize_briefing(
-            _turns(), tts=_TotallyBrokenTTS(), briefing_id="2026-08-27",
-            audio_url_for=lambda fmt: "url", sources=[],
+            _turns(),
+            tts=_TotallyBrokenTTS(),
+            briefing_id="2026-08-27",
+            audio_url_for=lambda fmt: "url",
+            sources=[],
         )
 
     # The message has to name the briefing and point at the provider; this is

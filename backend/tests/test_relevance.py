@@ -27,8 +27,12 @@ def _slug(t):
 
 def story(title, *, source="Reuters", body="body", kind=SourceType.RSS, cid=None):
     it = Item(
-        source_type=kind, source_name=source, title=title, body=body,
-        url=f"https://example.test/{_slug(title)}", timestamp=NOW,
+        source_type=kind,
+        source_name=source,
+        title=title,
+        body=body,
+        url=f"https://example.test/{_slug(title)}",
+        timestamp=NOW,
     )
     it.cluster_id = cid or f"c-{_slug(title)}"
     return Story(cluster_id=it.cluster_id, canonical=it, members=[it])
@@ -36,7 +40,11 @@ def story(title, *, source="Reuters", body="body", kind=SourceType.RSS, cid=None
 
 def event(title="Standup", attendees=("priya@aveiro.test",)):
     return CalendarEvent(
-        id="e1", title=title, start=NOW, end=NOW, attendees=list(attendees),
+        id="e1",
+        title=title,
+        start=NOW,
+        end=NOW,
+        attendees=list(attendees),
     )
 
 
@@ -45,8 +53,11 @@ def event(title="Standup", attendees=("priya@aveiro.test",)):
 
 async def test_no_provider_means_no_opinion():
     got = await judge_personal_relevance(
-        [story("A")], events=[event()], followed_entities=["TypeSafe"],
-        interests=None, provider=None,
+        [story("A")],
+        events=[event()],
+        followed_entities=["TypeSafe"],
+        interests=None,
+        provider=None,
     )
     assert got == {}
 
@@ -57,8 +68,11 @@ async def test_a_provider_that_raises_means_no_opinion():
             raise RuntimeError("down")
 
     got = await judge_personal_relevance(
-        [story("A")], events=[event()], followed_entities=["TypeSafe"],
-        interests=None, provider=Exploding(),
+        [story("A")],
+        events=[event()],
+        followed_entities=["TypeSafe"],
+        interests=None,
+        provider=Exploding(),
     )
     assert got == {}
 
@@ -69,7 +83,10 @@ async def test_nothing_to_be_relevant_to_makes_no_call():
     general rather than about this person."""
     judge = FakeClaimJudge()
     got = await judge_personal_relevance(
-        [story("A")], events=[], followed_entities=[], interests=[],
+        [story("A")],
+        events=[],
+        followed_entities=[],
+        interests=[],
         provider=judge,
     )
     assert got == {} and judge.claim_calls == []
@@ -77,10 +94,16 @@ async def test_nothing_to_be_relevant_to_makes_no_call():
 
 async def test_an_empty_story_list_makes_no_call():
     judge = FakeClaimJudge()
-    assert await judge_personal_relevance(
-        [], events=[event()], followed_entities=["X"], interests=None,
-        provider=judge,
-    ) == {}
+    assert (
+        await judge_personal_relevance(
+            [],
+            events=[event()],
+            followed_entities=["X"],
+            interests=None,
+            provider=judge,
+        )
+        == {}
+    )
     assert judge.claim_calls == []
 
 
@@ -104,9 +127,7 @@ def test_a_judged_zero_does_not_fall_through_to_the_email_default():
     through to that 0.5, so the judgment could only ever RAISE a score.
     """
     mail = story("A newsletter", kind=SourceType.EMAIL)
-    score_stories(
-        [mail], calendar_events=[], judged_personal={id(mail): 0.0}, now=NOW
-    )
+    score_stories([mail], calendar_events=[], judged_personal={id(mail): 0.0}, now=NOW)
     judged_zero = mail.score
     score_stories([mail], calendar_events=[], judged_personal=None, now=NOW)
     assert judged_zero < mail.score, "a judged 0.0 fell through to the 0.5 default"
@@ -131,12 +152,19 @@ def test_an_unjudged_story_keeps_its_lexical_score():
 
 def test_ranking_is_byte_identical_without_a_judgment_map():
     """Rule 7: an absent judgment must leave ranking exactly as it was."""
-    stories = [story(f"S{i}", kind=SourceType.EMAIL if i % 2 else SourceType.RSS)
-               for i in range(6)]
-    a = [s.cluster_id for s in score_stories(
-        list(stories), calendar_events=[], now=NOW)]
-    b = [s.cluster_id for s in score_stories(
-        list(stories), calendar_events=[], judged_personal={}, now=NOW)]
+    stories = [
+        story(f"S{i}", kind=SourceType.EMAIL if i % 2 else SourceType.RSS)
+        for i in range(6)
+    ]
+    a = [
+        s.cluster_id for s in score_stories(list(stories), calendar_events=[], now=NOW)
+    ]
+    b = [
+        s.cluster_id
+        for s in score_stories(
+            list(stories), calendar_events=[], judged_personal={}, now=NOW
+        )
+    ]
     assert a == b
 
 
@@ -147,8 +175,11 @@ async def test_one_request_carries_the_person_and_every_story():
     judge = FakeClaimJudge()
     stories = [story(f"S{i}") for i in range(5)]
     await judge_personal_relevance(
-        stories, events=[event()], followed_entities=["TypeSafe"],
-        interests=["clustering"], provider=judge,
+        stories,
+        events=[event()],
+        followed_entities=["TypeSafe"],
+        interests=["clustering"],
+        provider=judge,
     )
     assert len(judge.claim_calls) == 1
     state, claims = judge.claim_calls[0]
@@ -163,7 +194,10 @@ async def test_the_story_payload_is_an_allowlist_and_truncated():
     s = story("A", body="x" * 5000)
     s.canonical.raw = {"oauth_refresh_token": "must-not-leave"}
     await judge_personal_relevance(
-        [s], events=[event()], followed_entities=["TypeSafe"], interests=None,
+        [s],
+        events=[event()],
+        followed_entities=["TypeSafe"],
+        interests=None,
         provider=judge,
     )
     state, _ = judge.claim_calls[0]
@@ -181,12 +215,16 @@ async def test_a_cap_on_the_pass_is_said_out_loud(caplog, monkeypatch):
     stories = [story(f"S{i}") for i in range(5)]
     with caplog.at_level(logging.WARNING, logger="app.pipeline.relevance"):
         got = await judge_personal_relevance(
-            stories, events=[event()], followed_entities=["TypeSafe"],
-            interests=None, provider=FakeClaimJudge(),
+            stories,
+            events=[event()],
+            followed_entities=["TypeSafe"],
+            interests=None,
+            provider=FakeClaimJudge(),
         )
     assert len(got) == 2
-    assert any("over the 2 this pass budgets for" in r.getMessage()
-               for r in caplog.records)
+    assert any(
+        "over the 2 this pass budgets for" in r.getMessage() for r in caplog.records
+    )
 
 
 # ── cluster_id is not a key (review of PR #63) ────────────────────────
@@ -206,10 +244,15 @@ async def test_two_stories_with_a_colliding_cluster_id_get_their_own_verdict():
     This is the same defect review found in `cluster_verify` on #62, in a
     different module, three commits later.
     """
+
     def mail(body):
         return Item(
-            source_type=SourceType.EMAIL, source_name="Morning Brew",
-            title="Your daily brief", body=body, url=None, timestamp=NOW,
+            source_type=SourceType.EMAIL,
+            source_name="Morning Brew",
+            title="Your daily brief",
+            body=body,
+            url=None,
+            timestamp=NOW,
         )
 
     a, b = mail("Aveiro Labs raised a Series A."), mail("Arsenal beat Spurs.")
@@ -228,8 +271,11 @@ async def test_two_stories_with_a_colliding_cluster_id_get_their_own_verdict():
             }
 
     judged = await judge_personal_relevance(
-        [sa, sb], events=[event()], followed_entities=["TypeSafe"],
-        interests=None, provider=_PerStory(),
+        [sa, sb],
+        events=[event()],
+        followed_entities=["TypeSafe"],
+        interests=None,
+        provider=_PerStory(),
     )
     assert len(judged) == 2, "two stories collapsed into one verdict"
 

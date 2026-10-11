@@ -316,7 +316,9 @@ class FallbackTTSProvider:
                 log.error(
                     "%s failed (%s) and no fallback provider could be built "
                     "(%s) — the run has no way to produce audio.",
-                    type(self._primary).__name__, exc, build_exc,
+                    type(self._primary).__name__,
+                    exc,
+                    build_exc,
                 )
                 raise exc from None
 
@@ -325,7 +327,8 @@ class FallbackTTSProvider:
                 "%s failed mid-run (%s) — switching to %s for the REST of "
                 "this briefing. It will change voice partway through, and "
                 "turns after this point carry no word timings.",
-                type(self._primary).__name__, exc,
+                type(self._primary).__name__,
+                exc,
                 type(self._fallback).__name__,
             )
 
@@ -469,7 +472,8 @@ def build_tts_provider() -> TTSProvider:
             "TTS_PROVIDER=%r is not a provider this build knows (expected one "
             "of %s) — using Google. If you meant ElevenLabs, this is a typo "
             "and the briefing is about to ship in the wrong voice.",
-            choice, sorted(ELEVENLABS_NAMES | {"google"}),
+            choice,
+            sorted(ELEVENLABS_NAMES | {"google"}),
         )
         return _FellBackBeforeTheRun(_google())
 
@@ -536,7 +540,7 @@ class EmailJudgment:
     # spread its probability across levels, not that the email is unimportant.
     confidence: float
     awaiting_reply: float  # P(a specific person is waiting for a reply)
-    bulk: float            # P(sent to a list rather than written personally)
+    bulk: float  # P(sent to a list rather than written personally)
 
 
 @dataclass(frozen=True)

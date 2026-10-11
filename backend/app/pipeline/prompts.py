@@ -266,7 +266,6 @@ assignments and the overall word budget.
 """
 
 
-
 # ──────────────────────────────────────────────────────────────
 # The digest artifact (not part of the script chain)
 #

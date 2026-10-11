@@ -82,7 +82,9 @@ def _words_from_alignment(alignment: dict | None) -> tuple[WordTiming, ...]:
         logger.warning(
             "elevenlabs alignment arrays disagree (%d chars, %d starts, %d ends); "
             "dropping word timings for this turn",
-            len(chars), len(starts), len(ends),
+            len(chars),
+            len(starts),
+            len(ends),
         )
         return ()
 
@@ -187,9 +189,7 @@ class ElevenLabsTTSProvider:
 
         audio_b64 = payload.get("audio_base64")
         if not audio_b64:
-            raise RuntimeError(
-                "ElevenLabs returned no audio_base64 for a 2xx response"
-            )
+            raise RuntimeError("ElevenLabs returned no audio_base64 for a 2xx response")
 
         return Speech(
             # `validate=True`: without it b64decode SKIPS characters outside
@@ -217,7 +217,8 @@ class ElevenLabsTTSProvider:
                 if status != 429 and 400 <= status < 500:
                     logger.error(
                         "elevenlabs rejected the request (%d): %.300s",
-                        status, exc.response.text,
+                        status,
+                        exc.response.text,
                     )
                     # A 402 that names `paid_plan_required` is about the
                     # VOICE, and cost a whole briefing once: a library voice
@@ -234,7 +235,7 @@ class ElevenLabsTTSProvider:
                             "voice %s cannot be used on this ElevenLabs plan. "
                             "Free plans can only synthesise PREMADE voices — "
                             "check `category` on GET /v1/voices and pick one "
-                            "that reads \"premade\", or upgrade the plan. "
+                            'that reads "premade", or upgrade the plan. '
                             "This host will fall back to Google, so the "
                             "briefing will ship in the wrong voice.",
                             voice_id,
@@ -250,7 +251,10 @@ class ElevenLabsTTSProvider:
             delay = BASE_DELAY_S * (2 ** (attempt - 1)) + random.uniform(0, 0.5)
             logger.warning(
                 "elevenlabs error on attempt %d/%d, retrying in %.1fs: %s",
-                attempt, MAX_ATTEMPTS, delay, last_error,
+                attempt,
+                MAX_ATTEMPTS,
+                delay,
+                last_error,
             )
             await asyncio.sleep(delay)
 

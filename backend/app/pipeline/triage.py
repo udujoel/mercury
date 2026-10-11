@@ -94,7 +94,8 @@ async def triage_emails(
         log.warning(
             "email triage failed entirely (%s) — keeping the classify_priority "
             "heuristic for all %d email(s)",
-            exc, len(items),
+            exc,
+            len(items),
         )
         return items
 
@@ -106,7 +107,8 @@ async def triage_emails(
         log.error(
             "email triage returned %d judgment(s) for %d email(s) — discarding "
             "the whole pass rather than risk misaligning them",
-            len(judgments), len(items),
+            len(judgments),
+            len(items),
         )
         return items
 
@@ -130,6 +132,8 @@ async def triage_emails(
     report(
         "email triage: %d judged, %d fell back to the heuristic, %d priority "
         "change(s) against the heuristic",
-        len(items) - unjudged, unjudged, changed,
+        len(items) - unjudged,
+        unjudged,
+        changed,
     )
     return items

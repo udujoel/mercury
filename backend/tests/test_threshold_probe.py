@@ -59,23 +59,26 @@ def item(title, *, source="Reuters", body="body", embedding=None):
     # item in a fixture the same id. See the 2026-09-22 log entry — that
     # mistake silently emptied three tests on #62.
     got = Item(
-        source_type=SourceType.RSS, source_name=source, title=title,
-        body=body, url=f"https://example.test/{_slug(title)}", timestamp=NOW,
+        source_type=SourceType.RSS,
+        source_name=source,
+        title=title,
+        body=body,
+        url=f"https://example.test/{_slug(title)}",
+        timestamp=NOW,
     )
     got.embedding = BASE if embedding is None else embedding
     return got
 
 
 def story(*members, cluster_id="c0"):
-    return Story(
-        cluster_id=cluster_id, canonical=members[0], members=list(members)
-    )
+    return Story(cluster_id=cluster_id, canonical=members[0], members=list(members))
 
 
 def at(cosine: float, title: str, **kw) -> Story:
     """A one-item story sitting at `cosine` from a BASE story."""
-    return story(item(title, embedding=_vec(cosine), **kw),
-                 cluster_id=f"c-{_slug(title)}")
+    return story(
+        item(title, embedding=_vec(cosine), **kw), cluster_id=f"c-{_slug(title)}"
+    )
 
 
 def messages(caplog) -> list[str]:
@@ -126,9 +129,10 @@ async def test_a_provider_that_raises_is_survivable(caplog):
             raise RuntimeError("TypeSafe is down")
 
     with caplog.at_level(logging.WARNING, logger=LOGGER):
-        assert await probe_threshold(
-            [story(item("A")), at(0.69, "B")], Exploding()
-        ) is None
+        assert (
+            await probe_threshold([story(item("A")), at(0.69, "B")], Exploding())
+            is None
+        )
     assert any("threshold probe failed" in m for m in messages(caplog))
 
 
@@ -139,13 +143,12 @@ async def test_a_provider_that_answers_with_the_wrong_shape_is_survivable():
     AttributeError out of the response handling, which sits outside a `try`
     that guards only the network call.
     """
+
     class Malformed:
         async def judge_claims(self, state, claims, *, timeout=20.0):
             return ["not", "a", "dict"]
 
-    assert await probe_threshold(
-        [story(item("A")), at(0.69, "B")], Malformed()
-    ) is None
+    assert await probe_threshold([story(item("A")), at(0.69, "B")], Malformed()) is None
 
 
 async def test_no_provider_costs_nothing():
@@ -190,8 +193,10 @@ async def test_the_spacex_rocket_lab_pair_is_inside_the_band():
     reason the threshold is 0.78. The band is chosen to contain it."""
     judge = FakeClaimJudge()
     await probe_threshold(
-        [story(item("SpaceX launches 23 Starlink satellites")),
-         at(0.6908, "Rocket Lab Electron reaches orbit")],
+        [
+            story(item("SpaceX launches 23 Starlink satellites")),
+            at(0.6908, "Rocket Lab Electron reaches orbit"),
+        ],
         judge,
     )
     assert len(judge.claim_calls) == 1
@@ -247,8 +252,7 @@ async def test_a_disagreement_names_both_titles_both_sources_and_the_cosine(
     decides whether 0.78 moves. Anything missing from it is a morning he
     cannot reconstruct."""
     left = story(item("TechCorp acquires DataFlow", source="Reuters"))
-    right = at(0.69, f"What the DataFlow buy means {SAME}",
-               source="Stratechery")
+    right = at(0.69, f"What the DataFlow buy means {SAME}", source="Stratechery")
     with caplog.at_level(logging.INFO, logger=LOGGER):
         await probe_threshold([left, right], FakeClaimJudge())
 
@@ -265,14 +269,12 @@ async def test_an_agreement_is_not_logged_as_a_disagreement(caplog):
     the threshold working. It is not evidence and it is not noise worth
     carrying for a week."""
     with caplog.at_level(logging.INFO, logger=LOGGER):
-        await probe_threshold(
-            [story(item("A")), at(0.69, "B")], FakeClaimJudge()
-        )
+        await probe_threshold([story(item("A")), at(0.69, "B")], FakeClaimJudge())
     assert disagreements(caplog) == []
 
 
 async def test_an_unjudged_pair_is_not_a_disagreement(caplog):
-    """"Not judged" is not "the threshold missed a merge". Counting a
+    """ "Not judged" is not "the threshold missed a merge". Counting a
     timeout as evidence would make a bad network look like a bad threshold,
     which is the reading that would move 0.78 for the wrong reason."""
     judge = FakeClaimJudge(unjudged_keys=frozenset({"probe:0"}))
@@ -286,11 +288,10 @@ async def test_a_quiet_morning_still_says_what_it_examined(caplog):
     """Silence reads as "it did not run" — the failure mode this repo has
     hit four times. A pass that examined nothing says so."""
     with caplog.at_level(logging.INFO, logger=LOGGER):
-        await probe_threshold(
-            [story(item("A")), at(0.40, "B")], FakeClaimJudge()
-        )
-    assert any("threshold probe: 0 near-threshold pair(s)" in m
-               for m in messages(caplog))
+        await probe_threshold([story(item("A")), at(0.40, "B")], FakeClaimJudge())
+    assert any(
+        "threshold probe: 0 near-threshold pair(s)" in m for m in messages(caplog)
+    )
 
 
 # ── the cap ───────────────────────────────────────────────────────────
@@ -347,9 +348,7 @@ async def test_the_payload_is_an_allowlist_and_truncated():
     left = item("A", body="x" * 5000)
     left.raw = {"oauth_refresh_token": "must-not-leave"}
     judge = FakeClaimJudge()
-    await probe_threshold(
-        [story(left), at(0.69, "B")], judge
-    )
+    await probe_threshold([story(left), at(0.69, "B")], judge)
     pair = judge.claim_calls[0][0]["pairs"][0]
     # No "similarity": the cosine is what the judgment is being used to
     # evaluate, so sending it would anchor the answer.
@@ -390,10 +389,14 @@ async def test_a_pair_the_verifier_just_split_is_not_re_examined():
     Reproduced on #65 at cosine 0.6696.
     """
     canonical = item("TechCorp acquires DataFlow")
-    other = item("What the DataFlow buy means", embedding=_vec(0.97),
-                 source="Stratechery")
-    intruder = item(f"TechCorp ships a new phone {DIFFERENT}",
-                    embedding=_vec(0.76, sign=-1.0), source="Ars Technica")
+    other = item(
+        "What the DataFlow buy means", embedding=_vec(0.97), source="Stratechery"
+    )
+    intruder = item(
+        f"TechCorp ships a new phone {DIFFERENT}",
+        embedding=_vec(0.76, sign=-1.0),
+        source="Ars Technica",
+    )
     parent = story(canonical, other, intruder, cluster_id="c1")
 
     after = await verify_stories([parent], FakeClaimJudge())
@@ -401,9 +404,9 @@ async def test_a_pair_the_verifier_just_split_is_not_re_examined():
 
     judge = FakeClaimJudge()
     await probe_threshold(after, judge)
-    assert judge.claim_calls == [], (
-        "the probe re-judged the pair verify_stories split in this same run"
-    )
+    assert (
+        judge.claim_calls == []
+    ), "the probe re-judged the pair verify_stories split in this same run"
 
 
 async def test_an_unrelated_story_is_still_examined_after_a_split():
@@ -411,10 +414,14 @@ async def test_an_unrelated_story_is_still_examined_after_a_split():
     child would blind the probe to that item's relationship with the rest
     of the morning, which is ordinary evidence."""
     canonical = item("TechCorp acquires DataFlow")
-    other = item("What the DataFlow buy means", embedding=_vec(0.97),
-                 source="Stratechery")
-    intruder = item(f"TechCorp ships a new phone {DIFFERENT}",
-                    embedding=_vec(0.76, sign=-1.0), source="Ars Technica")
+    other = item(
+        "What the DataFlow buy means", embedding=_vec(0.97), source="Stratechery"
+    )
+    intruder = item(
+        f"TechCorp ships a new phone {DIFFERENT}",
+        embedding=_vec(0.76, sign=-1.0),
+        source="Ars Technica",
+    )
     parent = story(canonical, other, intruder, cluster_id="c1")
     after = await verify_stories([parent], FakeClaimJudge())
 
@@ -446,10 +453,16 @@ async def test_two_members_ejected_from_one_cluster_are_still_compared():
     a cluster went wrong.
     """
     canonical = item("TechCorp acquires DataFlow")
-    left = item(f"TechCorp opens a Dublin office {DIFFERENT}",
-                embedding=_vec(0.92), source="Reuters")
-    right = item(f"TechCorp's Dublin hiring plan {DIFFERENT}",
-                 embedding=_vec(0.92, sign=-1.0), source="Platformer")
+    left = item(
+        f"TechCorp opens a Dublin office {DIFFERENT}",
+        embedding=_vec(0.92),
+        source="Reuters",
+    )
+    right = item(
+        f"TechCorp's Dublin hiring plan {DIFFERENT}",
+        embedding=_vec(0.92, sign=-1.0),
+        source="Platformer",
+    )
 
     after = await verify_stories(
         [story(canonical, left, right, cluster_id="c1")], FakeClaimJudge()

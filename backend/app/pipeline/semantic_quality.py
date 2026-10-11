@@ -88,30 +88,34 @@ def _relay_claim(i: int) -> Claim:
 def _claims(turns: list[Turn]) -> list[Claim]:
     claims: list[Claim] = []
     for i in range(len(turns)):
-        claims.append(Claim(
-            key=f"{_GROUND}:{i}",
-            instructions=(
-                f"Every factual claim in `lines[{i}]` is supported by "
-                "`source_material`. Rewording, paraphrase and conversational "
-                "delivery are fine. Inventing a name, a number, a date, a "
-                "quotation or an attribution that is not in `source_material` "
-                "is not. A line that makes no factual claim at all counts as "
-                "supported."
-            ),
-        ))
+        claims.append(
+            Claim(
+                key=f"{_GROUND}:{i}",
+                instructions=(
+                    f"Every factual claim in `lines[{i}]` is supported by "
+                    "`source_material`. Rewording, paraphrase and conversational "
+                    "delivery are fine. Inventing a name, a number, a date, a "
+                    "quotation or an attribution that is not in `source_material` "
+                    "is not. A line that makes no factual claim at all counts as "
+                    "supported."
+                ),
+            )
+        )
         claims.append(_relay_claim(i))
     for segment in sorted({t.segment.value for t in turns}):
         if segment not in _DISAGREEMENT_SEGMENTS:
             continue
-        claims.append(Claim(
-            key=f"{_CHALLENGE}:{segment}",
-            instructions=(
-                f"Somewhere in `segments.{segment}`, one speaker challenges, "
-                "disagrees with, pushes back on, qualifies or reframes what "
-                "the other said. Two speakers who agree throughout, or who "
-                "merely add separate facts, do NOT count."
-            ),
-        ))
+        claims.append(
+            Claim(
+                key=f"{_CHALLENGE}:{segment}",
+                instructions=(
+                    f"Somewhere in `segments.{segment}`, one speaker challenges, "
+                    "disagrees with, pushes back on, qualifies or reframes what "
+                    "the other said. Two speakers who agree throughout, or who "
+                    "merely add separate facts, do NOT count."
+                ),
+            )
+        )
     return claims
 
 
@@ -139,22 +143,32 @@ async def run_all_gates_semantic(
     except Exception as exc:
         log.warning(
             "semantic quality gates failed (%s) — keeping the heuristic "
-            "report for all %d turn(s)", exc, len(turns),
+            "report for all %d turn(s)",
+            exc,
+            len(turns),
         )
         return report
 
     grounding, unjudged = _regrade_per_turn(
-        turns, answers, report["grounding"], _GROUND,
+        turns,
+        answers,
+        report["grounding"],
+        _GROUND,
         flag_when_below=settings.quality_grounding_threshold,
         kind="unsupported_claim",
     )
     relayed, relay_unjudged = _regrade_per_turn(
-        turns, answers, report["relayed_instructions"], _RELAY,
+        turns,
+        answers,
+        report["relayed_instructions"],
+        _RELAY,
         flag_when_above=settings.quality_relay_threshold,
         kind="relayed_instruction",
     )
     disagreement, seg_unjudged = _regrade_segments(
-        turns, answers, report["disagreement"],
+        turns,
+        answers,
+        report["disagreement"],
         settings.quality_challenge_threshold,
     )
 
@@ -162,8 +176,11 @@ async def run_all_gates_semantic(
     report["relayed_instructions"] = relayed
     report["disagreement"] = disagreement
     report["total_issues"] = (
-        len(report["filler"]) + len(report["monologues"])
-        + len(disagreement) + len(grounding) + len(relayed)
+        len(report["filler"])
+        + len(report["monologues"])
+        + len(disagreement)
+        + len(grounding)
+        + len(relayed)
     )
     total_unjudged = unjudged + relay_unjudged + seg_unjudged
     report["semantic"] = True
@@ -176,7 +193,10 @@ async def run_all_gates_semantic(
     (log.warning if every_claim_unjudged else log.info)(
         "semantic quality gates: %d claim(s), %d unjudged; "
         "grounding %d, relays %d, disagreement %d",
-        len(claims), total_unjudged, len(grounding), len(relayed),
+        len(claims),
+        total_unjudged,
+        len(grounding),
+        len(relayed),
         len(disagreement),
     )
     return report
@@ -228,13 +248,15 @@ def _regrade_per_turn(
             else probability > flag_when_above
         )
         if hit:
-            out.append({
-                "turn_index": i,
-                "segment": turn.segment.value,
-                "kind": kind,
-                "probability": round(probability, 3),
-                "reason": f"judged by Jev, not matched by keyword ({kind})",
-            })
+            out.append(
+                {
+                    "turn_index": i,
+                    "segment": turn.segment.value,
+                    "kind": kind,
+                    "probability": round(probability, 3),
+                    "reason": f"judged by Jev, not matched by keyword ({kind})",
+                }
+            )
     return out, unjudged
 
 
@@ -259,12 +281,14 @@ def _regrade_segments(
                 out.append(by_segment[segment])
             continue
         if probability < threshold:
-            out.append({
-                "segment": segment,
-                "kind": "no_challenge",
-                "probability": round(probability, 3),
-                "reason": "no host challenges or reframes the other (judged)",
-            })
+            out.append(
+                {
+                    "segment": segment,
+                    "kind": "no_challenge",
+                    "probability": round(probability, 3),
+                    "reason": "no host challenges or reframes the other (judged)",
+                }
+            )
     return out, unjudged
 
 
@@ -297,19 +321,26 @@ async def check_relayed_semantic(
     except Exception as exc:
         log.warning(
             "semantic relay gate failed (%s) — falling back to the keyword "
-            "list for all %d turn(s)", exc, len(turns),
+            "list for all %d turn(s)",
+            exc,
+            len(turns),
         )
         return check_relayed_instructions(turns)
 
     flags, unjudged = _regrade_per_turn(
-        turns, answers, check_relayed_instructions(turns), _RELAY,
+        turns,
+        answers,
+        check_relayed_instructions(turns),
+        _RELAY,
         flag_when_above=settings.quality_relay_threshold,
         kind="relayed_instruction",
     )
     if unjudged:
         log.warning(
             "semantic relay gate: %d of %d turn(s) unjudged, keyword list "
-            "used for those", unjudged, len(turns),
+            "used for those",
+            unjudged,
+            len(turns),
         )
     return flags
 

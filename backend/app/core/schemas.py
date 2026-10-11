@@ -40,9 +40,9 @@ class Item(BaseModel):
 
     id: str = ""
     source_type: SourceType
-    source_name: str                      # "Stratechery" | "Reuters" | "r/devops"
+    source_name: str  # "Stratechery" | "Reuters" | "r/devops"
     title: str
-    body: str = ""                        # cleaned plain text
+    body: str = ""  # cleaned plain text
     url: str | None = None
     # The publisher's own lead image, as a URL — never the bytes.
     #
@@ -85,7 +85,7 @@ class Story(BaseModel):
     """A cluster of Items covering the same event."""
 
     cluster_id: str
-    canonical: Item                       # the representative item
+    canonical: Item  # the representative item
     members: list[Item]
     score: float = 0.0
 
@@ -196,10 +196,10 @@ SEGMENT_LABELS: dict[Segment, str] = {
 class Turn(BaseModel):
     """One speaker turn in the generated script."""
 
-    speaker: str                          # "A" | "B"
+    speaker: str  # "A" | "B"
     segment: Segment
     text: str
-    start_ms: int | None = None           # filled in after synthesis
+    start_ms: int | None = None  # filled in after synthesis
     end_ms: int | None = None
     # Word timings, ABSOLUTE in the stitched file, when the TTS provider
     # supplied them. None for Google, and None for every manifest generated
@@ -261,11 +261,11 @@ class BriefingManifest(BaseModel):
     feature is straightforward.
     """
 
-    briefing_id: str                      # "2026-08-21"
+    briefing_id: str  # "2026-08-21"
     generated_at: datetime
     duration_ms: int
     audio_url: str
-    segments: list[dict[str, Any]]        # [{id, label, start_ms}]
+    segments: list[dict[str, Any]]  # [{id, label, start_ms}]
     turns: list[Turn]
     sources: list[SourceRef]
 
@@ -327,7 +327,6 @@ class BriefingManifest(BaseModel):
 # says nothing and looks like "no newsletters today". Present from day one
 # because the version you wish you had is always the one before the change.
 DIGEST_SCHEMA_VERSION = 1
-
 
 
 class ResearchSourceRef(BaseModel):
@@ -610,6 +609,7 @@ class BriefingDigest(BaseModel):
     # source list under a different name.
     newsletters: list[DigestNewsletter] = Field(default_factory=list)
     stories: list[DigestStory] = Field(default_factory=list)
+
 
 class BriefingLength(str, Enum):
     EXPRESS = "express"

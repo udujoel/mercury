@@ -125,7 +125,10 @@ class RunCensus:
     ) -> None:
         self.stages.append(
             Stage(
-                name=name, took=took, made=made, may_be_empty=may_be_empty,
+                name=name,
+                took=took,
+                made=made,
+                may_be_empty=may_be_empty,
                 degraded_before=tuple(self.degraded),
             )
         )
@@ -159,16 +162,16 @@ class RunCensus:
         run_failed = (
             f"the run is failing with {type(failure).__name__}: "
             f"{_detail_of(failure)}"
-            if failure is not None else ""
+            if failure is not None
+            else ""
         )
 
         def _why(stage: Stage) -> str:
             if run_failed:
                 return run_failed
             if stage.degraded_before:
-                return (
-                    "this had already failed when it ran: "
-                    + ", ".join(sorted(stage.degraded_before))
+                return "this had already failed when it ran: " + ", ".join(
+                    sorted(stage.degraded_before)
                 )
             return ""
 
@@ -184,7 +187,9 @@ class RunCensus:
                     "Probably a consequence rather than a wiring defect, "
                     "but worth confirming the stage recovers once that is "
                     "fixed",
-                    stage.name, stage.took, because,
+                    stage.name,
+                    stage.took,
+                    because,
                 )
                 if failure is None:
                     # A DEGRADED run still shipped, so nobody is looking at
@@ -203,7 +208,8 @@ class RunCensus:
                 "and nothing upstream failed. This is the shape of every "
                 "'built but never called' bug in this project's history — "
                 "check what actually reaches it",
-                stage.name, stage.took,
+                stage.name,
+                stage.took,
             )
             # And on the run page, not only in the scrollback.
             #

@@ -48,9 +48,10 @@ def test_one_publication_covering_itself_is_not_a_popularity_signal():
     solo = _story("solo", [verge[0]])
     repeat = _story("repeat", verge)
 
-    scored = {s.cluster_id: s.score for s in score_stories(
-        [solo, repeat], calendar_events=[], now=CLOCK
-    )}
+    scored = {
+        s.cluster_id: s.score
+        for s in score_stories([solo, repeat], calendar_events=[], now=CLOCK)
+    }
     assert scored["repeat"] == scored["solo"]
 
 
@@ -58,13 +59,15 @@ def test_three_publications_still_outrank_one():
     """The discipline must not cost the signal it protects: several outlets
     on one story is what ADR-003 exists to surface."""
     solo = _story("solo", [_article(0, "The Verge")])
-    spread = _story("spread", [
-        _article(0, "The Verge"), _article(1, "Reuters"), _article(2, "BBC News")
-    ])
+    spread = _story(
+        "spread",
+        [_article(0, "The Verge"), _article(1, "Reuters"), _article(2, "BBC News")],
+    )
 
-    scored = {s.cluster_id: s.score for s in score_stories(
-        [solo, spread], calendar_events=[], now=CLOCK
-    )}
+    scored = {
+        s.cluster_id: s.score
+        for s in score_stories([solo, spread], calendar_events=[], now=CLOCK)
+    }
     assert scored["spread"] > scored["solo"]
 
 
@@ -114,12 +117,12 @@ def test_a_wider_window_does_not_cost_a_today_story_its_score():
     today_only = _event("today", "Priya Raman")
     later = _event("thu", "Sam Chen")
 
-    narrow = score_stories(
-        [today_story], calendar_events=[today_only], now=CLOCK
-    )[0].score
-    wide = score_stories(
-        [today_story], calendar_events=[today_only, later], now=CLOCK
-    )[0].score
+    narrow = score_stories([today_story], calendar_events=[today_only], now=CLOCK)[
+        0
+    ].score
+    wide = score_stories([today_story], calendar_events=[today_only, later], now=CLOCK)[
+        0
+    ].score
     assert narrow == wide
 
 
@@ -192,8 +195,8 @@ def test_a_naive_clock_is_taken_as_utc():
     timestamp from it, and the world segment dies with it."""
     story = _story("s", [_article(0, "Reuters")])
 
-    naive = score_stories(
-        [story], calendar_events=[], now=CLOCK.replace(tzinfo=None)
-    )[0].score
+    naive = score_stories([story], calendar_events=[], now=CLOCK.replace(tzinfo=None))[
+        0
+    ].score
     aware = score_stories([story], calendar_events=[], now=CLOCK)[0].score
     assert naive == aware

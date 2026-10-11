@@ -197,7 +197,10 @@ def test_get_digest_returns_the_stored_digest(client, monkeypatch, tmp_path):
 
     storage = LocalFilesystemStorage(base_dir=tmp_path)
     storage.save(
-        "2026-08-22", b"fake audio", "wav", _fake_manifest("2026-08-22"),
+        "2026-08-22",
+        b"fake audio",
+        "wav",
+        _fake_manifest("2026-08-22"),
         _fake_digest("2026-08-22"),
     )
     monkeypatch.setattr(
@@ -257,9 +260,8 @@ def test_the_digest_route_is_behind_the_api_token(monkeypatch, tmp_path):
         resp = unauthenticated.get("/briefing/2026-08-22/digest")
     assert resp.status_code == 401
 
-def test_get_audio_returns_bytes_with_correct_media_type(
-    client, monkeypatch, tmp_path
-):
+
+def test_get_audio_returns_bytes_with_correct_media_type(client, monkeypatch, tmp_path):
     from app.synthesis.storage import LocalFilesystemStorage
 
     storage = LocalFilesystemStorage(base_dir=tmp_path)
@@ -349,7 +351,9 @@ def _manifest_for(briefing_id: str) -> BriefingManifest:
         generated_at=datetime(2026, 8, 23, 5, 0, tzinfo=UTC),
         duration_ms=1000,
         audio_url=f"/briefing/{briefing_id}/audio",
-        segments=[], turns=[], sources=[],
+        segments=[],
+        turns=[],
+        sources=[],
     )
 
 
@@ -379,9 +383,7 @@ def _prepare(monkeypatch, tmp_path, generated: list):
         return _manifest_for("2026-08-23")
 
     monkeypatch.setattr(gen_mod, "generate_briefing", _fake_generate)
-    monkeypatch.setattr(
-        "app.providers.gemini.GeminiProvider", lambda *a, **k: object()
-    )
+    monkeypatch.setattr("app.providers.gemini.GeminiProvider", lambda *a, **k: object())
     monkeypatch.setattr(
         "app.providers.google_tts.GoogleTTSProvider", lambda *a, **k: object()
     )
@@ -476,9 +478,7 @@ def test_a_keyless_machine_still_generates_from_the_api(client, monkeypatch):
     assert captured.get("briefing_id") == "keyless-day"
 
 
-def test_an_offline_run_does_not_build_a_live_embedding_provider(
-    client, monkeypatch
-):
+def test_an_offline_run_does_not_build_a_live_embedding_provider(client, monkeypatch):
     """Offline exists to be free and deterministic — a fixture for every
     source. Building the real provider there sent fixture content to Gemini
     on a run the user asked to be fake: real quota, and a retry loop that can
@@ -494,9 +494,7 @@ def test_an_offline_run_does_not_build_a_live_embedding_provider(
     assert captured.get("embeddings") is None
 
 
-def test_offline_api_generation_does_not_go_to_real_publishers(
-    client, monkeypatch
-):
+def test_offline_api_generation_does_not_go_to_real_publishers(client, monkeypatch):
     """Offline mode swapped Gmail and Calendar for fixtures and left RSS
     live, because `rss_fixture=None` means "fetch the real internet" for a
     keyless source. So the one mode that exists to be deterministic depended
@@ -518,7 +516,5 @@ async def test_the_offline_news_fixture_actually_carries_news():
     """
     from app.ingestion.rss import fetch_articles
 
-    items = await fetch_articles(
-        fixture=briefing_api.FIXTURES_DIR / "rss_feeds.json"
-    )
+    items = await fetch_articles(fixture=briefing_api.FIXTURES_DIR / "rss_feeds.json")
     assert items, "offline generation would ship with no world segment"

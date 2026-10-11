@@ -35,8 +35,7 @@ from app.core.providers import Findings, ResearchSource
 log = logging.getLogger(__name__)
 
 _ENDPOINT = (
-    "https://generativelanguage.googleapis.com/v1beta/models/"
-    "{model}:generateContent"
+    "https://generativelanguage.googleapis.com/v1beta/models/" "{model}:generateContent"
 )
 
 # Grounding returns its sources as redirects through
@@ -93,7 +92,9 @@ class GeminiResearchProvider:
                 # misbehaving model look like a quiet subject.
                 log.info(
                     "research: %r produced %d chars and %d source(s); discarded",
-                    subject[:60], len(summary), len(sources),
+                    subject[:60],
+                    len(summary),
+                    len(sources),
                 )
                 return Findings(subject=subject)
             return findings
@@ -136,9 +137,7 @@ class GeminiResearchProvider:
             timeout=timeout,
         )
         if response.status_code != 200:
-            log.warning(
-                "research: HTTP %s for %r", response.status_code, subject[:60]
-            )
+            log.warning("research: HTTP %s for %r", response.status_code, subject[:60])
             return None
 
         data = response.json()
@@ -172,7 +171,9 @@ class GeminiResearchProvider:
         return text, sources
 
     async def _resolved(
-        self, client: httpx.AsyncClient, sources: list[ResearchSource],
+        self,
+        client: httpx.AsyncClient,
+        sources: list[ResearchSource],
         timeout: float,
     ) -> list[ResearchSource]:
         """Turn grounding redirects into the publisher URLs they point at.
@@ -203,7 +204,7 @@ class GeminiResearchProvider:
 
 
 def _host_of(url: str) -> str:
-    """"https://en.wikipedia.org/wiki/X" -> "en.wikipedia.org"."""
+    """ "https://en.wikipedia.org/wiki/X" -> "en.wikipedia.org"."""
     try:
         from urllib.parse import urlparse
 
