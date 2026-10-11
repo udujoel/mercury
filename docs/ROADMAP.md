@@ -1128,19 +1128,19 @@ Most of it is backend behaviour visible only in production logs.
       framed as today (task 55). A prompt change, so it needs the regression
       set run (CLAUDE.md), which costs Gemini quota against the monthly cap:
       do it together with task 55.
-- [ ] 58. **Make `AppState`'s player injectable.** `AppState` builds its own
+- [x] 58. **Make `AppState`'s player injectable.** DONE: `AppState(api:playback:)`, and a test that browses Saturday while an injected coordinator really plays Sunday. What was found: `AppState` builds its own
       `PlaybackCoordinator`, so no unit test can put it in a playing state.
       The browse-while-playing wiring (#76) is tested only as pure decisions
       and on the simulator. Injecting the coordinator would let a test pin
       "browsing never calls `downloadAudio` while another briefing plays".
-- [ ] 59. **A branch with unmerged work: `feat/transactional-mail-off-the-desk`.**
+- [x] 59. **A branch with unmerged work: `feat/transactional-mail-off-the-desk`.** DONE 2026-10-11: everything it did is on `main` via #55 (`detect_transactional`, both digest gates, `test_transactional_mail.py`), so it was deleted; `cba74fc` stays recoverable from the reflog. What was found:
       A LOCAL branch in the main checkout, never pushed (so it is not on
       GitHub): a WIP commit (`cba74fc`) with no PR, kept when the merged branches were
       pruned on 2026-10-11. Task 27's desk half shipped in #55, probably
       making it obsolete, but that is the owner's call to confirm before the
       branch is deleted.
 
-- [ ] 60. **CI builds iOS with Xcode 16.4; the app is built with Xcode 27.**
+- [x] 60. **CI builds iOS with Xcode 16.4; the app is built with Xcode 27.** DONE: `ios.yml` selects the newest non-beta Xcode on the image and picks an iPhone simulator by UDID; `test_ci_triggers.py` pins both. What was found:
       `ios.yml` runs on `macos-15`, whose Xcode is 16.4 (Swift 6.1, the
       iOS 18 SDK). The first push of #76 used an iOS 26 API behind
       `#available` and failed to compile in CI only; it is now also behind

@@ -72,7 +72,7 @@ final class AppState {
     /// In flight. A third state, because "not yet asked" also looks like
     /// "nothing there".
     var archiveLoading = false
-    let playback = PlaybackCoordinator()
+    let playback: PlaybackCoordinator
 
     /// SwiftData persistence (PRD 3.7), handed over by `MercuryApp` from the
     /// shared `ModelContainer`.
@@ -147,8 +147,14 @@ final class AppState {
     /// used until the user chooses one.
     static let defaultWakeTimeMinutes = 7 * 60
 
-    init(api: APIClientProtocol = APIClient()) {
+    /// `playback` is injectable so a test can hand over a coordinator that
+    /// is really playing, the only state in which browsing another day must
+    /// leave the engine alone (ROADMAP task 58). The app always takes the
+    /// default.
+    init(api: APIClientProtocol = APIClient(),
+         playback: PlaybackCoordinator = PlaybackCoordinator()) {
         self.api = api
+        self.playback = playback
 
         // Seed the stored properties from UserDefaults. Assigning inside
         // `init` does not fire `didSet`, so this reads without writing back.

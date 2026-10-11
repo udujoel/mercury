@@ -93,3 +93,27 @@ def test_main_runs_never_share_a_group(name):
     main = dict(event="push", ref="refs/heads/main", workflow=name)
 
     assert _group(group, sha="aaa", **main) != _group(group, sha="bbb", **main)
+
+
+def _ios_steps() -> list[dict]:
+    return _spec("ios.yml")["jobs"]["test"]["steps"]
+
+
+def test_ios_ci_builds_with_the_newest_xcode_on_the_image():
+    """ROADMAP task 60. `macos-15` defaults to Xcode 16.4 (Swift 6.1, the
+    iOS 18 SDK) while the app is built and checked with a far newer one, so
+    CI could not compile an iOS 26 API at all: the first push of #76 failed
+    there and nowhere else. Select the newest Xcode the image has instead of
+    taking its default."""
+    runs = "\n".join(step.get("run", "") for step in _ios_steps())
+
+    assert "xcode-select" in runs, "ios.yml must choose its Xcode, not take the default"
+
+
+def test_ios_ci_does_not_pin_a_simulator_model():
+    """A newer Xcode ships different simulators. A pinned model name turns
+    an Xcode change into a red build for a reason unrelated to the code."""
+    test_step = next(s for s in _ios_steps() if s.get("name") == "Test")
+
+    assert "name=iPhone" not in test_step["run"]
+    assert "steps.sim.outputs.udid" in test_step["run"]

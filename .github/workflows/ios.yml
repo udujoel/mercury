@@ -59,8 +59,38 @@ jobs:
         run: |
           test -f Secrets.xcconfig || cp Secrets.example.xcconfig Secrets.xcconfig
 
+      # The newest non-beta Xcode on the image, not its default. `macos-15`
+      # defaults to Xcode 16.4 (Swift 6.1, the iOS 18 SDK) while the app is
+      # built and checked with a far newer one, so CI could not compile an
+      # iOS 26 API at all: the first push of #76 failed here and nowhere
+      # else (ROADMAP task 60). Code that must still build on an older
+      # toolchain keeps its `#if compiler(...)` guard.
+      - name: Use the newest Xcode on the image
+        run: |
+          newest=$(ls -d /Applications/Xcode_*.app | grep -iv beta | sort -V | tail -1)
+          echo "Selecting $newest"
+          sudo xcode-select -s "$newest"
+
       - name: Show the toolchain
         run: xcodebuild -version && xcrun simctl list runtimes | tail -5
+
+      # An available iPhone on the newest iOS runtime, by UDID. A pinned
+      # model name ("iPhone 16") is a red build waiting for the Xcode above
+      # to ship a different set of simulators.
+      - name: Pick a simulator
+        id: sim
+        run: |
+          udid=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          def version(runtime):
+              return [int(p) for p in runtime.rsplit("iOS-", 1)[1].split("-")]
+          runtimes = sorted((r for r in devices if ".iOS-" in r), key=version)
+          print(next(d["udid"] for r in reversed(runtimes)
+                     for d in devices[r] if d["name"].startswith("iPhone")))
+          ')
+          echo "Using simulator $udid"
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
 
       # `-destination` names a device FAMILY rather than a specific model:
       # GitHub's images change which simulators are installed, and pinning
@@ -75,7 +105,7 @@ jobs:
           xcodebuild test \
             -project Mercury.xcodeproj \
             -scheme Mercury \
-            -destination 'platform=iOS Simulator,OS=latest,name=iPhone 16' \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
             -resultBundlePath TestResults.xcresult \
             CODE_SIGNING_ALLOWED=NO
 
