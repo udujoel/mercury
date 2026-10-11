@@ -63,7 +63,9 @@ def test_the_selection_cap_starves_the_newsletter_segment():
     was building the newsletter segment on its output.
     """
     kept = select_for_briefing(
-        score_emails(_the_morning_that_failed()), [], BriefingLength.STANDARD,
+        score_emails(_the_morning_that_failed()),
+        [],
+        BriefingLength.STANDARD,
         date=datetime(2026, 9, 20, tzinfo=UTC),
     )["emails"]
 
@@ -122,9 +124,7 @@ async def _async(value):
     return value
 
 
-async def test_the_census_names_the_starved_stage_on_a_real_run(
-    tmp_path, caplog
-):
+async def test_the_census_names_the_starved_stage_on_a_real_run(tmp_path, caplog):
     """The robustness half, asserted against the real generate path.
 
     An earlier version of this test claimed to run a briefing end to end and
@@ -139,6 +139,7 @@ async def test_the_census_names_the_starved_stage_on_a_real_run(
     indistinguishable from a starved stage to everything downstream — and
     that is the point. Whatever the cause, the run log has to SAY it.
     """
+
     class _NoItems(FakeLLMProvider):
         def _dispatch(self, prompt):
             body = super()._dispatch(prompt)
@@ -166,7 +167,8 @@ async def test_a_real_run_records_the_newsletter_stage_at_all(tmp_path, caplog):
         await _run(tmp_path, _the_morning_that_failed())
 
     census_lines = [
-        r.getMessage() for r in caplog.records
+        r.getMessage()
+        for r in caplog.records
         if r.getMessage().startswith("run census:")
     ]
     assert len(census_lines) == 1, census_lines
@@ -186,6 +188,7 @@ async def test_the_census_still_reports_when_the_run_raises(tmp_path, caplog):
     single run with NO census line in its log. It is a context manager now,
     so the report happens in a `finally`.
     """
+
     class _Exploding(FakeLLMProvider):
         def _dispatch(self, prompt):
             body = super()._dispatch(prompt)
@@ -214,10 +217,14 @@ async def test_the_census_still_reports_when_the_run_raises(tmp_path, caplog):
 
 def _covering(name: str, subject: str, story: str) -> Item:
     return Item(
-        source_type=SourceType.EMAIL, source_name=name, title=subject,
-        body=story, author=f"{name.replace(' ', '').lower()}@example.test",
+        source_type=SourceType.EMAIL,
+        source_name=name,
+        title=subject,
+        body=story,
+        author=f"{name.replace(' ', '').lower()}@example.test",
         timestamp=datetime(2026, 9, 20, 4, tzinfo=UTC),
-        priority=Priority.LOW, raw={"is_newsletter": True},
+        priority=Priority.LOW,
+        raw={"is_newsletter": True},
     )
 
 
@@ -247,23 +254,29 @@ async def test_a_newsletter_the_world_segment_absorbed_is_not_extracted_again():
         _covering("Morning Brew", "Acme buys Beta", deal),
         _covering("Platformer", "Acme buys Beta", deal),
     ]
-    wire = [Item(
-        source_type=SourceType.RSS, source_name="Reuters",
-        title="Acme to acquire Beta in $4bn deal", body=deal,
-        url="https://example.test/acme", timestamp=datetime(2026, 9, 20, 3, tzinfo=UTC),
-        raw={},
-    )]
+    wire = [
+        Item(
+            source_type=SourceType.RSS,
+            source_name="Reuters",
+            title="Acme to acquire Beta in $4bn deal",
+            body=deal,
+            url="https://example.test/acme",
+            timestamp=datetime(2026, 9, 20, 3, tzinfo=UTC),
+            raw={},
+        )
+    ]
 
     world, inbox_emails, _ = await _build_world_stories(
-        emails=inbox, articles=wire, events=[],
-        embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
+        emails=inbox,
+        articles=wire,
+        events=[],
+        embeddings=FakeEmbeddingProvider(),
+        length=BriefingLength.STANDARD,
         # Just after the newest fixture (04:00), not the wall clock.
         now=datetime(2026, 9, 20, 5, tzinfo=UTC),
     )
     assert world, "precondition: the wire story must reach the world segment"
-    absorbed = {e.source_name for e in inbox} - {
-        e.source_name for e in inbox_emails
-    }
+    absorbed = {e.source_name for e in inbox} - {e.source_name for e in inbox_emails}
     assert absorbed, "precondition: at least one newsletter must be absorbed"
 
     handed = {e.source_name for e in _newsletters_for_extraction(inbox_emails)}
@@ -273,9 +286,7 @@ async def test_a_newsletter_the_world_segment_absorbed_is_not_extracted_again():
     )
 
 
-async def test_the_census_sees_degradation_recorded_by_the_real_run(
-    tmp_path, caplog
-):
+async def test_the_census_sees_degradation_recorded_by_the_real_run(tmp_path, caplog):
     """The wiring, not the logic — `test_census.py` covers the logic.
 
     Review of #56 removed `degraded=degraded` from `generate_briefing`
@@ -289,6 +300,7 @@ async def test_the_census_sees_degradation_recorded_by_the_real_run(
     script chain appends from inside `generate_script`, after the census
     already exists.
     """
+
     class _Degrading(FakeLLMProvider):
         pass
 
@@ -296,16 +308,20 @@ async def test_the_census_sees_degradation_recorded_by_the_real_run(
         # Exactly what `script_chain._give_up` does on a refusal.
         kwargs["degraded"].append("world")
         from app.pipeline.script_chain import generate_script
+
         return await generate_script(**kwargs)
 
     with caplog.at_level(logging.INFO):
         await _run(
-            tmp_path, _the_morning_that_failed(),
-            llm=_Degrading(), generate_script=_script,
+            tmp_path,
+            _the_morning_that_failed(),
+            llm=_Degrading(),
+            generate_script=_script,
         )
 
     census_line = next(
-        r.getMessage() for r in caplog.records
+        r.getMessage()
+        for r in caplog.records
         if r.getMessage().startswith("run census:")
     )
     assert "script" in census_line

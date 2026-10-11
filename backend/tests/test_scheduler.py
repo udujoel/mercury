@@ -150,9 +150,7 @@ async def test_run_generates_and_pushes_when_no_manifest_exists():
     try:
         push = FakePushProvider()
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(
-                "app.api.devices.list_registered_tokens", lambda: ["device-1"]
-            )
+            mp.setattr("app.api.devices.list_registered_tokens", lambda: ["device-1"])
             await run_daily_briefing_job(
                 llm=object(),
                 tts=object(),
@@ -345,9 +343,7 @@ async def test_the_scheduled_job_honours_storage_backend(monkeypatch, tmp_path):
         calls.append(kwargs)
         raise RuntimeError("stop here; storage selection is what is under test")
 
-    monkeypatch.setattr(
-        cron_module, "generate_briefing", _fake_generate, raising=True
-    )
+    monkeypatch.setattr(cron_module, "generate_briefing", _fake_generate, raising=True)
 
     await run_daily_briefing_job(llm=object(), tts=object(), push_provider=None)
 

@@ -21,12 +21,12 @@ from app.pipeline.prompts import DIGEST_PROMPT
 
 def test_the_schema_lets_the_model_return_a_subject():
     props = _ENRICHMENT_SCHEMA["items"]["properties"]
-    assert "subject" in props, (
-        "an unconstrained field is one the decoder may silently drop"
-    )
-    assert props["subject"]["nullable"] is True, (
-        "a roundup genuinely has no specific subject; forcing one invents it"
-    )
+    assert (
+        "subject" in props
+    ), "an unconstrained field is one the decoder may silently drop"
+    assert (
+        props["subject"]["nullable"] is True
+    ), "a roundup genuinely has no specific subject; forcing one invents it"
 
 
 def test_the_prompt_demands_a_phrase_and_refuses_a_category():
@@ -59,9 +59,14 @@ def test_an_absent_subject_is_none_not_a_crash():
 
 
 def test_the_wire_model_tolerates_a_digest_written_before_subjects():
-    story = DigestStory.model_validate({
-        "id": "st_1", "headline": "Old story", "source_count": 1, "sources": [],
-    })
+    story = DigestStory.model_validate(
+        {
+            "id": "st_1",
+            "headline": "Old story",
+            "source_count": 1,
+            "sources": [],
+        }
+    )
     assert story.subject is None
 
 
@@ -72,16 +77,24 @@ def test_subjects_group_two_clusters_that_headlines_do_not():
     "what subjects arrived this morning" answer with something other than a
     list of every headline.
     """
-    a = DigestStory.model_validate({
-        "id": "st_a", "headline": "Houthi Advance Threatens Global Trade",
-        "subject": "Houthi forces advancing on Red Sea shipping lanes",
-        "source_count": 3, "sources": [],
-    })
-    b = DigestStory.model_validate({
-        "id": "st_b", "headline": "Houthi Advance Consolidates Red Sea Power",
-        "subject": "Houthi forces advancing on Red Sea shipping lanes",
-        "source_count": 2, "sources": [],
-    })
+    a = DigestStory.model_validate(
+        {
+            "id": "st_a",
+            "headline": "Houthi Advance Threatens Global Trade",
+            "subject": "Houthi forces advancing on Red Sea shipping lanes",
+            "source_count": 3,
+            "sources": [],
+        }
+    )
+    b = DigestStory.model_validate(
+        {
+            "id": "st_b",
+            "headline": "Houthi Advance Consolidates Red Sea Power",
+            "subject": "Houthi forces advancing on Red Sea shipping lanes",
+            "source_count": 2,
+            "sources": [],
+        }
+    )
     assert a.headline != b.headline
     assert a.subject == b.subject
 

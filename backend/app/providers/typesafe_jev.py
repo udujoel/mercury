@@ -181,7 +181,8 @@ class JevJudgmentProvider:
             log.warning(
                 "jev: the %.0fs briefing judgment budget is spent — %d claim(s) "
                 "go unjudged and their gates fall back to the heuristics",
-                self._briefing_budget, len(claims),
+                self._briefing_budget,
+                len(claims),
             )
             return {c.key: None for c in claims}
 
@@ -231,7 +232,8 @@ class JevJudgmentProvider:
                 log.warning(
                     "jev: %d claim chunk(s) did not finish within the %.0fs "
                     "remaining budget and were cancelled",
-                    len(pending), deadline,
+                    len(pending),
+                    deadline,
                 )
         return out
 
@@ -246,7 +248,8 @@ class JevJudgmentProvider:
             log.warning(
                 "jev: the %.0fs briefing judgment budget is spent before "
                 "triage — all %d email(s) keep the classify_priority heuristic",
-                self._briefing_budget, len(states),
+                self._briefing_budget,
+                len(states),
             )
             return [None] * len(states)
 
@@ -292,7 +295,9 @@ class JevJudgmentProvider:
                     "jev: %d of %d judgment(s) did not finish within the %.0fs "
                     "remaining budget and were cancelled — those emails keep "
                     "the classify_priority heuristic",
-                    len(pending), len(states), deadline,
+                    len(pending),
+                    len(states),
+                    deadline,
                 )
 
         return out

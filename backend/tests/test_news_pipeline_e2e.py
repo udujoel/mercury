@@ -81,9 +81,7 @@ ACQUISITION_SOURCES = sorted(ACQUISITION_NEWSLETTERS + ACQUISITION_NEWS_SOURCES)
 async def _ingest() -> tuple[list, list]:
     """Real Gmail + real RSS ingestion off the cross-source fixtures."""
     emails = await fetch_emails(fixture=GMAIL_FIXTURE)
-    articles = await rss.fetch_articles(
-        feeds=FEEDS, fixture=RSS_FIXTURE, now=FIXED_NOW
-    )
+    articles = await rss.fetch_articles(feeds=FEEDS, fixture=RSS_FIXTURE, now=FIXED_NOW)
     return emails, articles
 
 
@@ -125,12 +123,14 @@ async def test_the_fixtures_really_do_carry_the_same_story_twice():
         item for item in emails + articles if "DataFlow" in f"{item.title} {item.body}"
     ]
     assert len(covering) == 5
-    assert sorted(
-        i.source_name for i in covering if i.source_type is SourceType.EMAIL
-    ) == ACQUISITION_NEWSLETTERS
-    assert sorted(
-        i.source_name for i in covering if i.source_type is SourceType.RSS
-    ) == ACQUISITION_NEWS_SOURCES
+    assert (
+        sorted(i.source_name for i in covering if i.source_type is SourceType.EMAIL)
+        == ACQUISITION_NEWSLETTERS
+    )
+    assert (
+        sorted(i.source_name for i in covering if i.source_type is SourceType.RSS)
+        == ACQUISITION_NEWS_SOURCES
+    )
 
 
 async def test_a_story_covered_by_three_newsletters_and_two_news_sources_appears_once():
@@ -180,18 +180,23 @@ async def test_prd_f08_newsletter_and_news_feed_merge_with_both_sources_attribut
     """
     stories = await _stories()
     merged = [
-        s for s in stories
+        s
+        for s in stories
         if {m.source_type for m in s.members} == {SourceType.EMAIL, SourceType.RSS}
     ]
 
     assert len(merged) == 1
     story = merged[0]
-    assert sorted(
-        m.source_name for m in story.members if m.source_type is SourceType.EMAIL
-    ) == ACQUISITION_NEWSLETTERS
-    assert sorted(
-        m.source_name for m in story.members if m.source_type is SourceType.RSS
-    ) == ACQUISITION_NEWS_SOURCES
+    assert (
+        sorted(
+            m.source_name for m in story.members if m.source_type is SourceType.EMAIL
+        )
+        == ACQUISITION_NEWSLETTERS
+    )
+    assert (
+        sorted(m.source_name for m in story.members if m.source_type is SourceType.RSS)
+        == ACQUISITION_NEWS_SOURCES
+    )
 
 
 async def test_the_wire_report_represents_the_cluster():
@@ -229,7 +234,7 @@ async def test_the_cluster_really_does_mix_naive_and_aware_timestamps():
 
 
 async def test_every_source_that_carried_the_story_reaches_the_show_notes():
-    """"Four sources attributed", the visible half of ADR-003. One ref per
+    """'Four sources attributed', the visible half of ADR-003. One ref per
     member, each carrying the cluster size so the client can group them into
     a single show-notes entry."""
     stories = await _stories()
@@ -311,7 +316,7 @@ async def test_the_world_segment_receives_the_clustered_story(
 async def test_the_story_is_offered_to_exactly_one_segment_of_the_briefing(
     tmp_path, clustering_threshold
 ):
-    """"Appears exactly once IN THE BRIEFING", not merely "clusters into one
+    """'Appears exactly once IN THE BRIEFING', not merely "clusters into one
     story". Clustering the acquisition correctly and then also handing all
     three newsletters to the inbox segment would satisfy every assertion
     above and still read the story out four times.
@@ -377,9 +382,7 @@ async def test_a_dead_feed_does_not_take_the_briefing_down(tmp_path):
     async def _explode(**kwargs):
         raise RuntimeError("synthetic feed outage")
 
-    manifest = await _generate(
-        tmp_path, PromptCapturingLLM(), fetch_articles=_explode
-    )
+    manifest = await _generate(tmp_path, PromptCapturingLLM(), fetch_articles=_explode)
     assert manifest.turns
 
 
@@ -415,7 +418,6 @@ async def test_no_embedding_provider_still_ships_a_briefing(tmp_path):
 # That is exactly why a story covered only by newsletters was read out three
 # times while a suite asserting the Phase 2 gate stayed green.
 # ──────────────────────────────────────────────────────────────
-
 
 
 def _newsletter(sender: str, title: str, body: str) -> Item:
@@ -507,7 +509,9 @@ async def test_the_collapse_names_the_other_newsletters_rather_than_hiding_them(
     assert len(others) == 2
     assert survivor.source_name not in others
     assert sorted(others + [survivor.source_name]) == [
-        "Benedict Evans", "Platformer", "Stratechery",
+        "Benedict Evans",
+        "Platformer",
+        "Stratechery",
     ]
 
     # ...and it reaches the model, which is the only reason to record it.
@@ -526,7 +530,8 @@ async def test_unrelated_emails_are_not_collapsed_into_each_other():
         _newsletter("Stratechery", "The Halcyon acquisition", ACQUISITION_BODY),
         _newsletter("Benedict Evans", "Northwind buys Halcyon", ACQUISITION_BODY),
         _personal(
-            "Maria Chen", "Lunch Thursday?",
+            "Maria Chen",
+            "Lunch Thursday?",
             "Are you free Thursday? There is a new place near the office.",
         ),
     ]
@@ -553,7 +558,8 @@ async def test_a_newsletter_absorbed_by_the_world_segment_leaves_the_inbox():
     emails = [
         _newsletter("Stratechery", "The Halcyon acquisition", ACQUISITION_BODY),
         _personal(
-            "Maria Chen", "Lunch Thursday?",
+            "Maria Chen",
+            "Lunch Thursday?",
             "Are you free Thursday? There is a new place near the office.",
         ),
     ]
@@ -592,13 +598,15 @@ async def test_a_personal_email_is_not_absorbed_into_a_world_story():
     """
     emails = [
         _personal(
-            "Maria Chen", "Northwind/Halcyon — are we exposed?",
+            "Maria Chen",
+            "Northwind/Halcyon — are we exposed?",
             ACQUISITION_BODY + " Do we have anything riding on this?",
         )
     ]
     articles = [
         Item(
-            source_type=SourceType.RSS, source_name="Reuters",
+            source_type=SourceType.RSS,
+            source_name="Reuters",
             title="Northwind to acquire Halcyon Robotics",
             body=ACQUISITION_BODY,
             url="https://example.com/northwind-halcyon",
@@ -639,14 +647,16 @@ async def test_an_id_collision_does_not_drop_an_unrelated_email():
     """
     absorbed_one = _newsletter("Stratechery", "Weekly", ACQUISITION_BODY)
     bystander = _newsletter(
-        "Stratechery", "Weekly",
+        "Stratechery",
+        "Weekly",
         "Are you free Thursday? There is a new place near the office.",
     )
     assert absorbed_one.id == bystander.id, "the collision is the premise"
 
     articles = [
         Item(
-            source_type=SourceType.RSS, source_name="Reuters",
+            source_type=SourceType.RSS,
+            source_name="Reuters",
             title="Northwind to acquire Halcyon Robotics",
             body=ACQUISITION_BODY,
             url="https://example.com/northwind-halcyon",
@@ -656,9 +666,9 @@ async def test_an_id_collision_does_not_drop_an_unrelated_email():
 
     _, inbox = await _world([absorbed_one, bystander], articles)
 
-    assert any(e is bystander for e in inbox), (
-        "the unrelated message was dropped because it shared a content hash"
-    )
+    assert any(
+        e is bystander for e in inbox
+    ), "the unrelated message was dropped because it shared a content hash"
 
 
 # ──────────────────────────────────────────────────────────────
@@ -729,9 +739,7 @@ async def test_the_probe_sees_the_pair_the_threshold_was_chosen_to_separate(
     get_settings.cache_clear()
     try:
         with caplog.at_level(logging.INFO, logger="app.pipeline.cluster_verify"):
-            await _generate(
-                tmp_path, PromptCapturingLLM(), judgment_provider=judge
-            )
+            await _generate(tmp_path, PromptCapturingLLM(), judgment_provider=judge)
     finally:
         get_settings.cache_clear()
 

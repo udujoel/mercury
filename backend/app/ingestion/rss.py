@@ -319,7 +319,7 @@ def _tidy_feed_title(title: str) -> str:
     lowered = title.lower()
     for prefix in TITLE_NOISE_PREFIXES:
         if lowered.startswith(prefix):
-            title = title[len(prefix):].strip()
+            title = title[len(prefix) :].strip()
             break
     return title or "an unnamed feed"
 

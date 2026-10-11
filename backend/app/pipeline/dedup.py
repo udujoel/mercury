@@ -80,7 +80,8 @@ async def build_stories(
             "embedding provider returned %d vectors for %d items; "
             "refusing to guess an order mapping, shipping unclustered "
             "singletons",
-            len(vectors), len(items),
+            len(vectors),
+            len(items),
         )
         return [_singleton(item) for item in items]
 
@@ -93,8 +94,8 @@ async def build_stories(
         # already handled: it passes through as an unclustered singleton.
         if not _is_usable_vector(vector):
             log.warning(
-                "unusable embedding for item %r; passing it through "
-                "unclustered", item.title[:60],
+                "unusable embedding for item %r; passing it through " "unclustered",
+                item.title[:60],
             )
             item.embedding = None
             continue

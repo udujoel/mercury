@@ -68,8 +68,10 @@ try:
         build_research_provider as _real_build_research_provider,
     )
 except ImportError:  # pragma: no cover - the provider is optional
+
     def _real_build_research_provider():
         return None
+
 
 # Distinguishes "the caller said nothing" from "the caller said no".
 _UNSET = object()
@@ -115,6 +117,7 @@ except ImportError:  # pragma: no cover - the provider is optional
 
     def _real_build_judgment():
         return None
+
 
 try:
     from app.pipeline.script_chain import generate_script as _real_generate_script
@@ -248,13 +251,16 @@ async def generate_briefing(
         wanted = [s.strip().lower() for s in muted_senders if s.strip()]
         if wanted:
             emails = [
-                em for em in emails
+                em
+                for em in emails
                 if not any(w in em.source_name.lower() for w in wanted)
             ]
             log.info(
                 "muted %d of %d emails from %d muted sender(s); they remain "
                 "on the desk",
-                len(all_emails) - len(emails), len(all_emails), len(wanted),
+                len(all_emails) - len(emails),
+                len(all_emails),
+                len(wanted),
             )
 
     # Newsletters and articles cluster TOGETHER, in one call, which is the
@@ -372,13 +378,15 @@ async def generate_briefing(
         spoken_as_stories = {
             id(e) for e in _newsletters_for_extraction(selection["emails"])
         }
-        other_mail = [
-            e for e in selection["emails"] if id(e) not in spoken_as_stories
-        ]
-        census.record("inbox", took=len(emails), made=len(other_mail),
-                      # An inbox that is entirely newsletters legitimately
-                      # leaves nothing for the rapid-fire tail.
-                      may_be_empty=True)
+        other_mail = [e for e in selection["emails"] if id(e) not in spoken_as_stories]
+        census.record(
+            "inbox",
+            took=len(emails),
+            made=len(other_mail),
+            # An inbox that is entirely newsletters legitimately
+            # leaves nothing for the rapid-fire tail.
+            may_be_empty=True,
+        )
 
         if generate_script is None:
             raise RuntimeError(
@@ -452,9 +460,7 @@ async def generate_briefing(
         # mistake. See app/pipeline/digest.py.
         browsable = digest_stories(all_stories)
         enrichment_prompt = (
-            build_enrichment_prompt(stories_to_enrich(browsable))
-            if browsable
-            else ""
+            build_enrichment_prompt(stories_to_enrich(browsable)) if browsable else ""
         )
 
         # CLAUDE.md rule 5: raw email bodies are ephemeral, held only for the
@@ -486,9 +492,7 @@ async def generate_briefing(
                 # How many times this briefing has already been regenerated
                 # because it shipped degraded. Bounds the retry — see
                 # MAX_DEGRADED_RETRIES.
-                degraded_attempts=(
-                    (previous_degraded_attempts + 1) if degraded else 0
-                ),
+                degraded_attempts=((previous_degraded_attempts + 1) if degraded else 0),
             )
         except BaseException:
             # An EmptyBriefingError here means nothing is stored and the run
@@ -546,8 +550,10 @@ async def generate_briefing(
         census.record(
             "script",
             took=(
-                len(world_stories) + len(newsletter_stories)
-                + len(other_mail) + len(selection["events"])
+                len(world_stories)
+                + len(newsletter_stories)
+                + len(other_mail)
+                + len(selection["events"])
             ),
             made=len(turns),
         )
@@ -623,9 +629,7 @@ async def _ingest_concurrently(
             raise RuntimeError(
                 "fetch_weather not available (app.ingestion.weather.fetch_weather)"
             )
-        return await fetch_weather(
-            lat=user_lat, lon=user_lon, fixture=weather_fixture
-        )
+        return await fetch_weather(lat=user_lat, lon=user_lon, fixture=weather_fixture)
 
     async def _articles() -> list[Item]:
         if fetch_articles is None:
@@ -654,7 +658,9 @@ async def _ingest_concurrently(
         if isinstance(result, BaseException):
             log.error(
                 "ingestion source %r failed, dropping that segment "
-                "(briefing still ships without it): %s", label, result,
+                "(briefing still ships without it): %s",
+                label,
+                result,
             )
             out.append(default)
         else:
@@ -704,9 +710,7 @@ def _is_newsletter(item: Item) -> bool:
     nobody. Two colleagues writing about one project is not duplication
     either; they both wrote to the user.
     """
-    return item.source_type is SourceType.EMAIL and bool(
-        item.raw.get("is_newsletter")
-    )
+    return item.source_type is SourceType.EMAIL and bool(item.raw.get("is_newsletter"))
 
 
 def _newsletters_for_extraction(emails: list[Item]) -> list[Item]:
@@ -740,7 +744,8 @@ def _newsletters_for_extraction(emails: list[Item]) -> list[Item]:
     # prompt budget doing it, and hand the body to Gemini on the way (rule
     # 5). ROADMAP task 27.
     return [
-        item for item in emails
+        item
+        for item in emails
         if item.raw.get("is_newsletter") and not item.raw.get("is_transactional")
     ]
 
@@ -852,13 +857,16 @@ async def _extract_newsletter_stories(
         if found:
             stories = [
                 replace(story, research=found[story.subject])
-                if story.subject in found else story
+                if story.subject in found
+                else story
                 for story in stories
             ]
         log.info(
             "newsletters: %d subject(s) spoken, %d held back, %d researched, "
             "top subject carried by %d outlet(s)",
-            len(stories), remainder, len(found),
+            len(stories),
+            remainder,
+            len(found),
             len(stories[0].outlets) if stories else 0,
         )
         return stories, remainder
@@ -898,7 +906,8 @@ async def _topic_centroid(
     except Exception:
         log.warning(
             "ranking: could not embed interest topics; ranking without "
-            "the interest term", exc_info=True,
+            "the interest term",
+            exc_info=True,
         )
         return None
 
@@ -923,11 +932,14 @@ async def _topic_centroid(
         # the whole.
         log.warning(
             "ranking: embedded %d of %d interest topic(s); the centroid "
-            "covers the subset", len(vectors), len(wanted),
+            "covers the subset",
+            len(vectors),
+            len(wanted),
         )
     log.info(
         "ranking: world segment ranked against %d interest topic(s): %s",
-        len(vectors), ", ".join(wanted[:6]),
+        len(vectors),
+        ", ".join(wanted[:6]),
     )
     return centroid
 
@@ -1062,9 +1074,7 @@ async def _build_world_stories(
         members = [m for m in story.members if _is_newsletter(m)]
         if len(members) < 2:
             continue
-        keeper = next(
-            (m for m in members if m is story.canonical), members[0]
-        )
+        keeper = next((m for m in members if m is story.canonical), members[0])
         superseded.update(id(m) for m in members if m is not keeper)
         # Not silent. Dropping the duplicates without saying so would trade
         # one wrong behaviour for another — the hosts would read a story that
@@ -1076,15 +1086,18 @@ async def _build_world_stories(
         )
 
     inbox_emails = [
-        em for em in emails
-        if id(em) not in absorbed and id(em) not in superseded
+        em for em in emails if id(em) not in absorbed and id(em) not in superseded
     ]
 
     log.info(
         "news: %d articles + %d emails clustered into %d stories; %d reach "
         "the world segment, absorbing %d email(s); %d further email(s) "
         "collapsed into a newsletter-only cluster",
-        len(articles), len(emails), len(stories), len(world), len(absorbed),
+        len(articles),
+        len(emails),
+        len(stories),
+        len(world),
+        len(absorbed),
         len(superseded),
     )
     return world, inbox_emails, stories
@@ -1158,8 +1171,8 @@ def _parse_briefing_date(briefing_id: str, *, now: datetime) -> datetime:
     from app.synthesis.storage import briefing_day
 
     try:
-        return datetime.strptime(
-            briefing_day(briefing_id), "%Y-%m-%d"
-        ).replace(tzinfo=tz)
+        return datetime.strptime(briefing_day(briefing_id), "%Y-%m-%d").replace(
+            tzinfo=tz
+        )
     except ValueError:
         return now.astimezone(tz)

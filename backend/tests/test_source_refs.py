@@ -144,7 +144,7 @@ def test_no_warning_when_there_was_nothing_to_match():
 
 
 def test_a_stop_word_in_a_sender_name_does_not_match_everything():
-    """"The Verge" splits into {"the", "verge"}, and the sender loop accepted
+    """'The Verge' splits into {"the", "verge"}, and the sender loop accepted
     any part longer than two characters — so "the" matched nearly every turn
     in the briefing. The Verge collected a SourceRef on cold_open, weather
     and sign_off: show notes filled with junk, and the grounding audit trail
@@ -202,12 +202,21 @@ def test_a_junk_ref_does_not_reach_the_manifest():
     """The same bug at the level the user sees it: a publication credited on
     the weather and the sign-off."""
     turns = [
-        Turn(speaker="A", segment=Segment.COLD_OPEN,
-             text="Good morning Joel, and welcome to the briefing."),
-        Turn(speaker="B", segment=Segment.WEATHER,
-             text="Clear all day, with a high of twenty-four."),
-        Turn(speaker="A", segment=Segment.SIGN_OFF,
-             text="That's the morning. Have a good one."),
+        Turn(
+            speaker="A",
+            segment=Segment.COLD_OPEN,
+            text="Good morning Joel, and welcome to the briefing.",
+        ),
+        Turn(
+            speaker="B",
+            segment=Segment.WEATHER,
+            text="Clear all day, with a high of twenty-four.",
+        ),
+        Turn(
+            speaker="A",
+            segment=Segment.SIGN_OFF,
+            text="That's the morning. Have a good one.",
+        ),
     ]
     emails = [_email("Apple pushes back foldable iPhone to 2028", "The Verge")]
     assert _build_source_refs(turns, emails, []) == []

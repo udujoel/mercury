@@ -62,13 +62,19 @@ def make_email() -> Item:
 
 def make_event() -> CalendarEvent:
     return CalendarEvent(
-        id="evt1", title="Provider upgrade review", start=DATE, end=DATE,
+        id="evt1",
+        title="Provider upgrade review",
+        start=DATE,
+        end=DATE,
     )
 
 
 def make_weather() -> Weather:
     return Weather(
-        temperature_c=16, condition="clear sky", high_c=24, low_c=14,
+        temperature_c=16,
+        condition="clear sky",
+        high_c=24,
+        low_c=14,
         location_name="Aveiro",
     )
 
@@ -213,25 +219,44 @@ def _canonical_turns(agreeable_calendar: bool = False) -> list[Turn]:
     used as the draft input for the unit tests below. `agreeable_calendar`
     plants the same kind of defect FakeLLMProvider plants, for tests that
     need the draft to already have an issue."""
-    calendar_b_text = "Sounds good, agreed." if agreeable_calendar else (
-        "Actually, I'd push that back — the room's still booked then."
+    calendar_b_text = (
+        "Sounds good, agreed."
+        if agreeable_calendar
+        else ("Actually, I'd push that back — the room's still booked then.")
     )
     return [
-        Turn(speaker="A", segment=Segment.COLD_OPEN,
-             text="Good morning, Joel. It's Friday, the twenty-first."),
-        Turn(speaker="A", segment=Segment.WEATHER,
-             text="Clear skies, sixteen degrees this morning."),
-        Turn(speaker="A", segment=Segment.CALENDAR,
-             text="Provider upgrade review at nine with Priya."),
+        Turn(
+            speaker="A",
+            segment=Segment.COLD_OPEN,
+            text="Good morning, Joel. It's Friday, the twenty-first.",
+        ),
+        Turn(
+            speaker="A",
+            segment=Segment.WEATHER,
+            text="Clear skies, sixteen degrees this morning.",
+        ),
+        Turn(
+            speaker="A",
+            segment=Segment.CALENDAR,
+            text="Provider upgrade review at nine with Priya.",
+        ),
         Turn(speaker="B", segment=Segment.CALENDAR, text=calendar_b_text),
-        Turn(speaker="A", segment=Segment.INBOX,
-             text="Priya sent the rollout plan overnight."),
-        Turn(speaker="A", segment=Segment.WORLD,
-             text="Stratechery published a piece on bundling this week."),
-        Turn(speaker="A", segment=Segment.FOLLOW_UPS,
-             text="Nothing outstanding from yesterday."),
-        Turn(speaker="A", segment=Segment.SIGN_OFF,
-             text="Have a good one, Joel."),
+        Turn(
+            speaker="A",
+            segment=Segment.INBOX,
+            text="Priya sent the rollout plan overnight.",
+        ),
+        Turn(
+            speaker="A",
+            segment=Segment.WORLD,
+            text="Stratechery published a piece on bundling this week.",
+        ),
+        Turn(
+            speaker="A",
+            segment=Segment.FOLLOW_UPS,
+            text="Nothing outstanding from yesterday.",
+        ),
+        Turn(speaker="A", segment=Segment.SIGN_OFF, text="Have a good one, Joel."),
     ]
 
 
@@ -251,8 +276,9 @@ class ScriptedLLMProvider:
         self.revise_response = revise_response
         self.calls: list[str] = []
 
-    async def complete(self, system, prompt, *, temperature=0.85,
-                       json_mode=False, response_schema=None):
+    async def complete(
+        self, system, prompt, *, temperature=0.85, json_mode=False, response_schema=None
+    ):
         if "Review this draft script critically" in prompt:
             self.calls.append("critique")
             return self.critique_response
@@ -274,12 +300,15 @@ async def test_critique_parse_failure_falls_back_to_draft():
     )
     result = await _run_critique_and_revise(
         date="Friday, 21 August 2026",
-        llm=llm, draft_turns=draft, source_data="irrelevant", budget=budget,
+        llm=llm,
+        draft_turns=draft,
+        source_data="irrelevant",
+        budget=budget,
     )
     assert result == draft
-    assert "revise" not in llm.calls, (
-        "revise must not be called after a critique failure"
-    )
+    assert (
+        "revise" not in llm.calls
+    ), "revise must not be called after a critique failure"
     # The critique is now retried before we give up on it (see
     # script_chain._complete_json) — a formatting slip should not silently
     # cost us a pass we already paid for. The fallback itself is unchanged:
@@ -296,7 +325,10 @@ async def test_revise_parse_failure_falls_back_to_draft():
     )
     result = await _run_critique_and_revise(
         date="Friday, 21 August 2026",
-        llm=llm, draft_turns=draft, source_data="irrelevant", budget=budget,
+        llm=llm,
+        draft_turns=draft,
+        source_data="irrelevant",
+        budget=budget,
     )
     assert result == draft
     assert llm.calls == (
@@ -322,7 +354,10 @@ async def test_revise_missing_segment_falls_back_to_draft():
     )
     result = await _run_critique_and_revise(
         date="Friday, 21 August 2026",
-        llm=llm, draft_turns=draft, source_data="irrelevant", budget=budget,
+        llm=llm,
+        draft_turns=draft,
+        source_data="irrelevant",
+        budget=budget,
     )
     assert result == draft
 
@@ -336,7 +371,10 @@ async def test_revise_empty_array_falls_back_to_draft():
     )
     result = await _run_critique_and_revise(
         date="Friday, 21 August 2026",
-        llm=llm, draft_turns=draft, source_data="irrelevant", budget=budget,
+        llm=llm,
+        draft_turns=draft,
+        source_data="irrelevant",
+        budget=budget,
     )
     assert result == draft
 
@@ -348,8 +386,7 @@ async def test_revise_outside_word_budget_falls_back_to_draft():
     budget = _word_count(draft)
     # Valid, complete, canonical-order script, but wildly over budget.
     bloated = [
-        {"speaker": t.speaker, "segment": t.segment.value,
-         "text": (t.text + " ") * 10}
+        {"speaker": t.speaker, "segment": t.segment.value, "text": (t.text + " ") * 10}
         for t in draft
     ]
     llm = ScriptedLLMProvider(
@@ -358,7 +395,10 @@ async def test_revise_outside_word_budget_falls_back_to_draft():
     )
     result = await _run_critique_and_revise(
         date="Friday, 21 August 2026",
-        llm=llm, draft_turns=draft, source_data="irrelevant", budget=budget,
+        llm=llm,
+        draft_turns=draft,
+        source_data="irrelevant",
+        budget=budget,
     )
     assert result == draft
 
@@ -385,7 +425,10 @@ async def test_revise_that_scores_worse_than_draft_falls_back_to_draft():
     )
     result = await _run_critique_and_revise(
         date="Friday, 21 August 2026",
-        llm=llm, draft_turns=draft, source_data=source_text, budget=budget,
+        llm=llm,
+        draft_turns=draft,
+        source_data=source_text,
+        budget=budget,
     )
     assert result == draft, "a revision that scores worse must be rejected"
 
@@ -405,9 +448,7 @@ async def test_revise_that_improves_on_draft_is_accepted():
     # Replace the agreeable line with a genuine challenge.
     for turn in fixed:
         if turn["text"] == "Sounds good, agreed.":
-            turn["text"] = (
-                "Actually, hold on — is the room definitely free at nine?"
-            )
+            turn["text"] = "Actually, hold on — is the room definitely free at nine?"
 
     llm = ScriptedLLMProvider(
         critique_response='{"issues": []}',
@@ -415,7 +456,10 @@ async def test_revise_that_improves_on_draft_is_accepted():
     )
     result = await _run_critique_and_revise(
         date="Friday, 21 August 2026",
-        llm=llm, draft_turns=draft, source_data=source_text, budget=budget,
+        llm=llm,
+        draft_turns=draft,
+        source_data=source_text,
+        budget=budget,
     )
     result_texts = [t.text for t in result]
     assert "Sounds good, agreed." not in result_texts
@@ -432,12 +476,16 @@ async def test_revise_that_improves_on_draft_is_accepted():
 class _CritiqueExplodesProvider(FakeLLMProvider):
     """Draft succeeds, critique raises a transport-style error."""
 
-    async def complete(self, system, prompt, *, temperature=0.85,
-                       json_mode=False, response_schema=None):
+    async def complete(
+        self, system, prompt, *, temperature=0.85, json_mode=False, response_schema=None
+    ):
         if "Review this draft script" in prompt or "critically" in prompt:
             raise TimeoutError("provider timed out")
         return await super().complete(
-            system, prompt, temperature=temperature, json_mode=json_mode,
+            system,
+            prompt,
+            temperature=temperature,
+            json_mode=json_mode,
             response_schema=response_schema,
         )
 
@@ -445,12 +493,16 @@ class _CritiqueExplodesProvider(FakeLLMProvider):
 class _RevisionWrongShapeProvider(FakeLLMProvider):
     """Revision returns valid JSON of the wrong shape."""
 
-    async def complete(self, system, prompt, *, temperature=0.85,
-                       json_mode=False, response_schema=None):
+    async def complete(
+        self, system, prompt, *, temperature=0.85, json_mode=False, response_schema=None
+    ):
         if "Apply these fixes" in prompt:
             return '{"turns": [{"speaker": "A", "segment": "inbox", "text": "hi"}]}'
         return await super().complete(
-            system, prompt, temperature=temperature, json_mode=json_mode,
+            system,
+            prompt,
+            temperature=temperature,
+            json_mode=json_mode,
             response_schema=response_schema,
         )
 
@@ -464,7 +516,9 @@ async def test_critique_provider_failure_keeps_the_draft():
     """
     turns, _ = await generate_script(
         llm=_CritiqueExplodesProvider(),
-        emails=[], events=[], weather=None,
+        emails=[],
+        events=[],
+        weather=None,
         length=BriefingLength.STANDARD,
         date=datetime(2026, 8, 22, tzinfo=UTC),
         passes=4,
@@ -481,7 +535,9 @@ async def test_revision_with_wrong_json_shape_keeps_the_draft():
     """
     turns, _ = await generate_script(
         llm=_RevisionWrongShapeProvider(),
-        emails=[], events=[], weather=None,
+        emails=[],
+        events=[],
+        weather=None,
         length=BriefingLength.STANDARD,
         date=datetime(2026, 8, 22, tzinfo=UTC),
         passes=4,
@@ -497,8 +553,7 @@ def test_segment_repeating_out_of_order_is_rejected():
     which is precisely what this validator promises cannot happen.
     """
     canonical = [
-        Turn(speaker="A", segment=seg, text=f"{seg.value} line.")
-        for seg in Segment
+        Turn(speaker="A", segment=seg, text=f"{seg.value} line.") for seg in Segment
     ]
     assert _has_valid_segment_coverage_and_order(canonical) is True
 
@@ -518,8 +573,11 @@ async def test_a_stale_issue_reaches_the_revision_and_its_fix_ships():
     import json
 
     draft = _canonical_turns()
-    draft[2] = Turn(speaker="A", segment=Segment.CALENDAR,
-                    text="Your bus to Aveiro leaves at one this afternoon.")
+    draft[2] = Turn(
+        speaker="A",
+        segment=Segment.CALENDAR,
+        text="Your bus to Aveiro leaves at one this afternoon.",
+    )
     budget = _word_count(draft)
     source_text = "Rede Expressos ticket: Porto to Aveiro, departed 10 October 13:00."
 
@@ -528,11 +586,16 @@ async def test_a_stale_issue_reaches_the_revision_and_its_fix_ships():
         for t in draft
     ]
     fixed[2]["text"] = "Your bus to Aveiro left yesterday afternoon."
-    critique = {"issues": [{
-        "turn_index": 2, "type": "STALE",
-        "detail": "the trip departed yesterday, not today",
-        "fix": "say it left yesterday",
-    }]}
+    critique = {
+        "issues": [
+            {
+                "turn_index": 2,
+                "type": "STALE",
+                "detail": "the trip departed yesterday, not today",
+                "fix": "say it left yesterday",
+            }
+        ]
+    }
 
     class _Recording(ScriptedLLMProvider):
         def __init__(self, **kw):
@@ -550,7 +613,10 @@ async def test_a_stale_issue_reaches_the_revision_and_its_fix_ships():
     )
     result = await _run_critique_and_revise(
         date="Sunday, 11 October 2026",
-        llm=llm, draft_turns=draft, source_data=source_text, budget=budget,
+        llm=llm,
+        draft_turns=draft,
+        source_data=source_text,
+        budget=budget,
     )
 
     assert '"STALE"' in llm.revise_prompt

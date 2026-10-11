@@ -118,15 +118,11 @@ async def safe_get(
         # Swap the host for the validated literal; keep everything else.
         literal = f"[{ip}]" if ":" in ip else ip
         netloc = f"{literal}:{parts.port}" if parts.port else literal
-        pinned = urlunsplit(
-            (parts.scheme, netloc, parts.path or "/", parts.query, "")
-        )
+        pinned = urlunsplit((parts.scheme, netloc, parts.path or "/", parts.query, ""))
 
         request_headers = dict(headers or {})
         # Virtual hosts and TLS both need the real name, not the IP.
-        request_headers["Host"] = (
-            f"{hostname}:{parts.port}" if parts.port else hostname
-        )
+        request_headers["Host"] = f"{hostname}:{parts.port}" if parts.port else hostname
 
         async with client.stream(
             "GET",

@@ -55,7 +55,10 @@ def make_event() -> CalendarEvent:
 
 def make_weather() -> Weather:
     return Weather(
-        temperature_c=16, condition="clear sky", high_c=24, low_c=14,
+        temperature_c=16,
+        condition="clear sky",
+        high_c=24,
+        low_c=14,
         location_name="Aveiro",
     )
 
@@ -148,8 +151,13 @@ def test_parse_draft_turns_raises_when_not_a_list():
 
 
 def test_build_source_refs_matches_event_title():
-    turns = [Turn(speaker="A", segment=Segment.CALENDAR,
-                  text="First up, the Provider upgrade review at nine.")]
+    turns = [
+        Turn(
+            speaker="A",
+            segment=Segment.CALENDAR,
+            text="First up, the Provider upgrade review at nine.",
+        )
+    ]
     refs = _build_source_refs(turns, [], [make_event()])
     assert len(refs) == 1
     assert refs[0].turn_index == 0
@@ -158,8 +166,13 @@ def test_build_source_refs_matches_event_title():
 
 
 def test_build_source_refs_matches_email_sender():
-    turns = [Turn(speaker="A", segment=Segment.INBOX,
-                  text="Priya Sharma sent the rollout plan.")]
+    turns = [
+        Turn(
+            speaker="A",
+            segment=Segment.INBOX,
+            text="Priya Sharma sent the rollout plan.",
+        )
+    ]
     refs = _build_source_refs(turns, [make_email()], [])
     assert len(refs) == 1
     assert refs[0].source_type == SourceType.EMAIL
@@ -167,8 +180,11 @@ def test_build_source_refs_matches_email_sender():
 
 
 def test_build_source_refs_no_match_produces_no_refs():
-    turns = [Turn(speaker="A", segment=Segment.WEATHER,
-                  text="It's a clear morning out there.")]
+    turns = [
+        Turn(
+            speaker="A", segment=Segment.WEATHER, text="It's a clear morning out there."
+        )
+    ]
     refs = _build_source_refs(turns, [make_email()], [make_event()])
     assert refs == []
 

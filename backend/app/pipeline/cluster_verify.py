@@ -112,8 +112,7 @@ async def verify_stories(
     # Singletons have nothing to verify, and a cluster is only worth a claim
     # if clustering actually merged something into it.
     candidates = [
-        (index, story) for index, story in enumerate(stories)
-        if len(story.members) > 1
+        (index, story) for index, story in enumerate(stories) if len(story.members) > 1
     ]
     if not candidates:
         return stories
@@ -135,7 +134,9 @@ async def verify_stories(
     except Exception as exc:
         log.warning(
             "cluster verification failed (%s) — keeping clustering's own "
-            "merges for all %d multi-source story(ies)", exc, len(candidates),
+            "merges for all %d multi-source story(ies)",
+            exc,
+            len(candidates),
         )
         return stories
 
@@ -156,10 +157,12 @@ def _build(
 
     for position, (story_index, story) in enumerate(candidates):
         others = [m for m in story.members if m is not story.canonical]
-        clusters.append({
-            "canonical": _summarise(story.canonical),
-            "members": [_summarise(m) for m in others],
-        })
+        clusters.append(
+            {
+                "canonical": _summarise(story.canonical),
+                "members": [_summarise(m) for m in others],
+            }
+        )
         for member_position, member in enumerate(others):
             claim = _claim(position, member_position)
             claims.append(claim)
@@ -208,13 +211,16 @@ def _apply(
             ejected.setdefault(story_index, []).append(member)
             log.info(
                 "cluster verify: ejecting %r (%s) — p(same event)=%.2f",
-                member.title[:60], member.source_name, probability,
+                member.title[:60],
+                member.source_name,
+                probability,
             )
 
     if not ejected:
         log.info(
             "cluster verify: %d claim(s), %d unjudged, no merges undone",
-            len(addressed), unjudged,
+            len(addressed),
+            unjudged,
         )
         return stories
 
@@ -228,22 +234,26 @@ def _apply(
         kept = [m for m in story.members if id(m) not in removed_ids]
         # The canonical is never a candidate (`_build` filters it out by
         # identity), so `kept` always still contains it.
-        out.append(Story(
-            cluster_id=story.cluster_id,
-            canonical=story.canonical,
-            members=kept,
-            score=story.score,
-        ))
+        out.append(
+            Story(
+                cluster_id=story.cluster_id,
+                canonical=story.canonical,
+                members=kept,
+                score=story.score,
+            )
+        )
         out.extend(
-            _ejected_story(story, m, position)
-            for position, m in enumerate(removed)
+            _ejected_story(story, m, position) for position, m in enumerate(removed)
         )
 
     log.warning(
         "cluster verify: undid %d merge(s) in %d clustered story(ies) that "
         "the %.2f similarity threshold had made — %d claim(s), %d unjudged",
-        sum(len(v) for v in ejected.values()), len(ejected),
-        settings.cluster_similarity_threshold, len(addressed), unjudged,
+        sum(len(v) for v in ejected.values()),
+        len(ejected),
+        settings.cluster_similarity_threshold,
+        len(addressed),
+        unjudged,
     )
     return out
 
@@ -257,9 +267,7 @@ def _ejected_story(parent: Story, member: Item, position: int) -> Story:
     docstring used to promise did not happen.
     """
     member.cluster_id = f"{parent.cluster_id}-split-{position}-{member.id[:8]}"
-    return Story(
-        cluster_id=member.cluster_id, canonical=member, members=[member]
-    )
+    return Story(cluster_id=member.cluster_id, canonical=member, members=[member])
 
 
 # ──────────────────────────────────────────────────────────────
@@ -270,8 +278,7 @@ def _ejected_story(parent: Story, member: Item, position: int) -> Story:
 def _pair_claim(index: int) -> Claim:
     return Claim(
         key=f"probe:{index}",
-        instructions=f"`pairs[{index}].a` and `pairs[{index}].b` "
-                     f"{SAME_EVENT_RULE}",
+        instructions=f"`pairs[{index}].a` and `pairs[{index}].b` " f"{SAME_EVENT_RULE}",
     )
 
 
@@ -322,10 +329,9 @@ def _already_ruled_on(left: Story, right: Story) -> bool:
     other, so whether they are the same event is a question nobody has
     answered — which is exactly what this probe is for.
     """
-    return (
-        right.cluster_id.startswith(f"{left.cluster_id}-split-")
-        or left.cluster_id.startswith(f"{right.cluster_id}-split-")
-    )
+    return right.cluster_id.startswith(
+        f"{left.cluster_id}-split-"
+    ) or left.cluster_id.startswith(f"{right.cluster_id}-split-")
 
 
 def _near_threshold_pairs(
@@ -470,7 +476,9 @@ async def probe_threshold(
             log.info(
                 "threshold probe: 0 near-threshold pair(s) in [%.2f, %.2f) "
                 "across %d stories — nothing to ask",
-                floor, ceiling, len(stories),
+                floor,
+                ceiling,
+                len(stories),
             )
             return
 
@@ -481,7 +489,11 @@ async def probe_threshold(
                 "threshold probe: %d near-threshold pair(s) found, capped at "
                 "%d — the %d nearest %.2f were examined and the remaining %d "
                 "were NOT. Today's line is a sample, not a census.",
-                len(candidates), cap, cap, ceiling, len(candidates) - cap,
+                len(candidates),
+                cap,
+                cap,
+                ceiling,
+                len(candidates) - cap,
             )
 
         # The canonical stands for its cluster. Sending every member of
@@ -520,9 +532,7 @@ async def probe_threshold(
         # the probe reports nothing for as long as it takes to notice.
         # `strict=True` turns a length mismatch into an exception the
         # enclosing try converts to a visible failure instead.
-        for claim, (left, right, similarity) in zip(
-            claims, examined, strict=True
-        ):
+        for claim, (left, right, similarity) in zip(claims, examined, strict=True):
             probability = answers.get(claim.key)
             # `is not None`, never a truthiness test. A judged 0.0 is a
             # real "different event" and is falsy; `or` would fold it in
@@ -537,9 +547,12 @@ async def probe_threshold(
                 "threshold probe: MISSED merge at cosine %.4f (under the "
                 "%.2f threshold) — %r (%s) and %r (%s) report the same "
                 "event, p=%.2f. Observed only; nothing was merged.",
-                similarity, ceiling,
-                left.canonical.title[:80], left.canonical.source_name,
-                right.canonical.title[:80], right.canonical.source_name,
+                similarity,
+                ceiling,
+                left.canonical.title[:80],
+                left.canonical.source_name,
+                right.canonical.title[:80],
+                right.canonical.source_name,
                 probability,
             )
 
@@ -547,13 +560,18 @@ async def probe_threshold(
             "threshold probe: %d near-threshold pair(s) in [%.2f, %.2f) "
             "examined, %d judged the same event, %d unjudged — observe "
             "only, clustering unchanged",
-            len(examined), floor, ceiling, missed, unjudged,
+            len(examined),
+            floor,
+            ceiling,
+            missed,
+            unjudged,
         )
     except Exception as exc:
         # Nothing to degrade: the probe holds no result the briefing wants.
         log.warning(
             "threshold probe failed (%s) — no threshold evidence from this "
-            "run; clustering is untouched either way", exc,
+            "run; clustering is untouched either way",
+            exc,
         )
 
 

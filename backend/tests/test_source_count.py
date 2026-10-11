@@ -20,7 +20,9 @@ from app.pipeline.digest import _distinct_source_count
 
 def _item(source_name: str, title: str, *, kind=SourceType.EMAIL) -> Item:
     return Item(
-        source_type=kind, source_name=source_name, title=title,
+        source_type=kind,
+        source_name=source_name,
+        title=title,
         timestamp=datetime(2026, 9, 11, 9, 0, tzinfo=UTC),
     )
 

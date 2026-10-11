@@ -51,7 +51,9 @@ def test_an_enclosure_counts_when_it_is_an_image():
 
 
 def test_the_first_img_in_the_body_is_the_last_resort():
-    entry = {"content": [{"value": '<p>x</p><img src="https://cdn.example.com/a.png">'}]}
+    entry = {
+        "content": [{"value": '<p>x</p><img src="https://cdn.example.com/a.png">'}]
+    }
     assert image_from_entry(entry, link=LINK) == "https://cdn.example.com/a.png"
 
 
@@ -69,10 +71,18 @@ def test_a_tracking_pixel_is_not_a_lead_image():
     Stretched across a story card it is a grey smear."""
     entry = {
         "media_content": [
-            {"url": "https://t.example.com/px.gif", "medium": "image",
-             "width": "1", "height": "1"},
-            {"url": "https://cdn.example.com/real.jpg", "medium": "image",
-             "width": "1200", "height": "630"},
+            {
+                "url": "https://t.example.com/px.gif",
+                "medium": "image",
+                "width": "1",
+                "height": "1",
+            },
+            {
+                "url": "https://cdn.example.com/real.jpg",
+                "medium": "image",
+                "width": "1200",
+                "height": "630",
+            },
         ]
     }
     assert image_from_entry(entry, link=LINK) == "https://cdn.example.com/real.jpg"
@@ -155,8 +165,12 @@ def test_an_unrecognised_extension_falls_through_rather_than_being_guessed():
 
 
 def test_junk_entries_do_not_stop_a_good_one_being_found():
-    entry = {"media_content": ["not a dict", {"url": "https://cdn.example.com/ok.jpg",
-                                              "medium": "image"}]}
+    entry = {
+        "media_content": [
+            "not a dict",
+            {"url": "https://cdn.example.com/ok.jpg", "medium": "image"},
+        ]
+    }
     assert image_from_entry(entry, link=LINK) == "https://cdn.example.com/ok.jpg"
 
 
@@ -175,8 +189,11 @@ def test_the_lead_image_prefers_the_canonical_members_art():
 
     def _item(name: str, image: str | None) -> Item:
         return Item(
-            source_type=SourceType.RSS, source_name=name, title=f"{name} on it",
-            timestamp=datetime(2026, 9, 4, tzinfo=UTC), image_url=image,
+            source_type=SourceType.RSS,
+            source_name=name,
+            title=f"{name} on it",
+            timestamp=datetime(2026, 9, 4, tzinfo=UTC),
+            image_url=image,
         )
 
     aggregator = _item("Aggregator", "https://cdn/stock.jpg")
@@ -194,8 +211,11 @@ def test_the_lead_image_falls_back_to_any_member_that_has_one():
 
     def _item(name: str, image: str | None) -> Item:
         return Item(
-            source_type=SourceType.RSS, source_name=name, title=f"{name} on it",
-            timestamp=datetime(2026, 9, 4, tzinfo=UTC), image_url=image,
+            source_type=SourceType.RSS,
+            source_name=name,
+            title=f"{name} on it",
+            timestamp=datetime(2026, 9, 4, tzinfo=UTC),
+            image_url=image,
         )
 
     plain = _item("Newsletter", None)
@@ -214,7 +234,9 @@ def test_a_newsletter_only_story_simply_has_no_image():
     from app.pipeline.digest import _lead_image
 
     email = Item(
-        source_type=SourceType.EMAIL, source_name="Stratechery", title="Monday",
+        source_type=SourceType.EMAIL,
+        source_name="Stratechery",
+        title="Monday",
         timestamp=datetime(2026, 9, 4, tzinfo=UTC),
     )
     story = Story(cluster_id="c1", canonical=email, members=[email])
@@ -283,7 +305,7 @@ def test_a_beacon_in_the_body_is_skipped_like_one_in_a_feed_node():
     than one in `media:content`."""
     entry = {
         "summary": '<img src="https://t.example.com/px.gif" width="1" height="1">'
-                   '<img src="https://cdn.example.com/lead.jpg">'
+        '<img src="https://cdn.example.com/lead.jpg">'
     }
     assert image_from_entry(entry, link=LINK) == "https://cdn.example.com/lead.jpg"
 
@@ -292,7 +314,9 @@ def test_an_html_entity_in_the_src_is_decoded():
     """`&amp;` stored literally makes a signed CDN URL fail its own
     signature check, and the image 403s with nothing in the log."""
     entry = {"summary": '<img src="https://cdn.example.com/a.jpg?w=1&amp;s=abc">'}
-    assert image_from_entry(entry, link=LINK) == "https://cdn.example.com/a.jpg?w=1&s=abc"
+    assert (
+        image_from_entry(entry, link=LINK) == "https://cdn.example.com/a.jpg?w=1&s=abc"
+    )
 
 
 def test_a_port_out_of_range_is_rejected_rather_than_stored():
@@ -409,13 +433,15 @@ def test_an_unknown_length_falls_back_rather_than_failing_the_run():
     ordinary event — not a reason to lose the only run of the day."""
     from app.core.schemas import BriefingLength, UserSettings
 
-    assert UserSettings(briefing_length="deep").length_or(
-        BriefingLength.STANDARD
-    ) is BriefingLength.STANDARD
+    assert (
+        UserSettings(briefing_length="deep").length_or(BriefingLength.STANDARD)
+        is BriefingLength.STANDARD
+    )
     assert UserSettings().length_or(BriefingLength.EXPRESS) is BriefingLength.EXPRESS
-    assert UserSettings(briefing_length="express").length_or(
-        BriefingLength.STANDARD
-    ) is BriefingLength.EXPRESS
+    assert (
+        UserSettings(briefing_length="express").length_or(BriefingLength.STANDARD)
+        is BriefingLength.EXPRESS
+    )
 
 
 @pytest.mark.asyncio
@@ -431,20 +457,27 @@ async def test_muted_senders_are_dropped_before_the_briefing_sees_them():
 
     async def fake_emails(**kwargs):
         return [
-            Item(source_type=SourceType.EMAIL, source_name="Substack Digest",
-                 title="A", body="", timestamp=datetime(2026, 9, 4, tzinfo=UTC)),
-            Item(source_type=SourceType.EMAIL, source_name="Reuters",
-                 title="B", body="", timestamp=datetime(2026, 9, 4, tzinfo=UTC)),
+            Item(
+                source_type=SourceType.EMAIL,
+                source_name="Substack Digest",
+                title="A",
+                body="",
+                timestamp=datetime(2026, 9, 4, tzinfo=UTC),
+            ),
+            Item(
+                source_type=SourceType.EMAIL,
+                source_name="Reuters",
+                title="B",
+                body="",
+                timestamp=datetime(2026, 9, 4, tzinfo=UTC),
+            ),
         ]
 
     # Exercised through the same filter the pipeline uses, without standing
     # up the whole run: what matters is the matching rule.
     emails = await fake_emails()
     muted = ["substack"]
-    kept = [
-        em for em in emails
-        if not any(w in em.source_name.lower() for w in muted)
-    ]
+    kept = [em for em in emails if not any(w in em.source_name.lower() for w in muted)]
 
     assert [em.source_name for em in kept] == ["Reuters"]
     assert captured == {}
@@ -512,40 +545,62 @@ async def test_a_first_draft_cannot_smuggle_a_disabled_segment_through():
     class _DisobedientLLM:
         """Writes the weather regardless of what it was asked for."""
 
-        async def complete(self, system, prompt, *, temperature=0.7,
-                           json_mode=False, response_schema=None):
+        async def complete(
+            self,
+            system,
+            prompt,
+            *,
+            temperature=0.7,
+            json_mode=False,
+            response_schema=None,
+        ):
             # Keyed on DRAFT_PROMPT's opening line, not on the word
             # "outline" — the draft prompt EMBEDS the outline, so a
             # substring check answered every pass with an outline and the
             # draft pass then retried three times against a dict.
             if not prompt.startswith("Write the full script"):
-                return json.dumps({
-                    "segments": [
-                        {"segment": "cold_open", "covers": "x",
-                         "angle": "y", "words": 20},
-                        {"segment": "sign_off", "covers": "x",
-                         "angle": "y", "words": 20},
-                    ]
-                })
-            return json.dumps([
-                {"speaker": "A", "segment": "cold_open", "text": "Morning."},
-                {"speaker": "B", "segment": "weather", "text": "It is raining."},
-                {"speaker": "A", "segment": "sign_off", "text": "See you."},
-            ])
+                return json.dumps(
+                    {
+                        "segments": [
+                            {
+                                "segment": "cold_open",
+                                "covers": "x",
+                                "angle": "y",
+                                "words": 20,
+                            },
+                            {
+                                "segment": "sign_off",
+                                "covers": "x",
+                                "angle": "y",
+                                "words": 20,
+                            },
+                        ]
+                    }
+                )
+            return json.dumps(
+                [
+                    {"speaker": "A", "segment": "cold_open", "text": "Morning."},
+                    {"speaker": "B", "segment": "weather", "text": "It is raining."},
+                    {"speaker": "A", "segment": "sign_off", "text": "See you."},
+                ]
+            )
 
     turns, _ = await generate_script(
         llm=_DisobedientLLM(),
-        emails=[], events=[], weather=None,
+        emails=[],
+        events=[],
+        weather=None,
         length=BriefingLength.STANDARD,
         date=datetime(2026, 9, 6, tzinfo=UTC),
-        disabled_segments=[s for s in ("weather", "calendar", "inbox",
-                                       "world", "follow_ups")],
+        disabled_segments=[
+            s for s in ("weather", "calendar", "inbox", "world", "follow_ups")
+        ],
     )
 
     written = {t.segment.value for t in turns}
-    assert "weather" not in written, (
-        "a segment the listener turned off reached the script"
-    )
+    assert (
+        "weather" not in written
+    ), "a segment the listener turned off reached the script"
     assert "cold_open" in written and "sign_off" in written
 
 
@@ -567,27 +622,28 @@ def test_the_word_budget_follows_the_segments_actually_written():
     )
 
     full = 1200
-    assert scale_budget(full, resolve_segments(None)) == full, (
-        "every segment on must not move the number"
-    )
+    assert (
+        scale_budget(full, resolve_segments(None)) == full
+    ), "every segment on must not move the number"
 
     trimmed = resolve_segments(["world", "inbox"])
     scaled = scale_budget(full, trimmed)
-    assert scaled < full * 0.5, (
-        "world and inbox are most of the briefing, so most of the budget"
-    )
+    assert (
+        scaled < full * 0.5
+    ), "world and inbox are most of the briefing, so most of the budget"
 
     # The point of the whole thing: a script the right size for the trimmed
     # briefing passes against the scaled budget and fails against the full
     # one. Without that second assertion this only tests arithmetic.
     class _T:
-        def __init__(self, n): self.text = " ".join(["word"] * n)
+        def __init__(self, n):
+            self.text = " ".join(["word"] * n)
 
     script = [_T(scaled)]
     assert _is_within_word_budget(script, scaled)
-    assert not _is_within_word_budget(script, full), (
-        "this is the rejection the scaling exists to prevent"
-    )
+    assert not _is_within_word_budget(
+        script, full
+    ), "this is the rejection the scaling exists to prevent"
 
     # Everything optional off leaves only the structural pair, and they
     # still need enough words to say something.
@@ -614,12 +670,11 @@ def test_a_disabled_segment_is_rejected_if_the_model_writes_it_anyway():
     assert _has_valid_segment_coverage_and_order(without, kept)
 
     with_weather = [
-        Turn(speaker="A", segment=s, text="x")
-        for s in resolve_segments(None)
+        Turn(speaker="A", segment=s, text="x") for s in resolve_segments(None)
     ]
-    assert not _has_valid_segment_coverage_and_order(with_weather, kept), (
-        "a segment the listener turned off must fail the script"
-    )
+    assert not _has_valid_segment_coverage_and_order(
+        with_weather, kept
+    ), "a segment the listener turned off must fail the script"
 
 
 def test_the_settings_route_exists_on_fastapi_too(tmp_path, monkeypatch):
@@ -648,7 +703,8 @@ def test_the_settings_route_exists_on_fastapi_too(tmp_path, monkeypatch):
     assert client.get("/settings", headers=headers).status_code == 404
 
     saved = client.put(
-        "/settings", headers=headers,
+        "/settings",
+        headers=headers,
         json={"briefing_length": "express", "muted_senders": ["Substack"]},
     )
     assert saved.status_code == 200
@@ -708,11 +764,11 @@ def test_clearing_a_setting_twice_still_restores_the_environment(monkeypatch):
     apply_to_environment(UserSettings(tts_provider="elevenlabs"))
     assert get_settings().tts_provider == "elevenlabs"
 
-    apply_to_environment(UserSettings())          # cleared
+    apply_to_environment(UserSettings())  # cleared
     assert get_settings().tts_provider == "google"
 
     apply_to_environment(UserSettings(tts_provider="elevenlabs"))
-    apply_to_environment(UserSettings())          # cleared AGAIN
+    apply_to_environment(UserSettings())  # cleared AGAIN
     assert get_settings().tts_provider == "google"
 
     get_settings.cache_clear()
@@ -1011,16 +1067,16 @@ def test_the_bed_ducks_under_the_voice_without_moving_a_single_timing():
         "the file length must not move — every manifest offset is measured "
         "against it"
     )
-    assert ducked[: len(intro)].raw_data == combined[: len(intro)].raw_data, (
-        "the intro itself is untouched; only what follows it is mixed into"
-    )
+    assert (
+        ducked[: len(intro)].raw_data == combined[: len(intro)].raw_data
+    ), "the intro itself is untouched; only what follows it is mixed into"
     assert (
         ducked[len(intro) : len(intro) + DUCK_MS].raw_data
         != combined[len(intro) : len(intro) + DUCK_MS].raw_data
     ), "the bed must actually be audible under the first turn"
-    assert ducked[-DUCK_MS:].raw_data != combined[-DUCK_MS:].raw_data, (
-        "and under the last one"
-    )
+    assert (
+        ducked[-DUCK_MS:].raw_data != combined[-DUCK_MS:].raw_data
+    ), "and under the last one"
 
 
 def test_a_briefing_too_short_to_duck_is_returned_unharmed():
@@ -1048,7 +1104,7 @@ def test_a_briefing_too_short_to_duck_is_returned_unharmed():
 
 @pytest.mark.asyncio
 async def test_asking_for_no_music_gets_exactly_the_unmusical_briefing():
-    """"none" is a real choice, and it must not quietly mean "the default"."""
+    """'none' is a real choice, and it must not quietly mean "the default"."""
     from app.core.schemas import Segment, Turn
     from app.providers.fake_tts import FakeTTSProvider
     from app.synthesis.stitch import synthesize_briefing

@@ -93,9 +93,9 @@ def test_a_segment_that_never_quotes_email_is_not_scanned():
 def test_the_flag_names_what_fired():
     """Same debuggability contract as every other gate here: a finding
     nobody can argue with is a finding nobody can fix."""
-    flagged = check_relayed_instructions([
-        _turn("It advises changing your password. This is a critical step.")
-    ])
+    flagged = check_relayed_instructions(
+        [_turn("It advises changing your password. This is a critical step.")]
+    )
     assert flagged[0]["turn_index"] == 0
     assert flagged[0]["segment"] == "inbox"
     assert "password" in flagged[0]["action"]
@@ -117,10 +117,12 @@ def test_grounding_rewards_the_phishing_claim_that_this_gate_catches():
         "We advise changing your password immediately. This is a critical "
         "security step to protect your account."
     )
-    turns = [_turn(
-        "It advises changing your password. This is a critical security "
-        "step to protect your account."
-    )]
+    turns = [
+        _turn(
+            "It advises changing your password. This is a critical security "
+            "step to protect your account."
+        )
+    ]
 
     report = run_all_gates(turns, source)
     assert report["grounding"] == [], (
@@ -137,28 +139,48 @@ def test_grounding_rewards_the_phishing_claim_that_this_gate_catches():
 # ──────────────────────────────────────────────────────────────
 
 
-async def _revise_to(monkeypatch, draft: list[Turn], revised: list[Turn],
-                     segments: list[Segment] | None = None):
+async def _revise_to(
+    monkeypatch,
+    draft: list[Turn],
+    revised: list[Turn],
+    segments: list[Segment] | None = None,
+):
     """Run the critique/revise pass with a fixed revision result."""
     import json
 
     from app.pipeline import script_chain
 
     class _LLM:
-        async def complete(self, system, prompt, *, temperature=0.85,
-                           json_mode=False, response_schema=None):
+        async def complete(
+            self,
+            system,
+            prompt,
+            *,
+            temperature=0.85,
+            json_mode=False,
+            response_schema=None,
+        ):
             if "Review this draft script critically" in prompt:
-                return json.dumps({"issues": [{
-                    "turn_index": 0, "type": "RELAYED_INSTRUCTION",
-                    "detail": "the hosts endorse a password reset",
-                    "fix": "name the sender's domain and stop",
-                }]})
+                return json.dumps(
+                    {
+                        "issues": [
+                            {
+                                "turn_index": 0,
+                                "type": "RELAYED_INSTRUCTION",
+                                "detail": "the hosts endorse a password reset",
+                                "fix": "name the sender's domain and stop",
+                            }
+                        ]
+                    }
+                )
             # A bare array, which is what the revise pass expects —
             # `_revised_json` in the fake provider returns the same shape.
-            return json.dumps([
-                {"speaker": t.speaker, "segment": t.segment.value,
-                 "text": t.text} for t in revised
-            ])
+            return json.dumps(
+                [
+                    {"speaker": t.speaker, "segment": t.segment.value, "text": t.text}
+                    for t in revised
+                ]
+            )
 
         async def stream(self, system, prompt, *, temperature=0.85):
             raise NotImplementedError
@@ -167,15 +189,16 @@ async def _revise_to(monkeypatch, draft: list[Turn], revised: list[Turn],
     # BEFORE the comparison runs, so the budget is sized to the scripts
     # under test. Without this the revision is discarded upstream and
     # these tests pass by accident, asserting nothing about the gate.
-    budget = max(
-        1, sum(len(t.text.split()) for t in revised)
-    )
+    budget = max(1, sum(len(t.text.split()) for t in revised))
     # `segments=` too: the default demands every canonical segment, so a
     # one-segment fixture is rejected before the comparison and the test
     # would assert nothing.
     return await script_chain._run_critique_and_revise(
         date="Friday, 21 August 2026",
-        llm=_LLM(), draft_turns=draft, source_data="source", budget=budget,
+        llm=_LLM(),
+        draft_turns=draft,
+        source_data="source",
+        budget=budget,
         segments=segments or [Segment.INBOX],
     )
 
@@ -198,8 +221,10 @@ async def test_a_revision_that_removes_the_relay_wins_on_that_alone(
     # Deliberately worse on the ordinary gates: keeps the filler, adds
     # more, and still has no challenge marker.
     revised = [
-        _turn("Something from paypa1-alerts dot test is asking about a "
-              "password. It's in your inbox."),
+        _turn(
+            "Something from paypa1-alerts dot test is asking about a "
+            "password. It's in your inbox."
+        ),
         _turn("Anyway, um, that was the inbox, um, you know."),
     ]
 
@@ -239,9 +264,7 @@ async def test_a_suspected_new_relay_costs_a_point_but_does_not_veto(
     assert "not vetoing on a heuristic" in caplog.text
 
 
-async def test_a_better_revision_is_not_discarded_over_a_false_positive(
-    monkeypatch
-):
+async def test_a_better_revision_is_not_discarded_over_a_false_positive(monkeypatch):
     """Review's finding 4, reproduced verbatim.
 
     Legitimate world-segment security journalism trips the gate —
@@ -255,13 +278,14 @@ async def test_a_better_revision_is_not_discarded_over_a_false_positive(
     ]
     revised = [
         _turn("Okta disclosed a breach overnight.", Segment.WORLD),
-        _turn("Actually, the critical part is that attackers could log in "
-              "to your account.", Segment.WORLD),
+        _turn(
+            "Actually, the critical part is that attackers could log in "
+            "to your account.",
+            Segment.WORLD,
+        ),
     ]
 
-    out = await _revise_to(
-        monkeypatch, draft, revised, segments=[Segment.WORLD]
-    )
+    out = await _revise_to(monkeypatch, draft, revised, segments=[Segment.WORLD])
     assert out == revised, (
         "a revision that fixes four filler hits must not be discarded "
         "because a security story used the word 'critical'"
@@ -295,10 +319,12 @@ def test_the_two_host_split_is_caught():
     PR ("name the domain and stop") makes the reporting turn compliant on
     its own, pushing the endorsement into the reply."""
     split = [
-        _turn("There's a mail from your bank saying it advises changing "
-              "your password."),
-        _turn("That one's critical — I'd do it right away, before your "
-              "nine o'clock."),
+        _turn(
+            "There's a mail from your bank saying it advises changing " "your password."
+        ),
+        _turn(
+            "That one's critical — I'd do it right away, before your " "nine o'clock."
+        ),
     ]
     assert check_relayed_instructions(split)
 
@@ -314,11 +340,14 @@ def test_an_endorsement_in_a_different_segment_does_not_leak():
     assert check_relayed_instructions(mixed) == []
 
 
-@pytest.mark.parametrize("text", [
-    "Change your password. Today.",
-    "Go and verify your account.",
-    "Just click the link in that email.",
-])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Change your password. Today.",
+        "Go and verify your account.",
+        "Just click the link in that email.",
+    ],
+)
 def test_the_hosts_issuing_the_order_themselves_needs_no_endorsement(text):
     """The most dangerous output there is, and requiring a second signal
     made it unreachable: an order carries no endorsement marker."""
@@ -328,28 +357,31 @@ def test_the_hosts_issuing_the_order_themselves_needs_no_endorsement(text):
 def test_reporting_still_is_not_an_order():
     """Positional, so "It advises changing your password" is safe — the
     sentence opens with "It", not with the verb."""
-    assert check_relayed_instructions([
-        _turn("It advises changing your password.")
-    ]) == []
+    assert (
+        check_relayed_instructions([_turn("It advises changing your password.")]) == []
+    )
 
 
-@pytest.mark.parametrize("text", [
-    "You should verify your payment method today.",
-    "You should reset the password on that account right away.",
-    "You should click a link in that message.",
-    "You should click here to sort it out, it's urgent.",
-    "They're asking you to update your credentials, and it's urgent.",
-    "You'll want to re-authenticate with them right away.",
-    "It's critical that you secure your account today.",
-    "You should validate your account before it locks.",
-    "Make sure to open the attachment they sent.",
-    "You should call the number in the email right away.",
-    "You should tap the button in that email, it's urgent.",
-    "You should authorise the transfer this morning.",
-    "Make sure to follow the steps in the email before noon.",
-    "Your account will be closed unless you act today.",
-    "You should change your password today.",
-])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "You should verify your payment method today.",
+        "You should reset the password on that account right away.",
+        "You should click a link in that message.",
+        "You should click here to sort it out, it's urgent.",
+        "They're asking you to update your credentials, and it's urgent.",
+        "You'll want to re-authenticate with them right away.",
+        "It's critical that you secure your account today.",
+        "You should validate your account before it locks.",
+        "Make sure to open the attachment they sent.",
+        "You should call the number in the email right away.",
+        "You should tap the button in that email, it's urgent.",
+        "You should authorise the transfer this morning.",
+        "Make sure to follow the steps in the email before noon.",
+        "Your account will be closed unless you act today.",
+        "You should change your password today.",
+    ],
+)
 def test_the_relays_review_found_missing(text):
     """24 of 28 realistic relays missed the first cut, and the list was
     internally inconsistent — "confirm your payment" caught while "verify
@@ -357,17 +389,20 @@ def test_the_relays_review_found_missing(text):
     assert check_relayed_instructions([_turn(text)]), text
 
 
-@pytest.mark.parametrize("text", [
-    # The verb+object family joins with `\s+`, which already matches a
-    # non-breaking space, so review's own NBSP example was caught even
-    # without normalising — my first test for it proved nothing.
-    "You should change\u00a0your\u00a0password today.",
-    # The lure family joins with LITERAL spaces and genuinely is defeated
-    # by one. This is the case that makes `_normalise_spaces` load-bearing,
-    # and mutation testing is what found the difference.
-    "You should click\u00a0the\u00a0link today.",
-    "Make sure to follow\u00a0the\u00a0steps in that email.",
-])
+@pytest.mark.parametrize(
+    "text",
+    [
+        # The verb+object family joins with `\s+`, which already matches a
+        # non-breaking space, so review's own NBSP example was caught even
+        # without normalising — my first test for it proved nothing.
+        "You should change\u00a0your\u00a0password today.",
+        # The lure family joins with LITERAL spaces and genuinely is defeated
+        # by one. This is the case that makes `_normalise_spaces` load-bearing,
+        # and mutation testing is what found the difference.
+        "You should click\u00a0the\u00a0link today.",
+        "Make sure to follow\u00a0the\u00a0steps in that email.",
+    ],
+)
 def test_a_non_breaking_space_does_not_hide_a_relay(text):
     """HTML email routinely carries NBSP and it flows into the script."""
     assert check_relayed_instructions([_turn(text)]), repr(text)
@@ -377,8 +412,10 @@ def test_a_calendar_invite_is_scanned_too():
     """`_format_calendar` interpolates `ev.description` verbatim, and an
     invite from a stranger auto-populates Google Calendar — so that field
     is an injection surface on a par with an email body."""
-    text = ("Your ten o'clock invite says to verify your account before "
-            "joining. That's critical — do that today.")
+    text = (
+        "Your ten o'clock invite says to verify your account before "
+        "joining. That's critical — do that today."
+    )
     assert check_relayed_instructions([_turn(text, Segment.CALENDAR)])
 
 
@@ -398,8 +435,10 @@ async def test_a_relay_is_logged_even_when_the_gates_never_run(caplog):
     from app.core.schemas import BriefingLength
     from app.pipeline.script_chain import generate_script
 
-    relay = ("It advises changing your password. This is a critical "
-             "security step to protect your account.")
+    relay = (
+        "It advises changing your password. This is a critical "
+        "security step to protect your account."
+    )
 
     class _RelayingLLM(FakeLLMProvider):
         def _dispatch(self, prompt):
@@ -418,7 +457,10 @@ async def test_a_relay_is_logged_even_when_the_gates_never_run(caplog):
 
     with caplog.at_level(logging.ERROR):
         turns, _ = await generate_script(
-            llm=_RelayingLLM(), emails=[], events=[], weather=None,
+            llm=_RelayingLLM(),
+            emails=[],
+            events=[],
+            weather=None,
             length=BriefingLength.STANDARD,
             date=datetime(2026, 9, 20, tzinfo=UTC),
         )

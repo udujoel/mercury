@@ -182,13 +182,16 @@ class R2Storage:
                         "could not remove stale audio %s, which outranks the "
                         "%s just written; refusing to publish a manifest that "
                         "would describe audio the phone will not be served",
-                        stale, audio_format,
+                        stale,
+                        audio_format,
                     )
                     raise
                 log.warning(
                     "could not remove stale audio %s; it is outranked by the "
                     "%s just written, so nothing will serve it",
-                    stale, audio_format, exc_info=True,
+                    stale,
+                    audio_format,
+                    exc_info=True,
                 )
 
         # Also before the manifest. The invariant is that the stored digest
@@ -225,12 +228,12 @@ class R2Storage:
             raise
         log.info(
             "stored briefing %s in R2: %s (%d bytes) + manifest",
-            briefing_id, audio_key, len(audio_bytes),
+            briefing_id,
+            audio_key,
+            len(audio_bytes),
         )
 
-    def _publish_digest(
-        self, briefing_id: str, digest: BriefingDigest | None
-    ) -> None:
+    def _publish_digest(self, briefing_id: str, digest: BriefingDigest | None) -> None:
         """Replace the stored digest, or remove it. Never leaves a stale one.
 
         A failure to UPLOAD is not fatal. The digest is the browse surface;
@@ -273,7 +276,8 @@ class R2Storage:
                 log.exception(
                     "could not store the digest for %s; publishing the "
                     "briefing without it (the app shows an empty browse "
-                    "state, the audio is unaffected)", briefing_id,
+                    "state, the audio is unaffected)",
+                    briefing_id,
                 )
 
         if self._get(key) is None:
@@ -284,7 +288,8 @@ class R2Storage:
             log.error(
                 "could not remove the previous digest for %s; refusing to "
                 "publish a manifest whose deep-links it would answer with "
-                "another run's turns", briefing_id,
+                "another run's turns",
+                briefing_id,
             )
             raise
 
@@ -374,7 +379,9 @@ class R2Storage:
                 # success on a 403, which this module already documents.
                 status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
                 if status == 404 or exc.response.get("Error", {}).get("Code") in {
-                    "404", "NoSuchKey", "NotFound",
+                    "404",
+                    "NoSuchKey",
+                    "NotFound",
                 }:
                     continue
                 raise

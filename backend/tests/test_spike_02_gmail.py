@@ -48,9 +48,9 @@ def test_decode_base64url_handles_dash_underscore_alphabet():
 
     encoded = base64.urlsafe_b64encode(raw).decode().rstrip("=")
     assert "-" in encoded or "_" in encoded
-    assert spike.decode_base64url(encoded).encode(
-        "utf-8", errors="replace"
-    ) or True  # decoding must not raise
+    assert (
+        spike.decode_base64url(encoded).encode("utf-8", errors="replace") or True
+    )  # decoding must not raise
 
 
 def test_decode_base64url_empty_string_returns_empty():

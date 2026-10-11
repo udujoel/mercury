@@ -130,28 +130,36 @@ async def _fake_generate_script(
     if events:
         turns.append(
             Turn(
-                speaker="A", segment=Segment.CALENDAR,
+                speaker="A",
+                segment=Segment.CALENDAR,
                 text=f"First up, {events[0].title} this morning.",
             )
         )
         sources.append(
             SourceRef(
-                turn_index=len(turns) - 1, title=events[0].title, url=None,
-                source_name="Calendar", source_type=SourceType.CALENDAR,
+                turn_index=len(turns) - 1,
+                title=events[0].title,
+                url=None,
+                source_name="Calendar",
+                source_type=SourceType.CALENDAR,
             )
         )
 
     for item in emails[:2]:
         turns.append(
             Turn(
-                speaker="B", segment=Segment.INBOX,
+                speaker="B",
+                segment=Segment.INBOX,
                 text=f"From {item.source_name}: {item.title}.",
             )
         )
         sources.append(
             SourceRef(
-                turn_index=len(turns) - 1, title=item.title, url=item.url,
-                source_name=item.source_name, source_type=SourceType.EMAIL,
+                turn_index=len(turns) - 1,
+                title=item.title,
+                url=item.url,
+                source_name=item.source_name,
+                source_type=SourceType.EMAIL,
             )
         )
 
@@ -376,9 +384,9 @@ async def test_generate_briefing_drops_raw_email_bodies_before_persisting(storag
     async def _capturing_fetch_emails(*, fixture, max_messages):
         items = await real_fetch_emails(fixture=fixture, max_messages=max_messages)
         captured.extend(items)
-        assert any(i.body for i in items), (
-            "fixture produced no email bodies to test scrubbing against"
-        )
+        assert any(
+            i.body for i in items
+        ), "fixture produced no email bodies to test scrubbing against"
         return items
 
     manifest = await generate_briefing(
@@ -483,6 +491,7 @@ async def test_both_personal_sources_failing_is_logged_loudly(caplog, tmp_path):
 
     async def _failing_events(**kwargs):
         raise RuntimeError("simulated Calendar outage")
+
 
 async def test_a_total_tts_failure_persists_nothing(tmp_path):
     """The most damaging shape this pipeline had.
@@ -657,8 +666,8 @@ async def test_degraded_sources_survive_a_concurrent_run(storage, monkeypatch):
         weather_fixture=None,
     )
 
-    assert manifest.degraded_sources == ["calendar"], (
-        "the manifest recorded the interfering run's state instead of its own"
-    )
+    assert manifest.degraded_sources == [
+        "calendar"
+    ], "the manifest recorded the interfering run's state instead of its own"
     # And the global really was clobbered, so the test is testing something.
     assert gen.failed_personal_sources() == []

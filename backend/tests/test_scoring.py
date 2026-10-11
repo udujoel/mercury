@@ -185,9 +185,7 @@ def test_events_after_the_briefing_day_are_not_in_your_day():
         _timed_event("Review today", datetime(2026, 8, 21, 16, 0, tzinfo=UTC)),
         _timed_event("Dentist Sunday", datetime(2026, 8, 23, 10, 0, tzinfo=UTC)),
     ]
-    out = select_for_briefing(
-        [], events, BriefingLength.STANDARD, date=BRIEFING_DAY
-    )
+    out = select_for_briefing([], events, BriefingLength.STANDARD, date=BRIEFING_DAY)
     assert [e.title for e in out["events"]] == ["Standup today", "Review today"]
 
 
@@ -196,9 +194,7 @@ def test_events_before_the_briefing_day_are_excluded_too():
         _timed_event("Yesterday evening", datetime(2026, 8, 20, 19, 0, tzinfo=UTC)),
         _timed_event("Standup today", datetime(2026, 8, 21, 9, 30, tzinfo=UTC)),
     ]
-    out = select_for_briefing(
-        [], events, BriefingLength.STANDARD, date=BRIEFING_DAY
-    )
+    out = select_for_briefing([], events, BriefingLength.STANDARD, date=BRIEFING_DAY)
     assert [e.title for e in out["events"]] == ["Standup today"]
 
 
@@ -222,16 +218,20 @@ def test_background_events_are_filtered_to_the_briefing_day_as_well():
     """Ambient entries are ranked down, not exempted from the day. A holiday
     next Thursday is not context for this morning."""
     today = CalendarEvent(
-        id="today", title="Week 34 of 2026",
+        id="today",
+        title="Week 34 of 2026",
         start=datetime(2026, 8, 21, 0, 0, tzinfo=UTC),
         end=datetime(2026, 8, 21, 23, 59, 59, tzinfo=UTC),
-        all_day=True, owned=False,
+        all_day=True,
+        owned=False,
     )
     later = CalendarEvent(
-        id="later", title="A holiday next week",
+        id="later",
+        title="A holiday next week",
         start=datetime(2026, 8, 27, 0, 0, tzinfo=UTC),
         end=datetime(2026, 8, 27, 23, 59, 59, tzinfo=UTC),
-        all_day=True, owned=False,
+        all_day=True,
+        owned=False,
     )
     out = select_for_briefing(
         [], [today, later], BriefingLength.STANDARD, date=BRIEFING_DAY
@@ -244,13 +244,12 @@ def test_naive_event_timestamps_do_not_break_the_day_filter():
     the run down comparing itself to the aware briefing date — the same
     class of failure that silently disabled clustering."""
     naive = CalendarEvent(
-        id="naive", title="Naive standup",
+        id="naive",
+        title="Naive standup",
         start=datetime(2026, 8, 21, 9, 30),
         end=datetime(2026, 8, 21, 10, 0),
     )
-    out = select_for_briefing(
-        [], [naive], BriefingLength.STANDARD, date=BRIEFING_DAY
-    )
+    out = select_for_briefing([], [naive], BriefingLength.STANDARD, date=BRIEFING_DAY)
     assert [e.title for e in out["events"]] == ["Naive standup"]
 
 
@@ -274,12 +273,14 @@ def test_a_naive_event_beside_an_aware_one_does_not_take_the_run_down():
     disabled clustering, one module over.
     """
     naive = CalendarEvent(
-        id="naive", title="Naive standup",
+        id="naive",
+        title="Naive standup",
         start=datetime(2026, 8, 21, 9, 30),
         end=datetime(2026, 8, 21, 10, 0),
     )
     aware = CalendarEvent(
-        id="aware", title="Aware review",
+        id="aware",
+        title="Aware review",
         start=datetime(2026, 8, 21, 14, 0, tzinfo=UTC),
         end=datetime(2026, 8, 21, 15, 0, tzinfo=UTC),
     )
@@ -293,12 +294,14 @@ def test_the_mixed_sort_holds_with_no_briefing_date_either():
     """`date=None` skips `_overlaps_day` entirely, so the sort is the only
     place awareness is reconciled on that path."""
     naive = CalendarEvent(
-        id="naive", title="Naive standup",
+        id="naive",
+        title="Naive standup",
         start=datetime(2026, 8, 21, 9, 30),
         end=datetime(2026, 8, 21, 10, 0),
     )
     aware = CalendarEvent(
-        id="aware", title="Aware review",
+        id="aware",
+        title="Aware review",
         start=datetime(2026, 8, 21, 14, 0, tzinfo=UTC),
         end=datetime(2026, 8, 21, 15, 0, tzinfo=UTC),
     )
@@ -326,7 +329,9 @@ def test_narrowing_the_calendar_to_nothing_says_so(caplog):
 
     with caplog.at_level("WARNING"):
         result = select_for_briefing(
-            [], events, BriefingLength.STANDARD,
+            [],
+            events,
+            BriefingLength.STANDARD,
             date=datetime(2026, 8, 31, tzinfo=UTC),
         )
 

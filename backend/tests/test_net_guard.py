@@ -99,7 +99,10 @@ async def test_a_fixture_backed_run_is_not_accused_of_going_live():
     from tests.conftest import drain_live_fetch_attempts
 
     items = await rss.fetch_articles(
-        feeds=["https://example.com/feed/tech.xml", "https://example.com/feed/world.xml"],
+        feeds=[
+            "https://example.com/feed/tech.xml",
+            "https://example.com/feed/world.xml",
+        ],
         fixture=Path(__file__).parent / "fixtures" / "rss_feeds.json",
         now=datetime(2026, 8, 21, tzinfo=UTC),
     )

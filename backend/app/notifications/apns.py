@@ -113,8 +113,8 @@ class APNsProvider:
             ) from exc
 
         self._topic = topic
-        self._host = APNS_SANDBOX_HOST if settings.apns_use_sandbox else (
-            APNS_PRODUCTION_HOST
+        self._host = (
+            APNS_SANDBOX_HOST if settings.apns_use_sandbox else (APNS_PRODUCTION_HOST)
         )
         self._token = jwt.encode(
             {"iss": team_id, "iat": int(time.time())},
@@ -149,13 +149,13 @@ class APNsProvider:
             # prune the token instead of making a doomed call every day and
             # filling the log with "rejected" noise that will later hide a
             # genuine failure.
-            raise TokenUnregisteredError(
-                f"APNs reports {truncated} is unregistered"
-            )
+            raise TokenUnregisteredError(f"APNs reports {truncated} is unregistered")
 
         log.warning(
             "APNs rejected push for %s: %d %s",
-            truncated, response.status_code, response.text,
+            truncated,
+            response.status_code,
+            response.text,
         )
         return False
 

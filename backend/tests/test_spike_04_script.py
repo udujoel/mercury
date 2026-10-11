@@ -76,8 +76,7 @@ async def test_revision_removes_planted_defects(fixture_data):
     draft_gaps = spike.detect_missing_disagreement(result["draft_turns"])
     revised_gaps = spike.detect_missing_disagreement(result["revised_turns"])
     draft_calendar_flagged = any(
-        g["segment"] == "calendar"
-        for g in draft_gaps["segments_missing_disagreement"]
+        g["segment"] == "calendar" for g in draft_gaps["segments_missing_disagreement"]
     )
     revised_calendar_flagged = any(
         g["segment"] == "calendar"
@@ -186,8 +185,13 @@ def test_validate_segment_coverage_detects_out_of_order():
     turns = [
         Turn(speaker="A", segment=s, text="x")
         for s in [
-            Segment.WEATHER, Segment.COLD_OPEN, Segment.CALENDAR,
-            Segment.INBOX, Segment.WORLD, Segment.FOLLOW_UPS, Segment.SIGN_OFF,
+            Segment.WEATHER,
+            Segment.COLD_OPEN,
+            Segment.CALENDAR,
+            Segment.INBOX,
+            Segment.WORLD,
+            Segment.FOLLOW_UPS,
+            Segment.SIGN_OFF,
         ]
     ]
     with pytest.raises(ValueError, match="out of canonical order"):
@@ -196,8 +200,7 @@ def test_validate_segment_coverage_detects_out_of_order():
 
 def test_validate_segment_coverage_accepts_canonical_order():
     turns = [
-        Turn(speaker="A", segment=s, text="x")
-        for s in spike.CANONICAL_SEGMENT_ORDER
+        Turn(speaker="A", segment=s, text="x") for s in spike.CANONICAL_SEGMENT_ORDER
     ]
     spike.validate_segment_coverage(turns)  # should not raise
 
@@ -222,8 +225,11 @@ def test_detect_filler_words_passes_known_good():
 def test_detect_filler_words_no_false_positive_on_substring():
     # "um" is a substring of "bump" and "album" — must not false-positive.
     turns = [
-        Turn(speaker="A", segment=Segment.COLD_OPEN,
-             text="The lxml version bump landed, and so did the new album."),
+        Turn(
+            speaker="A",
+            segment=Segment.COLD_OPEN,
+            text="The lxml version bump landed, and so did the new album.",
+        ),
     ]
     assert spike.detect_filler_words(turns) == []
 
@@ -255,8 +261,11 @@ def test_detect_missing_disagreement_flags_known_bad():
 def test_detect_missing_disagreement_passes_known_good():
     turns = [
         Turn(speaker="A", segment=Segment.CALENDAR, text="Meeting at nine."),
-        Turn(speaker="B", segment=Segment.CALENDAR,
-             text="Actually, I'd push back on moving it that early."),
+        Turn(
+            speaker="B",
+            segment=Segment.CALENDAR,
+            text="Actually, I'd push back on moving it that early.",
+        ),
     ]
     result = spike.detect_missing_disagreement(turns)
     segments = [g["segment"] for g in result["segments_missing_disagreement"]]
@@ -265,8 +274,11 @@ def test_detect_missing_disagreement_passes_known_good():
 
 def test_check_grounding_flags_known_bad():
     turns = [
-        Turn(speaker="A", segment=Segment.INBOX,
-             text="Zorbex acquired Fintastic for 40 million dollars."),
+        Turn(
+            speaker="A",
+            segment=Segment.INBOX,
+            text="Zorbex acquired Fintastic for 40 million dollars.",
+        ),
     ]
     source_text = '{"title": "an unrelated email about lunch"}'
     hits = spike.check_grounding(turns, source_text)
@@ -277,8 +289,7 @@ def test_check_grounding_flags_known_bad():
 
 def test_check_grounding_passes_known_good():
     turns = [
-        Turn(speaker="A", segment=Segment.INBOX,
-             text="Priya sent the rollout plan."),
+        Turn(speaker="A", segment=Segment.INBOX, text="Priya sent the rollout plan."),
     ]
     source_text = '{"author": "priya@platform.mercury.dev", "title": "rollout plan"}'
     hits = spike.check_grounding(turns, source_text)

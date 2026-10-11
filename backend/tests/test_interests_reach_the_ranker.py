@@ -47,39 +47,50 @@ CLOCK = NOW.replace(hour=7)
 
 def _article(name: str, title: str, body: str, minutes_old: int) -> Item:
     return Item(
-        id=f"a-{name}", source_type=SourceType.RSS, source_name=name,
-        title=title, body=body, url=f"https://{name}.test/x",
-        timestamp=NOW.replace(minute=59 - minutes_old), raw={},
+        id=f"a-{name}",
+        source_type=SourceType.RSS,
+        source_name=name,
+        title=title,
+        body=body,
+        url=f"https://{name}.test/x",
+        timestamp=NOW.replace(minute=59 - minutes_old),
+        raw={},
     )
 
 
 # The 2026-09-13 shape: a trivial recent item against real news that is
 # slightly older.
 DARK_MODE = _article(
-    "hn", "Ask HN: how can I browse HN in dark mode?",
+    "hn",
+    "Ask HN: how can I browse HN in dark mode?",
     "I would like a dark theme for Hacker News. What browser extension "
-    "do people use for this?", minutes_old=0,
+    "do people use for this?",
+    minutes_old=0,
 )
 STRIKE = _article(
-    "reuters", "Russian strike hits Ukrainian train station",
+    "reuters",
+    "Russian strike hits Ukrainian train station",
     "A Russian missile struck a railway station in eastern Ukraine, "
-    "killing several people and halting evacuation trains.", minutes_old=6,
+    "killing several people and halting evacuation trains.",
+    minutes_old=6,
 )
 
 
 async def _world(interests=None, entities=None):
     world, _, _ = await _build_world_stories(
         now=CLOCK,
-        emails=[], articles=[DARK_MODE, STRIKE], events=[],
-        embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
-        interests=interests, followed_entities=entities,
+        emails=[],
+        articles=[DARK_MODE, STRIKE],
+        events=[],
+        embeddings=FakeEmbeddingProvider(),
+        length=BriefingLength.STANDARD,
+        interests=interests,
+        followed_entities=entities,
     )
     return [story.canonical.source_name for story in world]
 
 
-async def test_the_centroid_reaches_score_stories_from_the_real_path(
-    monkeypatch
-):
+async def test_the_centroid_reaches_score_stories_from_the_real_path(monkeypatch):
     """The wiring, asserted where it was missing.
 
     `score_stories` is patched to record what it receives, so this fails
@@ -124,9 +135,13 @@ async def test_interests_change_which_story_leads():
     does direction, against recency pulling the other way.
     """
     without = await _world()
-    with_war = await _world(interests=[
-        "war in Ukraine", "Russian missile strikes", "European security",
-    ])
+    with_war = await _world(
+        interests=[
+            "war in Ukraine",
+            "Russian missile strikes",
+            "European security",
+        ]
+    )
 
     assert without != with_war, (
         "the interest term did not move the order at all — the parameter "
@@ -142,9 +157,7 @@ async def test_no_interests_leaves_the_ranking_exactly_as_it_was():
 
     assert await _world() == await _world(interests=[])
     # And the ranker really does fall back to its constant.
-    assert score_stories(
-        [], calendar_events=[], topic_centroid=None, now=CLOCK
-    ) == []
+    assert score_stories([], calendar_events=[], topic_centroid=None, now=CLOCK) == []
 
 
 async def test_an_empty_setting_says_so_every_morning(caplog):
@@ -166,11 +179,10 @@ async def test_configured_interests_are_named_in_the_log(caplog):
     assert "war in Ukraine" in caplog.text
 
 
-async def test_a_failing_embeddings_provider_costs_the_term_not_the_run(
-    caplog
-):
+async def test_a_failing_embeddings_provider_costs_the_term_not_the_run(caplog):
     """Rule 7. Clustering is already allowed to fail gracefully; a ranking
     refinement is a far weaker reason to lose a briefing."""
+
     class _Broken:
         async def embed(self, texts):
             raise RuntimeError("embeddings are down")
@@ -189,9 +201,7 @@ async def test_the_centroid_is_a_unit_vector():
     assert np.isclose(np.linalg.norm(centroid), 1.0)
 
 
-async def test_generate_briefing_itself_forwards_the_interests(
-    tmp_path, monkeypatch
-):
+async def test_generate_briefing_itself_forwards_the_interests(tmp_path, monkeypatch):
     """The link that was actually broken, and the one the tests above miss.
 
     Everything above calls `_build_world_stories` directly. Mutation
@@ -221,8 +231,10 @@ async def test_generate_briefing_itself_forwards_the_interests(
         return value
 
     await generate_briefing(
-        briefing_id="2026-09-20", length=BL.STANDARD,
-        llm=FakeLLMProvider(), tts=FakeTTSProvider(),
+        briefing_id="2026-09-20",
+        length=BL.STANDARD,
+        llm=FakeLLMProvider(),
+        tts=FakeTTSProvider(),
         embeddings=FakeEmbeddingProvider(),
         storage=LocalFilesystemStorage(base_dir=tmp_path),
         fetch_emails=lambda **_: _async([]),
@@ -279,15 +291,18 @@ async def test_the_scheduled_job_forwards_the_settings(monkeypatch):
     class _Storage:
         def load_settings(self):
             return UserSettings(
-                interests=["war in Ukraine"], followed_entities=["Reuters"],
+                interests=["war in Ukraine"],
+                followed_entities=["Reuters"],
             )
 
         def load_manifest(self, briefing_id):
-            return None      # nothing generated yet, so the job proceeds
+            return None  # nothing generated yet, so the job proceeds
 
     with contextlib.suppress(Exception):
         await cron.run_daily_briefing_job(
-            storage=_Storage(), llm=FakeLLMProvider(), tts=FakeTTSProvider(),
+            storage=_Storage(),
+            llm=FakeLLMProvider(),
+            tts=FakeTTSProvider(),
             embeddings=FakeEmbeddingProvider(),
         )
 
@@ -317,14 +332,15 @@ async def test_an_unembeddable_item_does_not_lead_the_world_segment():
     """
     world, _, _ = await _build_world_stories(
         now=CLOCK,
-        emails=[], articles=[DARK_MODE, STRIKE, JUNK], events=[],
-        embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
+        emails=[],
+        articles=[DARK_MODE, STRIKE, JUNK],
+        events=[],
+        embeddings=FakeEmbeddingProvider(),
+        length=BriefingLength.STANDARD,
         interests=["war in Ukraine", "Russian missile strikes"],
     )
     leaders = [s.canonical.source_name for s in world]
-    assert leaders[0] != "junk", (
-        f"the unembeddable item leads the segment: {leaders}"
-    )
+    assert leaders[0] != "junk", f"the unembeddable item leads the segment: {leaders}"
 
 
 async def test_a_degenerate_interest_topic_does_not_nan_every_score():
@@ -335,16 +351,17 @@ async def test_a_degenerate_interest_topic_does_not_nan_every_score():
     `sorted` on NaN is arbitrary, so the segment fell back to clustering
     order with no exception and no log line.
     """
-    centroid = await _topic_centroid(
-        ["war in Ukraine", "!!!"], FakeEmbeddingProvider()
-    )
+    centroid = await _topic_centroid(["war in Ukraine", "!!!"], FakeEmbeddingProvider())
     assert centroid is not None
     assert np.isfinite(centroid).all(), "a degenerate topic poisoned it"
 
     world, _, _ = await _build_world_stories(
         now=CLOCK,
-        emails=[], articles=[DARK_MODE, STRIKE], events=[],
-        embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
+        emails=[],
+        articles=[DARK_MODE, STRIKE],
+        events=[],
+        embeddings=FakeEmbeddingProvider(),
+        length=BriefingLength.STANDARD,
         interests=["war in Ukraine", "!!!"],
     )
     assert all(np.isfinite(s.score) for s in world)
@@ -370,6 +387,7 @@ async def test_a_raising_provider_costs_the_term_not_the_briefing():
     """Rule 7, and the docstring said "never raises" while it did —
     `topic_centroid(vectors)` sat outside the try, so ragged vectors
     killed the whole briefing from inside a ranking refinement."""
+
     class _Ragged:
         async def embed(self, texts):
             return [[0.1, 0.2], [0.1, 0.2, 0.3]]
@@ -388,9 +406,13 @@ async def test_following_a_short_name_does_not_match_inside_words():
     missile strike at 3.2x its score."""
     world, _, _ = await _build_world_stories(
         now=CLOCK,
-        emails=[], articles=[DARK_MODE, STRIKE], events=[],
-        embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
-        interests=["war in Ukraine"], followed_entities=["X"],
+        emails=[],
+        articles=[DARK_MODE, STRIKE],
+        events=[],
+        embeddings=FakeEmbeddingProvider(),
+        length=BriefingLength.STANDARD,
+        interests=["war in Ukraine"],
+        followed_entities=["X"],
     )
     assert [s.canonical.source_name for s in world][0] == "reuters"
 
@@ -398,13 +420,16 @@ async def test_following_a_short_name_does_not_match_inside_words():
 async def test_an_all_whitespace_entity_does_not_match_everything():
     world, _, _ = await _build_world_stories(
         now=CLOCK,
-        emails=[], articles=[DARK_MODE, STRIKE], events=[],
-        embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
+        emails=[],
+        articles=[DARK_MODE, STRIKE],
+        events=[],
+        embeddings=FakeEmbeddingProvider(),
+        length=BriefingLength.STANDARD,
         followed_entities=[" "],
     )
-    assert len({s.score for s in world}) > 1, (
-        "every story got the same +0.28 personal boost"
-    )
+    assert (
+        len({s.score for s in world}) > 1
+    ), "every story got the same +0.28 personal boost"
 
 
 async def test_following_a_publication_by_name_works():
@@ -413,8 +438,11 @@ async def test_following_a_publication_by_name_works():
     title and body only, never `source_name`."""
     world, _, _ = await _build_world_stories(
         now=CLOCK,
-        emails=[], articles=[DARK_MODE, STRIKE], events=[],
-        embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
+        emails=[],
+        articles=[DARK_MODE, STRIKE],
+        events=[],
+        embeddings=FakeEmbeddingProvider(),
+        length=BriefingLength.STANDARD,
         followed_entities=["reuters"],
     )
     assert [s.canonical.source_name for s in world][0] == "reuters"
@@ -423,8 +451,11 @@ async def test_following_a_publication_by_name_works():
 async def test_a_trailing_space_does_not_stop_a_match():
     world, _, _ = await _build_world_stories(
         now=CLOCK,
-        emails=[], articles=[DARK_MODE, STRIKE], events=[],
-        embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
+        emails=[],
+        articles=[DARK_MODE, STRIKE],
+        events=[],
+        embeddings=FakeEmbeddingProvider(),
+        length=BriefingLength.STANDARD,
         followed_entities=["Reuters "],
     )
     assert [s.canonical.source_name for s in world][0] == "reuters"
@@ -444,25 +475,34 @@ async def test_the_interest_term_points_the_right_way():
     that already favours the same answer proves nothing.
     """
     old_dark_mode = _article(
-        "hn", DARK_MODE.title, DARK_MODE.body, minutes_old=30,
+        "hn",
+        DARK_MODE.title,
+        DARK_MODE.body,
+        minutes_old=30,
     )
     fresh_strike = _article(
-        "reuters", STRIKE.title, STRIKE.body, minutes_old=0,
+        "reuters",
+        STRIKE.title,
+        STRIKE.body,
+        minutes_old=0,
     )
 
     async def _rank(interests):
         world, _, _ = await _build_world_stories(
             now=CLOCK,
-            emails=[], articles=[old_dark_mode, fresh_strike], events=[],
+            emails=[],
+            articles=[old_dark_mode, fresh_strike],
+            events=[],
             embeddings=FakeEmbeddingProvider(),
             length=BriefingLength.STANDARD,
             interests=interests,
         )
         return [s.canonical.source_name for s in world]
 
-    assert await _rank(None) == ["reuters", "hn"], (
-        "precondition: with no interests, recency puts the strike first"
-    )
+    assert await _rank(None) == [
+        "reuters",
+        "hn",
+    ], "precondition: with no interests, recency puts the strike first"
     assert await _rank(["dark theme", "browser extensions"]) == ["hn", "reuters"], (
         "interests about the HN post did not overcome recency, so the "
         "term is either inert or pointing the wrong way"
@@ -481,19 +521,23 @@ async def test_an_entity_does_not_match_inside_a_longer_word():
     the floor and only matches unanchored.
     """
     about_metadata = _article(
-        "verge", "A new metadata standard for photos",
+        "verge",
+        "A new metadata standard for photos",
         "Photographers are arguing about metadata again this week.",
         minutes_old=30,
     )
     world, _, _ = await _build_world_stories(
         now=CLOCK,
-        emails=[], articles=[about_metadata, STRIKE], events=[],
-        embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
+        emails=[],
+        articles=[about_metadata, STRIKE],
+        events=[],
+        embeddings=FakeEmbeddingProvider(),
+        length=BriefingLength.STANDARD,
         followed_entities=["Meta"],
     )
-    assert [s.canonical.source_name for s in world][0] == "reuters", (
-        "following Meta matched 'metadata' and promoted an unrelated story"
-    )
+    assert [s.canonical.source_name for s in world][
+        0
+    ] == "reuters", "following Meta matched 'metadata' and promoted an unrelated story"
 
 
 async def test_a_one_letter_entity_does_not_boost_ordinary_prose():
@@ -509,24 +553,33 @@ async def test_a_one_letter_entity_does_not_boost_ordinary_prose():
     answer's reason.
     """
     aged_dark_mode = _article(
-        "hn", DARK_MODE.title, DARK_MODE.body, minutes_old=30,
+        "hn",
+        DARK_MODE.title,
+        DARK_MODE.body,
+        minutes_old=30,
     )
     baseline, _, _ = await _build_world_stories(
         now=CLOCK,
-        emails=[], articles=[aged_dark_mode, STRIKE], events=[],
-        embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
+        emails=[],
+        articles=[aged_dark_mode, STRIKE],
+        events=[],
+        embeddings=FakeEmbeddingProvider(),
+        length=BriefingLength.STANDARD,
     )
-    assert [s.canonical.source_name for s in baseline][0] == "reuters", (
-        "precondition: without any entity, recency puts the strike first"
-    )
+    assert [s.canonical.source_name for s in baseline][
+        0
+    ] == "reuters", "precondition: without any entity, recency puts the strike first"
 
     world, _, _ = await _build_world_stories(
         now=CLOCK,
-        emails=[], articles=[aged_dark_mode, STRIKE], events=[],
-        embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
+        emails=[],
+        articles=[aged_dark_mode, STRIKE],
+        events=[],
+        embeddings=FakeEmbeddingProvider(),
+        length=BriefingLength.STANDARD,
         followed_entities=["I"],
     )
     assert "I" in aged_dark_mode.body, "precondition: a standalone I"
-    assert [s.canonical.source_name for s in world][0] == "reuters", (
-        "a one-letter entity boosted a story for containing the word 'I'"
-    )
+    assert [s.canonical.source_name for s in world][
+        0
+    ] == "reuters", "a one-letter entity boosted a story for containing the word 'I'"

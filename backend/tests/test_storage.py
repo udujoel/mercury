@@ -185,9 +185,7 @@ def _digest(briefing_id: str = "2026-08-21", subject: str = "Today") -> Briefing
     )
 
 
-def test_a_digest_that_will_not_write_does_not_lose_the_briefing(
-    tmp_path, monkeypatch
-):
+def test_a_digest_that_will_not_write_does_not_lose_the_briefing(tmp_path, monkeypatch):
     """Rule 7, which this side did not apply. `R2Storage.save` has caught a
     failed digest upload since the digest landed; here the exception
     propagated out of `save`, so a full disk cost the whole briefing — the
@@ -246,9 +244,7 @@ def test_a_digest_that_will_not_write_does_not_leave_the_last_one_behind(
     assert storage.load_digest("2026-08-21") is None
 
 
-def test_a_manifest_that_will_not_write_takes_its_digest_with_it(
-    tmp_path, monkeypatch
-):
+def test_a_manifest_that_will_not_write_takes_its_digest_with_it(tmp_path, monkeypatch):
     """The digest goes down first, so a manifest write that then fails leaves
     the PREVIOUS manifest being served beside the NEW digest — every deep-link
     addressing a turn list nobody can fetch."""
@@ -288,7 +284,7 @@ def test_a_reader_never_sees_the_digest_half_written(tmp_path, monkeypatch):
     def _observed_write_text(self, data, *args, **kwargs):
         if ".digest.json" not in self.name:
             return Path(self).open("w").write(data)
-        with open(self, "w") as handle:          # truncate, as write_text does
+        with open(self, "w") as handle:  # truncate, as write_text does
             seen.append(storage.load_digest("2026-08-21"))
             handle.write(data)
         return len(data)

@@ -120,7 +120,8 @@ def select_for_briefing(
                 "has no scheduled events, or the briefing id does not match "
                 "the data (offline runs need --briefing-id to match the "
                 "fixture's dates)",
-                fetched, date.date().isoformat(),
+                fetched,
+                date.date().isoformat(),
             )
 
     # Through `_aware` for the same reason `_overlaps_day` is: one naive

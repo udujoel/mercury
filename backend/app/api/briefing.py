@@ -156,9 +156,7 @@ def _credentials_configured() -> bool:
 
 def _google_user_token_present() -> bool:
     repo_root = Path(__file__).resolve().parents[3]
-    token_path = Path(
-        os.environ.get("GOOGLE_TOKEN_FILE", repo_root / "token.json")
-    )
+    token_path = Path(os.environ.get("GOOGLE_TOKEN_FILE", repo_root / "token.json"))
     return token_path.is_file()
 
 

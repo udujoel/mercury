@@ -40,11 +40,15 @@ class PromptCapturingLLM(FakeLLMProvider):
         super().__init__()
         self.prompts: list[str] = []
 
-    async def complete(self, system, prompt, *, temperature=0.85,
-                       json_mode=False, response_schema=None):
+    async def complete(
+        self, system, prompt, *, temperature=0.85, json_mode=False, response_schema=None
+    ):
         self.prompts.append(prompt)
         return await super().complete(
-            system, prompt, temperature=temperature, json_mode=json_mode,
+            system,
+            prompt,
+            temperature=temperature,
+            json_mode=json_mode,
             response_schema=response_schema,
         )
 
@@ -80,7 +84,10 @@ def _event() -> CalendarEvent:
 
 def _weather() -> Weather:
     return Weather(
-        temperature_c=16, condition="clear sky", high_c=24, low_c=14,
+        temperature_c=16,
+        condition="clear sky",
+        high_c=24,
+        low_c=14,
         location_name="Aveiro",
     )
 
@@ -123,9 +130,9 @@ async def test_the_remainder_instruction_sits_outside_the_untrusted_fence():
     instruction_at = prompt.index("11 further")
     last_fence_close = prompt.rindex(SOURCE_FENCE_CLOSE, 0, instruction_at)
     last_fence_open = prompt.rindex(SOURCE_FENCE_OPEN, 0, instruction_at)
-    assert last_fence_close > last_fence_open, (
-        "the remainder instruction is inside an untrusted fence"
-    )
+    assert (
+        last_fence_close > last_fence_open
+    ), "the remainder instruction is inside an untrusted fence"
 
 
 async def test_the_remainder_count_is_grounded_in_the_source_data():
@@ -290,7 +297,9 @@ async def test_distinct_publications_are_still_counted_separately():
     from app.core.schemas import Story
 
     members = [
-        _article(0, "The Verge"), _article(1, "Reuters"), _article(2, "BBC News")
+        _article(0, "The Verge"),
+        _article(1, "Reuters"),
+        _article(2, "BBC News"),
     ]
     story = Story(cluster_id="c1", canonical=members[0], members=members)
     llm = await _run(stories=[story])

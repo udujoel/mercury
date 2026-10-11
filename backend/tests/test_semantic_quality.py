@@ -53,8 +53,11 @@ async def test_a_provider_that_raises_falls_back_to_the_heuristic():
 
 
 async def test_the_relay_gate_alone_also_falls_back():
-    turns = [turn("Go and verify your identity at that link, it's legitimate.",
-                  Segment.INBOX)]
+    turns = [
+        turn(
+            "Go and verify your identity at that link, it's legitimate.", Segment.INBOX
+        )
+    ]
     assert await check_relayed_semantic(turns, SOURCE, None) == (
         check_relayed_instructions(turns)
     )
@@ -100,8 +103,10 @@ async def test_total_issues_is_recomputed_from_the_judged_flags():
     ]
     report = await run_all_gates_semantic(turns, SOURCE, FakeClaimJudge())
     assert report["total_issues"] == (
-        len(report["filler"]) + len(report["monologues"])
-        + len(report["disagreement"]) + len(report["grounding"])
+        len(report["filler"])
+        + len(report["monologues"])
+        + len(report["disagreement"])
+        + len(report["grounding"])
         + len(report["relayed_instructions"])
     )
 
@@ -199,14 +204,22 @@ async def test_the_briefing_budget_is_shared_across_calls():
     from app.providers import typesafe_jev
 
     class _Hanging:
-        def __init__(self, *a, **k): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *e): return False
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *e):
+            return False
+
         async def system_one(self, *, state, questions):
             import asyncio
+
             await asyncio.sleep(3600)
 
     import pytest as _pytest
+
     monkeypatch = _pytest.MonkeyPatch()
     try:
         monkeypatch.setattr(
@@ -215,7 +228,7 @@ async def test_the_briefing_budget_is_shared_across_calls():
                 typesafe_api_key="k",
                 judgment_concurrency=2,
                 judgment_timeout_seconds=30.0,
-                judgment_total_budget_seconds=30.0,   # per call: generous
+                judgment_total_budget_seconds=30.0,  # per call: generous
                 judgment_briefing_budget_seconds=0.4,  # per briefing: tight
             ),
         )
@@ -257,6 +270,7 @@ async def test_a_spent_budget_returns_unjudged_rather_than_waiting():
             )
 
     import pytest as _pytest
+
     monkeypatch = _pytest.MonkeyPatch()
     try:
         monkeypatch.setattr(
@@ -340,7 +354,11 @@ def test_a_gate_with_no_polarity_is_refused():
 
     with pytest.raises(ValueError, match="exactly one of flag_when_below"):
         _regrade_per_turn(
-            [turn("x")], {"ground:0": 0.5}, [], "ground", kind="k",
+            [turn("x")],
+            {"ground:0": 0.5},
+            [],
+            "ground",
+            kind="k",
         )
 
 
@@ -358,15 +376,19 @@ def _fake_jev_client(on_call=None, value: float = 0.9):
     say, or to await something)."""
 
     class _Client:
-        def __init__(self, *a, **k): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *e): return False
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *e):
+            return False
+
         async def system_one(self, *, state, questions):
             if on_call is not None:
                 await on_call()
-            return type(
-                "R", (), {"nouls": {q: _JevAnswer(value) for q in questions}}
-            )()
+            return type("R", (), {"nouls": {q: _JevAnswer(value) for q in questions}})()
 
     return _Client
 
@@ -379,9 +401,7 @@ def _jev_provider(monkeypatch, client, clock, budget: float = 20.0):
 
     monkeypatch.setattr(
         "app.core.config.get_settings",
-        lambda: Settings(
-            typesafe_api_key="k", judgment_briefing_budget_seconds=budget
-        ),
+        lambda: Settings(typesafe_api_key="k", judgment_briefing_budget_seconds=budget),
     )
     monkeypatch.setattr(typesafe_sdk, "AsyncTypeSafeClient", client)
     # The module's own clock seam, not `time.monotonic`: asyncio's event
@@ -417,9 +437,9 @@ async def test_time_between_calls_does_not_spend_the_budget(monkeypatch):
     second = await provider.judge_claims({"x": 1}, [Claim("ground:0", "i")])
 
     assert first == {"verify:0": 0.9}
-    assert second == {"ground:0": 0.9}, (
-        "the gates were refused a budget that judging had barely touched"
-    )
+    assert second == {
+        "ground:0": 0.9
+    }, "the gates were refused a budget that judging had barely touched"
     assert len(asked) == 2
 
 
@@ -468,9 +488,9 @@ async def test_overlapping_calls_are_charged_once(monkeypatch):
         provider.judge_claims({}, [Claim("b", "i")]),
     )
 
-    assert provider._remaining() == pytest.approx(8.0), (
-        "12 seconds of overlapping judging was charged as more than 12"
-    )
+    assert provider._remaining() == pytest.approx(
+        8.0
+    ), "12 seconds of overlapping judging was charged as more than 12"
 
 
 async def test_triage_time_is_charged_to_the_same_budget(monkeypatch):
@@ -488,15 +508,28 @@ async def test_triage_time_is_charged_to_the_same_budget(monkeypatch):
         confidence = 0.5
 
     class _TriageClient:
-        def __init__(self, *a, **k): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *e): return False
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *e):
+            return False
+
         async def system_one(self, *, state, questions):
             clock[0] += 18.0  # triage takes eighteen of the twenty seconds
-            return type("R", (), {
-                "scores": {"consequence": _Scored()},
-                "nouls": {"awaiting_reply": _JevAnswer(0.1), "bulk": _JevAnswer(0.1)},
-            })()
+            return type(
+                "R",
+                (),
+                {
+                    "scores": {"consequence": _Scored()},
+                    "nouls": {
+                        "awaiting_reply": _JevAnswer(0.1),
+                        "bulk": _JevAnswer(0.1),
+                    },
+                },
+            )()
 
     provider = _jev_provider(monkeypatch, _TriageClient, clock)
     monkeypatch.setattr(typesafe_jev, "_questions", lambda: {})

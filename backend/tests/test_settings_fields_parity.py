@@ -39,9 +39,7 @@ NOT_CLIENT_WRITABLE: dict[str, str] = {}
 
 def _worker_settings_fields() -> dict[str, str]:
     source = WORKER.read_text()
-    block = re.search(
-        r"const SETTINGS_FIELDS = \{(.*?)\n\};", source, re.S
-    )
+    block = re.search(r"const SETTINGS_FIELDS = \{(.*?)\n\};", source, re.S)
     assert block, "SETTINGS_FIELDS is no longer parseable in the Worker"
     body = re.sub(r"//[^\n]*", "", block.group(1))
     return dict(re.findall(r'(\w+)\s*:\s*"([^"]+)"', body))
@@ -50,7 +48,8 @@ def _worker_settings_fields() -> dict[str, str]:
 def test_the_worker_accepts_every_user_setting():
     worker_fields = _worker_settings_fields()
     missing = sorted(
-        name for name in UserSettings.model_fields
+        name
+        for name in UserSettings.model_fields
         if name not in worker_fields and name not in NOT_CLIENT_WRITABLE
     )
     assert not missing, (
@@ -66,9 +65,7 @@ def test_the_worker_does_not_accept_fields_that_do_not_exist():
     a setting the phone can write and the pipeline will never read."""
     worker_fields = _worker_settings_fields()
     # `updated_at` is stamped by the Worker itself rather than modelled.
-    extra = sorted(
-        set(worker_fields) - set(UserSettings.model_fields) - {"updated_at"}
-    )
+    extra = sorted(set(worker_fields) - set(UserSettings.model_fields) - {"updated_at"})
     assert not extra, (
         f"{extra} are accepted by the Worker and do not exist on "
         "UserSettings; nothing will ever read them"

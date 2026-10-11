@@ -73,9 +73,7 @@ def test_check_fails_on_an_empty_briefing(storage_at, capsys):
     zero turns was stored anyway, and because generation is idempotent that
     empty briefing then blocked its own replacement. It exits 0 and looks
     exactly like success."""
-    storage_at.save(
-        "2026-08-21", b"", "wav", _manifest(turns=[], duration_ms=0)
-    )
+    storage_at.save("2026-08-21", b"", "wav", _manifest(turns=[], duration_ms=0))
 
     assert main(["check", "--briefing-id", "2026-08-21"]) == 1
     out = capsys.readouterr().out
@@ -97,12 +95,11 @@ def test_check_fails_when_the_manifest_has_no_audio_behind_it(storage_at, capsys
 def test_check_reports_configuration_errors_separately(monkeypatch):
     """Exit 2, not 1. A misconfigured watchdog must not be indistinguishable
     from a missing briefing — the fixes are completely different."""
+
     def _boom():
         raise RuntimeError("R2 storage is not configured — missing R2_BUCKET")
 
-    monkeypatch.setattr(
-        "app.synthesis.storage.build_storage", _boom, raising=True
-    )
+    monkeypatch.setattr("app.synthesis.storage.build_storage", _boom, raising=True)
 
     assert main(["check", "--briefing-id", "2026-08-21"]) == 2
 
@@ -114,6 +111,7 @@ def test_check_does_not_report_a_read_failure_as_a_missing_briefing(
     or under-scoped token cannot be reported as "never generated". Crying
     wolf here would send the user to regenerate a briefing that already
     exists, spending real Gemini and TTS money."""
+
     def _boom(_briefing_id):
         raise RuntimeError("An error occurred (403) when calling GetObject")
 
@@ -206,8 +204,9 @@ def test_a_bare_day_finds_a_timed_morning_briefing(storage_at, monkeypatch):
     timed run writes. It reported "no briefing" with one in the bucket, and
     its re-checks could never see a morning run land."""
     _at(monkeypatch, 5, 52)
-    storage_at.save("2026-08-21-0441", PLAUSIBLE_AUDIO, "wav",
-                    _manifest("2026-08-21-0441"))
+    storage_at.save(
+        "2026-08-21-0441", PLAUSIBLE_AUDIO, "wav", _manifest("2026-08-21-0441")
+    )
 
     assert main(["check", "--briefing-id", "2026-08-21"]) == 0
 
@@ -217,8 +216,9 @@ def test_an_overnight_briefing_does_not_cover_the_morning(storage_at, monkeypatc
     playable, but it is not this morning's, and the backstop exists for
     the morning the Worker's alarm missed."""
     _at(monkeypatch, 5, 52)
-    storage_at.save("2026-08-21-0012", PLAUSIBLE_AUDIO, "wav",
-                    _manifest("2026-08-21-0012"))
+    storage_at.save(
+        "2026-08-21-0012", PLAUSIBLE_AUDIO, "wav", _manifest("2026-08-21-0012")
+    )
 
     assert main(["check"]) == 1
     assert main(["check", "--briefing-id", "2026-08-21"]) == 1
@@ -228,8 +228,9 @@ def test_before_the_floor_any_briefing_for_the_day_counts(storage_at, monkeypatc
     """A checkpoint that fires before 03:00 local could never be satisfied
     by anything it caused if the floor applied then."""
     _at(monkeypatch, 2, 30)
-    storage_at.save("2026-08-21-0012", PLAUSIBLE_AUDIO, "wav",
-                    _manifest("2026-08-21-0012"))
+    storage_at.save(
+        "2026-08-21-0012", PLAUSIBLE_AUDIO, "wav", _manifest("2026-08-21-0012")
+    )
 
     assert main(["check"]) == 0
 
@@ -237,7 +238,8 @@ def test_before_the_floor_any_briefing_for_the_day_counts(storage_at, monkeypatc
 def test_a_full_id_is_still_checked_as_named(storage_at, monkeypatch):
     """Naming an exact briefing asks about that briefing, floor or not."""
     _at(monkeypatch, 5, 52)
-    storage_at.save("2026-08-21-0012", PLAUSIBLE_AUDIO, "wav",
-                    _manifest("2026-08-21-0012"))
+    storage_at.save(
+        "2026-08-21-0012", PLAUSIBLE_AUDIO, "wav", _manifest("2026-08-21-0012")
+    )
 
     assert main(["check", "--briefing-id", "2026-08-21-0012"]) == 0

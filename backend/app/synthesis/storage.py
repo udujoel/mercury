@@ -101,7 +101,7 @@ def covers_morning(briefing_id: str) -> bool:
     A legacy day-only id has no time to judge by, and counts: those date
     from when the one run a day was the morning run.
     """
-    suffix = briefing_id[DAY_PREFIX_LENGTH + 1:]
+    suffix = briefing_id[DAY_PREFIX_LENGTH + 1 :]
     return not suffix or suffix >= MORNING_FLOOR_HHMM
 
 
@@ -183,7 +183,8 @@ def existing_manifest(
     except UnreadableManifestError:
         log.warning(
             "manifest for %s is unreadable; treating it as absent so it can "
-            "be regenerated", briefing_id,
+            "be regenerated",
+            briefing_id,
         )
         return None
 
@@ -201,8 +202,7 @@ class BriefingStorage(Protocol):
         audio_format: str,
         manifest: BriefingManifest,
         digest: BriefingDigest | None = None,
-    ) -> None:
-        ...
+    ) -> None: ...
 
     def load_digest(self, briefing_id: str) -> BriefingDigest | None:
         """The stored digest, or None if this briefing has none.
@@ -375,12 +375,13 @@ class LocalFilesystemStorage:
 
         log.info(
             "stored briefing %s: %s (%d bytes), manifest %s",
-            briefing_id, audio_path, len(audio_bytes), manifest_path,
+            briefing_id,
+            audio_path,
+            len(audio_bytes),
+            manifest_path,
         )
 
-    def _publish_digest(
-        self, briefing_id: str, digest: BriefingDigest | None
-    ) -> None:
+    def _publish_digest(self, briefing_id: str, digest: BriefingDigest | None) -> None:
         """Replace the stored digest, or remove it. Never leaves a stale one.
 
         A failure to WRITE is not fatal: the digest is the browse surface,
@@ -416,7 +417,8 @@ class LocalFilesystemStorage:
             log.exception(
                 "could not store the digest for %s; publishing the briefing "
                 "without it (the app shows an empty browse state, the audio "
-                "is unaffected)", briefing_id,
+                "is unaffected)",
+                briefing_id,
             )
             temp.unlink(missing_ok=True)
             path.unlink(missing_ok=True)
@@ -450,7 +452,9 @@ class LocalFilesystemStorage:
         except Exception:
             log.warning(
                 "the digest at %s is unreadable; serving no digest for %s",
-                path, briefing_id, exc_info=True,
+                path,
+                briefing_id,
+                exc_info=True,
             )
             return None
 
@@ -479,7 +483,8 @@ class LocalFilesystemStorage:
             log.error(
                 "settings at %s exist but could not be read; using the "
                 "environment. Saved preferences are NOT being applied.",
-                path, exc_info=True,
+                path,
+                exc_info=True,
             )
             return None
         try:
@@ -489,9 +494,7 @@ class LocalFilesystemStorage:
             # is a working configuration; a half-parsed one is not, and
             # failing the run over a settings file would make a preferences
             # screen able to break the morning.
-            log.error(
-                "settings at %s will not parse; using the environment", path
-            )
+            log.error("settings at %s will not parse; using the environment", path)
             return None
 
     def save_settings(self, settings: UserSettings) -> None:
@@ -613,7 +616,9 @@ def prune_briefings(
     if deleted:
         log.info(
             "retention: deleted %d briefing(s) older than %s: %s",
-            len(deleted), cutoff_id, ", ".join(deleted),
+            len(deleted),
+            cutoff_id,
+            ", ".join(deleted),
         )
     else:
         log.info("retention: nothing older than %s", cutoff_id)

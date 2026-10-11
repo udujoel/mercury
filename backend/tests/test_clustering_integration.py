@@ -81,9 +81,7 @@ def story_containing(stories: list[Story], title_substring: str) -> Story:
     raise AssertionError(f"no story contains a member titled like {title_substring!r}")
 
 
-def sweep_thresholds(
-    items: list[Item], thresholds: list[float]
-) -> list[dict]:
+def sweep_thresholds(items: list[Item], thresholds: list[float]) -> list[dict]:
     """Offline threshold-tuning harness.
 
     For each threshold, cluster the (already-embedded) corpus and report the
@@ -184,8 +182,7 @@ async def test_threshold_sweep_shows_a_stable_correct_band():
     report = sweep_thresholds(items, thresholds)
 
     correct = [
-        r for r in report
-        if r["event_cluster_size"] == 4 and not r["rockets_merged"]
+        r for r in report if r["event_cluster_size"] == 4 and not r["rockets_merged"]
     ]
     # 0.55 through 0.68 all land correctly in the standalone sweep this
     # threshold was chosen from (see docs/phase2/clustering.md) — assert a

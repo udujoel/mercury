@@ -183,8 +183,14 @@ class GeminiProvider:
             getattr(usage, "total_token_count", "?"),
         )
 
-    def _sync_complete(self, system: str, prompt: str, temperature: float,
-                        json_mode: bool, response_schema: dict | None) -> str:
+    def _sync_complete(
+        self,
+        system: str,
+        prompt: str,
+        temperature: float,
+        json_mode: bool,
+        response_schema: dict | None,
+    ) -> str:
         # One config, built once, handed to the model at construction, with
         # nothing passed per-call. generate_content() takes no
         # generation_config here on purpose — see _generation_config below.
@@ -211,8 +217,12 @@ class GeminiProvider:
                 # thread so this provider is genuinely async and never blocks
                 # the event loop the rest of the pipeline runs on.
                 return await asyncio.to_thread(
-                    self._sync_complete, system, prompt, temperature,
-                    json_mode, response_schema,
+                    self._sync_complete,
+                    system,
+                    prompt,
+                    temperature,
+                    json_mode,
+                    response_schema,
                 )
             except ContentBlocked as blocked:
                 # Explicit, and above the broad clause on purpose — a
@@ -231,7 +241,10 @@ class GeminiProvider:
                 logger.warning(
                     "gemini returned no text (%s); retrying in %.1fs "
                     "(attempt %d/%d)",
-                    blocked.reason, delay, attempt, MAX_ATTEMPTS,
+                    blocked.reason,
+                    delay,
+                    attempt,
+                    MAX_ATTEMPTS,
                 )
                 await asyncio.sleep(delay)
                 continue
@@ -243,7 +256,10 @@ class GeminiProvider:
                 delay = BASE_DELAY_S * (2 ** (attempt - 1)) + random.uniform(0, 0.5)
                 logger.warning(
                     "gemini %s on attempt %d/%d, retrying in %.1fs",
-                    status, attempt, MAX_ATTEMPTS, delay,
+                    status,
+                    attempt,
+                    MAX_ATTEMPTS,
+                    delay,
                 )
                 await asyncio.sleep(delay)
         raise last_error  # pragma: no cover - unreachable, loop always returns/raises
@@ -255,8 +271,7 @@ class GeminiProvider:
         def _sync_stream():
             model = self._build_model(
                 system,
-                _generation_config(temperature, json_mode=False,
-                                    response_schema=None),
+                _generation_config(temperature, json_mode=False, response_schema=None),
             )
             return model.generate_content(prompt, stream=True)
 

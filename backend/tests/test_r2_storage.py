@@ -76,16 +76,21 @@ class _FakeS3:
             raise _ClientError(404, "NoSuchKey")
 
         class _Body:
-            def __init__(self, data): self._data = data
-            def read(self): return self._data
+            def __init__(self, data):
+                self._data = data
+
+            def read(self):
+                return self._data
 
         return {"Body": _Body(self.objects[Key][0])}
 
 
 def _configured(monkeypatch) -> R2Storage:
     for var, val in (
-        ("R2_ACCOUNT_ID", "acct"), ("R2_ACCESS_KEY_ID", "key"),
-        ("R2_SECRET_ACCESS_KEY", "secret"), ("R2_BUCKET", "mercury"),
+        ("R2_ACCOUNT_ID", "acct"),
+        ("R2_ACCESS_KEY_ID", "key"),
+        ("R2_SECRET_ACCESS_KEY", "secret"),
+        ("R2_BUCKET", "mercury"),
     ):
         monkeypatch.setenv(var, val)
     get_settings.cache_clear()
@@ -100,7 +105,9 @@ def _manifest(briefing_id: str = "2026-08-22") -> BriefingManifest:
         generated_at=datetime(2026, 8, 22, 5, 0, tzinfo=UTC),
         duration_ms=1000,
         audio_url=f"/briefing/{briefing_id}/audio",
-        segments=[], turns=[], sources=[],
+        segments=[],
+        turns=[],
+        sources=[],
     )
 
 
@@ -159,7 +166,8 @@ def test_unreadable_manifest_raises_rather_than_reading_as_absent(monkeypatch):
 
     storage = _configured(monkeypatch)
     storage.__dict__["_client"].objects["2026-08-22.manifest.json"] = (
-        b"{not json", "application/json"
+        b"{not json",
+        "application/json",
     )
     with pytest.raises(UnreadableManifestError):
         storage.load_manifest("2026-08-22")
@@ -173,7 +181,8 @@ def test_a_corrupt_manifest_does_not_block_its_own_replacement(monkeypatch):
 
     storage = _configured(monkeypatch)
     storage.__dict__["_client"].objects["2026-08-22.manifest.json"] = (
-        b"{not json", "application/json"
+        b"{not json",
+        "application/json",
     )
     assert existing_manifest(storage, "2026-08-22") is None
 
@@ -375,7 +384,10 @@ def test_list_briefing_ids_reads_every_page(monkeypatch):
 
     # Eight objects, two per page, so this is four round trips.
     assert storage.list_briefing_ids() == [
-        "2026-08-20", "2026-08-21", "2026-08-22", "2026-08-23",
+        "2026-08-20",
+        "2026-08-21",
+        "2026-08-22",
+        "2026-08-23",
     ]
 
 
@@ -446,9 +458,7 @@ def test_the_digest_is_written_before_the_manifest(monkeypatch):
     storage.save("2026-08-22", b"AUDIO", "m4a", _manifest(), _digest())
 
     puts = [key for verb, key in client.calls if verb == "put"]
-    assert puts.index("2026-08-22.digest.json") < puts.index(
-        "2026-08-22.manifest.json"
-    )
+    assert puts.index("2026-08-22.digest.json") < puts.index("2026-08-22.manifest.json")
     assert storage.load_digest("2026-08-22").newsletters[0].subject == (
         "The Gemini Moat"
     )
@@ -597,13 +607,15 @@ def test_retention_removes_the_digest_from_the_bucket(monkeypatch):
     """
     storage = _configured(monkeypatch)
     client = storage.__dict__["_client"]
-    storage.save("2026-01-01", b"A", "m4a", _manifest("2026-01-01"),
-                 _digest("2026-01-01"))
+    storage.save(
+        "2026-01-01", b"A", "m4a", _manifest("2026-01-01"), _digest("2026-01-01")
+    )
     assert "2026-01-01.digest.json" in client.objects
 
     storage.delete_briefing("2026-01-01")
 
     assert client.objects == {}
+
 
 def test_a_delete_that_r2_rejects_is_not_reported_as_a_deletion(monkeypatch):
     """`prune_briefings` names what it deleted and the workflow log prints
@@ -652,9 +664,7 @@ def test_retention_against_r2_keeps_today(monkeypatch):
     for day in ("2026-01-01", "2026-08-22"):
         storage.save(day, b"A", "m4a", _manifest(day))
 
-    deleted = prune_briefings(
-        storage, retention_days=30, today_id="2026-08-22"
-    )
+    deleted = prune_briefings(storage, retention_days=30, today_id="2026-08-22")
 
     assert deleted == ["2026-01-01"]
     assert storage.load_manifest("2026-08-22") is not None

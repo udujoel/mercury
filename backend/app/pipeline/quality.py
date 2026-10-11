@@ -88,13 +88,32 @@ def _normalise(text: str) -> str:
 
 
 _CHALLENGE_MARKERS = [
-    "push back", "actually", "i'd disagree", "disagree", "not quite",
-    "hold on", "to be fair", "i'd argue", "counterpoint", "fair, but",
-    "i'm not sure", "wait", "hmm", "stretch", "narrower",
+    "push back",
+    "actually",
+    "i'd disagree",
+    "disagree",
+    "not quite",
+    "hold on",
+    "to be fair",
+    "i'd argue",
+    "counterpoint",
+    "fair, but",
+    "i'm not sure",
+    "wait",
+    "hmm",
+    "stretch",
+    "narrower",
 ]
 _AGREEABLE_MARKERS = [
-    "agreed", "agree", "sounds good", "exactly", "totally", "no notes",
-    "nothing to add", "yep", "yeah",
+    "agreed",
+    "agree",
+    "sounds good",
+    "exactly",
+    "totally",
+    "no notes",
+    "nothing to add",
+    "yep",
+    "yeah",
 ]
 
 # CLAUDE.md rule 2 says "hosts must not always agree" and "at least once per
@@ -133,11 +152,13 @@ def check_disagreement(turns: list[Turn]) -> list[dict]:
         has_challenge = any(m in text_blob for m in _CHALLENGE_MARKERS)
         agreeable_count = sum(1 for m in _AGREEABLE_MARKERS if m in text_blob)
         if not has_challenge and len(seg_turns) > 1:
-            flagged.append({
-                "segment": segment,
-                "reason": "no challenge/reframe marker found",
-                "agreeable_marker_hits": agreeable_count,
-            })
+            flagged.append(
+                {
+                    "segment": segment,
+                    "reason": "no challenge/reframe marker found",
+                    "agreeable_marker_hits": agreeable_count,
+                }
+            )
     return flagged
 
 
@@ -162,18 +183,101 @@ _NUMBER_RE = re.compile(r"\b\d[\d,.:]*\b")
 # Ben-Thompson attribution the model supplied from world knowledge that
 # appeared nowhere in the source data.
 _STOPWORDS = {
-    "The", "This", "That", "These", "Those", "Good", "Morning", "First",
-    "Then", "And", "But", "So", "One", "Two", "Three", "No", "Yep", "Yeah",
-    "Fair", "Which", "Also", "Agreed", "Have", "Talk", "Nothing", "Bit",
-    "Actually", "Might", "She", "He", "Worth", "Clean", "Enjoy",
-    "Unrelated", "Weather", "Wait", "Hmm", "Wow", "Really", "Honestly",
-    "Looking", "Exactly", "Precisely", "However", "Indeed", "Okay", "Yes",
-    "Speaking", "Starting", "While", "From", "They", "Another", "Beyond",
-    "Doesn", "Isn", "Let", "Right", "Still", "Meanwhile", "Otherwise",
-    "Before", "After", "Given", "Because", "Though", "Although", "Just",
-    "Now", "Here", "There", "When", "Where", "What", "Why", "How", "If",
-    "It", "We", "You", "Your", "My", "Our", "Their", "His", "Her", "Its",
-    "For", "With", "About", "Into", "Over", "Under", "Between", "Across",
+    "The",
+    "This",
+    "That",
+    "These",
+    "Those",
+    "Good",
+    "Morning",
+    "First",
+    "Then",
+    "And",
+    "But",
+    "So",
+    "One",
+    "Two",
+    "Three",
+    "No",
+    "Yep",
+    "Yeah",
+    "Fair",
+    "Which",
+    "Also",
+    "Agreed",
+    "Have",
+    "Talk",
+    "Nothing",
+    "Bit",
+    "Actually",
+    "Might",
+    "She",
+    "He",
+    "Worth",
+    "Clean",
+    "Enjoy",
+    "Unrelated",
+    "Weather",
+    "Wait",
+    "Hmm",
+    "Wow",
+    "Really",
+    "Honestly",
+    "Looking",
+    "Exactly",
+    "Precisely",
+    "However",
+    "Indeed",
+    "Okay",
+    "Yes",
+    "Speaking",
+    "Starting",
+    "While",
+    "From",
+    "They",
+    "Another",
+    "Beyond",
+    "Doesn",
+    "Isn",
+    "Let",
+    "Right",
+    "Still",
+    "Meanwhile",
+    "Otherwise",
+    "Before",
+    "After",
+    "Given",
+    "Because",
+    "Though",
+    "Although",
+    "Just",
+    "Now",
+    "Here",
+    "There",
+    "When",
+    "Where",
+    "What",
+    "Why",
+    "How",
+    "If",
+    "It",
+    "We",
+    "You",
+    "Your",
+    "My",
+    "Our",
+    "Their",
+    "His",
+    "Her",
+    "Its",
+    "For",
+    "With",
+    "About",
+    "Into",
+    "Over",
+    "Under",
+    "Between",
+    "Across",
 }
 
 
@@ -182,11 +286,27 @@ _STOPWORDS = {
 # ──────────────────────────────────────────────────────────────
 
 _WEEKDAYS = (
-    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
 )
 _MONTHS = (
-    "January", "February", "March", "April", "May", "June", "July",
-    "August", "September", "October", "November", "December",
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
 )
 _ORDINALS = {
     word: n
@@ -206,10 +326,7 @@ _WD = "|".join(_WEEKDAYS)
 _MO = "|".join(_MONTHS)
 # A day of the month, as a number with an optional suffix or as a word.
 # Longest words first, so "twenty-first" is not read as "twenty".
-_DAY = (
-    r"\d{1,2}(?:st|nd|rd|th)?|"
-    + "|".join(sorted(_ORDINALS, key=len, reverse=True))
-)
+_DAY = r"\d{1,2}(?:st|nd|rd|th)?|" + "|".join(sorted(_ORDINALS, key=len, reverse=True))
 # "Monday, October 11th" / "Monday October 11" / "Monday, 11 October" /
 # "Monday, the 11th of October" / "Monday, the eleventh of October", each
 # with an optional ", 2026".
@@ -303,11 +420,13 @@ def correct_spoken_date(
                 dated = _DATED_WEEKDAY.match(text, m.start("wd"))
                 if dated:
                     if not _is_today(dated, date):
-                        found.append({
-                            "turn_index": i,
-                            "said": dated.group(0),
-                            "kind": "other_date",
-                        })
+                        found.append(
+                            {
+                                "turn_index": i,
+                                "said": dated.group(0),
+                                "kind": "other_date",
+                            }
+                        )
                     # Today's date: the loop above has already handled it.
                     continue
                 if m.group("wd").capitalize() != actual:
@@ -345,9 +464,13 @@ def check_grounding(turns: list[Turn], source_text: str) -> list[dict]:
             if word in _STOPWORDS or word in allowed_names:
                 continue
             if word.lower() not in source_lower:
-                flags.append({
-                    "turn_index": i, "token": word, "kind": "proper_noun",
-                })
+                flags.append(
+                    {
+                        "turn_index": i,
+                        "token": word,
+                        "kind": "proper_noun",
+                    }
+                )
         for match in _NUMBER_RE.finditer(turn.text):
             token = match.group(0)
             if token not in source_text:
@@ -456,7 +579,8 @@ _RELAY_SEGMENTS = {"inbox", "follow_ups", "world", "calendar"}
 # Leading words that do not stop a sentence being an order.
 _IMPERATIVE_LEAD = re.compile(
     r"^(?:so|then|and|but|ok(?:ay)?|right|now|just|please|go and|go|"
-    r"you need to|you have to)[\s,]+", re.I
+    r"you need to|you have to)[\s,]+",
+    re.I,
 )
 
 
@@ -522,11 +646,15 @@ def check_relayed_instructions(turns: list[Turn]) -> list[dict]:
             continue
 
         if _is_an_order(text):
-            flagged.append({
-                "turn_index": index, "segment": turn.segment.value,
-                "action": action.group(0).lower(), "endorsement": "(an order)",
-                "reason": "the hosts issue a security instruction themselves",
-            })
+            flagged.append(
+                {
+                    "turn_index": index,
+                    "segment": turn.segment.value,
+                    "action": action.group(0).lower(),
+                    "endorsement": "(an order)",
+                    "reason": "the hosts issue a security instruction themselves",
+                }
+            )
             continue
 
         # The co-host's reply, and the line that set this one up.
@@ -541,17 +669,19 @@ def check_relayed_instructions(turns: list[Turn]) -> list[dict]:
         )
         if not endorsement:
             continue
-        flagged.append({
-            "turn_index": index,
-            "segment": turn.segment.value,
-            "action": action.group(0).lower(),
-            "endorsement": endorsement.group(0).lower(),
-            "reason": (
-                "the hosts relay a security instruction and add their own "
-                "weight to it; audio has already stripped the sender "
-                "address, the headers and the link"
-            ),
-        })
+        flagged.append(
+            {
+                "turn_index": index,
+                "segment": turn.segment.value,
+                "action": action.group(0).lower(),
+                "endorsement": endorsement.group(0).lower(),
+                "reason": (
+                    "the hosts relay a security instruction and add their own "
+                    "weight to it; audio has already stripped the sender "
+                    "address, the headers and the link"
+                ),
+            }
+        )
     return flagged
 
 
@@ -578,7 +708,10 @@ def run_all_gates(turns: list[Turn], source_text: str) -> dict:
         "grounding": grounding,
         "relayed_instructions": relayed,
         "total_issues": (
-            len(filler) + len(monologues) + len(disagreement)
-            + len(grounding) + len(relayed)
+            len(filler)
+            + len(monologues)
+            + len(disagreement)
+            + len(grounding)
+            + len(relayed)
         ),
     }

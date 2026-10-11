@@ -50,7 +50,7 @@ async def require_api_token(
     if not expected:
         log.error(
             "MERCURY_API_TOKEN is not set; refusing to serve briefing data. "
-            "Generate one with: python -c \"import secrets; "
+            'Generate one with: python -c "import secrets; '
             'print(secrets.token_urlsafe(32))" and set it in backend/.env'
         )
         raise HTTPException(

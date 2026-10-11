@@ -27,8 +27,7 @@ def _email(title: str, *, owed: bool, days_ago: int = 0, sender: str = "Priya") 
         author=f"{sender.lower()}@example.com",
         title=title,
         body="...",
-        timestamp=datetime(2026, 9, 12, 9, 0, tzinfo=UTC).replace(
-            day=12 - days_ago),
+        timestamp=datetime(2026, 9, 12, 9, 0, tzinfo=UTC).replace(day=12 - days_ago),
         requires_response=owed,
     )
 
@@ -55,7 +54,8 @@ def test_an_empty_inbox_is_told_to_the_model_as_an_instruction():
     """
     clear = [_email("FYI", owed=False)]
     assert _format_follow_ups(clear, limit=FOLLOW_UP_LIMIT) == (
-        "(no emails awaiting a reply)")
+        "(no emails awaiting a reply)"
+    )
     policy = _follow_up_policy(clear, limit=FOLLOW_UP_LIMIT)
     assert "Nothing in the inbox is awaiting a reply" in policy
     assert "do not invent" in policy
@@ -75,8 +75,9 @@ def test_mercurys_own_statements_sit_outside_the_untrusted_fence():
     from app.pipeline import script_chain
 
     body = inspect.getsource(script_chain._format_follow_ups)
-    assert "do not invent" not in body, (
-        "Mercury's instruction to the model has leaked inside the fenced block")
+    assert (
+        "do not invent" not in body
+    ), "Mercury's instruction to the model has leaked inside the fenced block"
 
     # `_generate_script_once`, not `generate_script`: the latter is now the
     # thin retry wrapper that ships the briefing when the model refuses the
@@ -138,8 +139,9 @@ def test_a_date_header_with_an_unknown_timezone_does_not_end_the_run():
     mixed.append(older)
 
     out = _format_follow_ups(mixed, limit=FOLLOW_UP_LIMIT)
-    assert out.index("Naive and older") < out.index("Aware and newer"), (
-        "and it still sorts oldest-first across the two kinds")
+    assert out.index("Naive and older") < out.index(
+        "Aware and newer"
+    ), "and it still sorts oldest-first across the two kinds"
 
 
 def test_no_bodies_reach_the_segment():
@@ -163,7 +165,7 @@ def test_the_prompt_no_longer_receives_the_literal_none():
     from app.pipeline import script_chain
 
     source = inspect.getsource(script_chain._generate_script_once)
-    assert 'follow_ups="(none)"' not in source, (
-        "the follow-ups segment is back to being written from nothing"
-    )
+    assert (
+        'follow_ups="(none)"' not in source
+    ), "the follow-ups segment is back to being written from nothing"
     assert "_format_follow_ups(" in source

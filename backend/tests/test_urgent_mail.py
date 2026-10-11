@@ -69,9 +69,11 @@ def test_an_urgent_alert_outranks_the_newsletter_floor():
     segment that tells the listener to act.
     """
     priority, requires_response = classify_priority(
-        is_newsletter=True, is_urgent=True,
+        is_newsletter=True,
+        is_urgent=True,
         body="Your account has been restricted",
-        to_addresses=["joel@example.test"], user_email="joel@example.test",
+        to_addresses=["joel@example.test"],
+        user_email="joel@example.test",
     )
     assert priority is Priority.HIGH
     assert requires_response is True
@@ -80,8 +82,11 @@ def test_an_urgent_alert_outranks_the_newsletter_floor():
 def test_an_ordinary_newsletter_is_still_low():
     """The gate must not become a promotion for all bulk mail."""
     priority, requires_response = classify_priority(
-        is_newsletter=True, is_urgent=False, body="The Fed held rates.",
-        to_addresses=["joel@example.test"], user_email="joel@example.test",
+        is_newsletter=True,
+        is_urgent=False,
+        body="The Fed held rates.",
+        to_addresses=["joel@example.test"],
+        user_email="joel@example.test",
     )
     assert priority is Priority.LOW
     assert requires_response is False

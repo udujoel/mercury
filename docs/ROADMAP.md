@@ -1041,7 +1041,7 @@ answer. Neither blocks a merge:
       morning window now computes the local hour through `app.core.tz` in a
       one-line `python -c` instead of `TZ="$USER_TIMEZONE" date`. That line
       was checked by hand with a good and a misspelt zone, never in Actions.
-- [ ] 41. **Look at #68 on a simulator.** CI compiles and tests the Swift,
+- [x] 41. **Look at #68 on a simulator.** DONE 2026-10-11: walked through on an iPhone 18 Pro (iOS 27) against production; what it found is tasks 49-54. What was found: CI compiles and tests the Swift,
       but nobody has seen the story page, the outlet stack or the "made
       without your inbox" notice on a screen. The quality bar here is a
       real run, not a green job.
@@ -1050,7 +1050,7 @@ answer. Neither blocks a merge:
       from the scheduled runs since it shipped, then keep the threshold,
       move it, or lean on `verify_stories`. Until then Phase 2's dedup gate
       is "met offline, not in production".
-- [ ] 43. **Format the backend once, then keep it formatted.** CLAUDE.md
+- [x] 43. **Format the backend once, then keep it formatted.** DONE: 88 files formatted (AST-identical apart from a space ruff adds inside four docstrings that began with a quote), and `backend.yml` runs `ruff format --check`. What was found: CLAUDE.md
       says "format on save", but 88 of 120 backend files fail
       `ruff format --check`. Do one mechanical PR after the stack lands, so
       it conflicts with nothing open, and add `ruff format --check` to

@@ -124,9 +124,7 @@ class JSONParseError(ValueError):
         # run; a CI log is the opposite of ephemeral. Diagnosis needs the
         # decoder's complaint and the characters either side of the break,
         # which is what the excerpt carries.
-        super().__init__(
-            f"{message}{_shape_of(error_text or raw_text, error_pos)}"
-        )
+        super().__init__(f"{message}{_shape_of(error_text or raw_text, error_pos)}")
         # Held in memory for the repair loop, which genuinely does need the
         # whole response. It just must never be formatted into the message.
         self.raw_text = raw_text
@@ -708,7 +706,8 @@ def _drop_disabled(turns: list[Turn], segments: list[Segment]) -> list[Turn]:
             "dropped %d turn(s) for segment(s) the listener turned off: %s. "
             "The model was given neither a definition nor a schema value for "
             "them, so this means it ignored both.",
-            len(turns) - len(kept), ", ".join(sorted(removed)),
+            len(turns) - len(kept),
+            ", ".join(sorted(removed)),
         )
     return kept
 
@@ -814,11 +813,45 @@ def _is_valid_script(
 
 
 _STOP_WORDS = {
-    "the", "and", "for", "you", "your", "with", "from", "this", "that",
-    "about", "into", "our", "are", "was", "were", "will", "have", "has",
-    "not", "but", "all", "any", "can", "out", "new", "now", "get", "got",
-    "before", "after", "week", "today", "tomorrow", "please", "update",
-    "updates", "meeting", "re", "fwd",
+    "the",
+    "and",
+    "for",
+    "you",
+    "your",
+    "with",
+    "from",
+    "this",
+    "that",
+    "about",
+    "into",
+    "our",
+    "are",
+    "was",
+    "were",
+    "will",
+    "have",
+    "has",
+    "not",
+    "but",
+    "all",
+    "any",
+    "can",
+    "out",
+    "new",
+    "now",
+    "get",
+    "got",
+    "before",
+    "after",
+    "week",
+    "today",
+    "tomorrow",
+    "please",
+    "update",
+    "updates",
+    "meeting",
+    "re",
+    "fwd",
 }
 
 
@@ -968,7 +1001,10 @@ def _build_source_refs(
             "no SourceRefs matched across %d turns despite %d emails, "
             "%d events and %d stories — show notes will be empty and the "
             "briefing has no grounding trail",
-            len(turns), len(emails), len(events), len(stories or []),
+            len(turns),
+            len(emails),
+            len(events),
+            len(stories or []),
         )
 
     return refs
@@ -1053,6 +1089,7 @@ def _outline_schema(segments: list[Segment]) -> dict:
     ]
     return schema
 
+
 # The six categories CRITIQUE_PROMPT asks the editor to identify.
 _CRITIQUE_SCHEMA = {
     "type": "object",
@@ -1065,9 +1102,16 @@ _CRITIQUE_SCHEMA = {
                     "turn_index": {"type": "integer"},
                     "type": {
                         "type": "string",
-                        "enum": ["FLAT", "MONOLOGUE", "UNGROUNDED",
-                                 "AGREEABLE", "GENERIC", "FILLER",
-                                 "RELAYED_INSTRUCTION", "STALE"],
+                        "enum": [
+                            "FLAT",
+                            "MONOLOGUE",
+                            "UNGROUNDED",
+                            "AGREEABLE",
+                            "GENERIC",
+                            "FILLER",
+                            "RELAYED_INSTRUCTION",
+                            "STALE",
+                        ],
                     },
                     "detail": {"type": "string"},
                     "fix": {"type": "string"},
@@ -1132,6 +1176,7 @@ def _repair_echo(raw: str, error_pos: int | None) -> str:
         + raw[start:end]
         + ("\n[... truncated ...]" if end < len(raw) else "")
     )
+
 
 _REPAIR_SUFFIX = """
 
@@ -1262,7 +1307,8 @@ async def _complete_json(
                     "%s pass: accepting a repaired result that failed the "
                     "completeness check after %d attempts — the briefing may "
                     "be missing segments",
-                    what, _JSON_ATTEMPTS,
+                    what,
+                    _JSON_ATTEMPTS,
                 )
             return validated
         except JSONParseError as exc:
@@ -1272,7 +1318,10 @@ async def _complete_json(
             logger.warning(
                 "%s pass returned unusable JSON on attempt %d/%d (%s) — "
                 "asking the model to repair its own output",
-                what, attempt, _JSON_ATTEMPTS, exc.reason,
+                what,
+                attempt,
+                _JSON_ATTEMPTS,
+                exc.reason,
             )
             # Fenced. The echo is the model's own broken output, which is
             # derived from email bodies — so an attacker-controlled email can
@@ -1282,16 +1331,15 @@ async def _complete_json(
             attempt_prompt = prompt + _REPAIR_SUFFIX.format(
                 error=exc.reason,
                 previous=_fence_untrusted(
-                    _repair_echo(
-                        exc.error_text or exc.raw_text or raw, exc.error_pos
-                    )
+                    _repair_echo(exc.error_text or exc.raw_text or raw, exc.error_pos)
                 ),
             )
             attempt_temperature = _REPAIR_TEMPERATURE
 
     logger.error(
         "%s pass produced unusable JSON on all %d attempts",
-        what, _JSON_ATTEMPTS,
+        what,
+        _JSON_ATTEMPTS,
     )
     raise last_error
 
@@ -1331,8 +1379,11 @@ async def _run_critique_and_revise(
     )
     try:
         critique = await _complete_json(
-            llm=llm, prompt=critique_prompt, temperature=0.5,
-            response_schema=_CRITIQUE_SCHEMA, what="critique",
+            llm=llm,
+            prompt=critique_prompt,
+            temperature=0.5,
+            response_schema=_CRITIQUE_SCHEMA,
+            what="critique",
             validate=_validate_critique,
         )
     except ContentBlocked as blocked:
@@ -1345,7 +1396,8 @@ async def _run_critique_and_revise(
         logger.warning(
             "critique pass refused (%s, %s), keeping draft — the quality "
             "gates did not run on this briefing",
-            blocked.reason, blocked.stage,
+            blocked.reason,
+            blocked.stage,
         )
         return draft_turns
     except Exception as exc:
@@ -1368,16 +1420,20 @@ async def _run_critique_and_revise(
         # briefing whose draft was fine. _complete_json now retries that
         # case before it gets here; this stays as the backstop.
         revised_turns = await _complete_json(
-            llm=llm, prompt=revise_prompt, temperature=0.6,
+            llm=llm,
+            prompt=revise_prompt,
+            temperature=0.6,
             response_schema=(
-            _turn_list_schema(segments) if segments else _TURN_LIST_SCHEMA
-        ), what="revise",
+                _turn_list_schema(segments) if segments else _TURN_LIST_SCHEMA
+            ),
+            what="revise",
             validate=_parse_draft_turns,
         )
     except ContentBlocked as blocked:
         logger.warning(
             "revise pass refused (%s, %s), keeping draft",
-            blocked.reason, blocked.stage,
+            blocked.reason,
+            blocked.stage,
         )
         return draft_turns
     except Exception as exc:
@@ -1435,7 +1491,8 @@ async def _run_critique_and_revise(
         logger.warning(
             "relayed security instruction: draft=%d revised=%d — keeping "
             "the revision on that basis alone, whatever the other gates say",
-            draft_relays, revised_relays,
+            draft_relays,
+            revised_relays,
         )
         return revised_turns
     if revised_relays > draft_relays:
@@ -1456,7 +1513,8 @@ async def _run_critique_and_revise(
             "the revision may have introduced a relayed security "
             "instruction (draft=%d revised=%d): %s — not vetoing on a "
             "heuristic, falling through to the quality score",
-            draft_relays, revised_relays,
+            draft_relays,
+            revised_relays,
             revised_report["relayed_instructions"],
         )
     elif revised_relays:
@@ -1466,7 +1524,8 @@ async def _run_critique_and_revise(
         logger.error(
             "a relayed security instruction survived revision (%d in both "
             "draft and revision): %s",
-            revised_relays, revised_report["relayed_instructions"],
+            revised_relays,
+            revised_report["relayed_instructions"],
         )
 
     if revised_report["total_issues"] > draft_report["total_issues"]:
@@ -1474,14 +1533,17 @@ async def _run_critique_and_revise(
             "revision scored worse than draft on quality gates "
             "(draft=%d issues, revised=%d issues) — keeping draft. "
             "draft=%s revised=%s",
-            draft_report["total_issues"], revised_report["total_issues"],
-            draft_report, revised_report,
+            draft_report["total_issues"],
+            revised_report["total_issues"],
+            draft_report,
+            revised_report,
         )
         return draft_turns
 
     logger.info(
         "revision accepted: draft=%d issues, revised=%d issues",
-        draft_report["total_issues"], revised_report["total_issues"],
+        draft_report["total_issues"],
+        revised_report["total_issues"],
     )
     return revised_turns
 
@@ -1545,8 +1607,13 @@ async def generate_script(
     """
     # Everything that does not change as the ladder descends.
     common = dict(
-        llm=llm, events=events, background_events=background_events,
-        weather=weather, length=length, date=date, passes=passes,
+        llm=llm,
+        events=events,
+        background_events=background_events,
+        weather=weather,
+        length=length,
+        date=date,
+        passes=passes,
         # Through `common` so every degradation rung keeps the gates. A rung
         # is exactly when a script is most likely to be odd, and it would be
         # the wrong moment to stop checking it.
@@ -1596,23 +1663,15 @@ async def generate_script(
                 # Zeroed with the emails. "Plus eleven others" over an empty
                 # inbox is an ungrounded number, which is the one thing
                 # check_grounding is there to catch.
-                aggregated_email_count=(
-                    0 if gave_up_inbox else aggregated_email_count
-                ),
-                follow_up_candidates=(
-                    [] if gave_up_inbox else follow_up_candidates
-                ),
+                aggregated_email_count=(0 if gave_up_inbox else aggregated_email_count),
+                follow_up_candidates=([] if gave_up_inbox else follow_up_candidates),
                 # Dropped with the inbox rung: these ARE the inbox, and the
                 # segment they feed is turned off on that rung.
-                newsletter_stories=(
-                    [] if gave_up_inbox else newsletter_stories
-                ),
+                newsletter_stories=([] if gave_up_inbox else newsletter_stories),
                 # Zeroed with them, for the same reason the email count is:
                 # "54 further items not shown" over zero shown subjects is
                 # an ungrounded number describing nothing.
-                newsletter_remainder=(
-                    0 if gave_up_inbox else newsletter_remainder
-                ),
+                newsletter_remainder=(0 if gave_up_inbox else newsletter_remainder),
                 stories=[] if gave_up_news else stories,
                 # Turned OFF, not merely emptied. Passing `stories=[]` alone
                 # leaves `world` in the resolved segment list, in both
@@ -1628,7 +1687,9 @@ async def generate_script(
                 logger.warning(
                     "the model refused the script (%s, %s); retrying without "
                     "the %d news stor%s: %s",
-                    blocked.reason, blocked.stage, len(stories),
+                    blocked.reason,
+                    blocked.stage,
+                    len(stories),
                     "y" if len(stories) == 1 else "ies",
                     # Named, because "6 stories" is not a debuggable record.
                     # The filter objected to something in this set and there
@@ -1655,7 +1716,9 @@ async def generate_script(
                 logger.warning(
                     "the model refused the script again (%s, %s); retrying "
                     "without the %d email(s) as well",
-                    blocked.reason, blocked.stage, len(emails),
+                    blocked.reason,
+                    blocked.stage,
+                    len(emails),
                 )
                 gave_up_inbox = True
                 _give_up((Segment.INBOX, Segment.FOLLOW_UPS))
@@ -1715,8 +1778,13 @@ async def _generate_script_once(
     budget = scale_budget(LENGTH_BUDGETS[length]["words"], segments)
     stories = stories or []
     source_data = _flatten_source_text(
-        emails, events, weather, aggregated_email_count, stories,
-        newsletter_stories, newsletter_remainder,
+        emails,
+        events,
+        weather,
+        aggregated_email_count,
+        stories,
+        newsletter_stories,
+        newsletter_remainder,
     )
 
     # Whose owed replies the follow-ups segment draws on.
@@ -1779,7 +1847,8 @@ async def _generate_script_once(
         # is indistinguishable from a quiet morning.
         newsletter_remainder=(
             f"; {newsletter_remainder} further items not shown"
-            if newsletter_remainder else ""
+            if newsletter_remainder
+            else ""
         ),
         # Fenced like everything else a third party wrote. The extractor
         # already read these bodies once behind the same fence; the gists it
@@ -1823,13 +1892,14 @@ async def _generate_script_once(
             + _follow_up_policy(_follow_up_source, limit=FOLLOW_UP_LIMIT)
         ),
         total_words=budget,
-        segment_definitions="\n".join(
-            SEGMENT_DEFINITIONS[s.value] for s in segments
-        ),
+        segment_definitions="\n".join(SEGMENT_DEFINITIONS[s.value] for s in segments),
     )
     outline = await _complete_json(
-        llm=llm, prompt=outline_prompt, temperature=0.7,
-        response_schema=_outline_schema(segments), what="outline",
+        llm=llm,
+        prompt=outline_prompt,
+        temperature=0.7,
+        response_schema=_outline_schema(segments),
+        what="outline",
         validate=_validate_outline,
     )
 
@@ -1840,8 +1910,11 @@ async def _generate_script_once(
         date=spoken_date(date), outline=json.dumps(outline), source_data=source_data
     )
     draft_turns = await _complete_json(
-        llm=llm, prompt=draft_prompt, temperature=_DRAFT_TEMPERATURE,
-        response_schema=_turn_list_schema(segments), what="draft",
+        llm=llm,
+        prompt=draft_prompt,
+        temperature=_DRAFT_TEMPERATURE,
+        response_schema=_turn_list_schema(segments),
+        what="draft",
         validate=_parse_draft_turns,
         repair_check=lambda turns: _has_valid_segment_coverage_and_order(
             turns, segments
@@ -1879,13 +1952,16 @@ async def _generate_script_once(
         if found["kind"] == "weekday":
             logger.warning(
                 "corrected a spoken weekday in turn %d: %r is not %s",
-                found["turn_index"], found["said"], date.strftime("%A"),
+                found["turn_index"],
+                found["said"],
+                date.strftime("%A"),
             )
         else:
             logger.error(
                 "the cold open names another date (%r in turn %d) and was "
                 "left as written",
-                found["said"], found["turn_index"],
+                found["said"],
+                found["turn_index"],
             )
 
     # The last word on what actually ships, whatever route it took here.
@@ -1907,7 +1983,8 @@ async def _generate_script_once(
     if shipped_relays:
         logger.error(
             "SHIPPING a script that relays %d security instruction(s): %s",
-            len(shipped_relays), shipped_relays,
+            len(shipped_relays),
+            shipped_relays,
         )
 
     source_refs = _build_source_refs(final_turns, emails, events, stories)

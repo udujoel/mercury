@@ -94,9 +94,7 @@ class GoogleTTSProvider:
         tts = self._texttospeech
         response = self._client.synthesize_speech(
             input=tts.SynthesisInput(text=text),
-            voice=tts.VoiceSelectionParams(
-                language_code="en-US", name=voice_name
-            ),
+            voice=tts.VoiceSelectionParams(language_code="en-US", name=voice_name),
             audio_config=tts.AudioConfig(
                 audio_encoding=tts.AudioEncoding.MP3,
                 speaking_rate=1.0,
@@ -120,9 +118,7 @@ class GoogleTTSProvider:
                 # The SDK is synchronous; run it in a thread so this
                 # provider never blocks the event loop the rest of the
                 # pipeline runs on.
-                audio = await asyncio.to_thread(
-                    self._sync_synthesize, text, voice_id
-                )
+                audio = await asyncio.to_thread(self._sync_synthesize, text, voice_id)
                 return Speech(audio=audio)
             except Exception as exc:  # noqa: BLE001 - SDK raises varied types
                 last_error = exc
@@ -131,7 +127,10 @@ class GoogleTTSProvider:
                 delay = BASE_DELAY_S * (2 ** (attempt - 1)) + random.uniform(0, 0.5)
                 logger.warning(
                     "google tts error on attempt %d/%d, retrying in %.1fs: %s",
-                    attempt, MAX_ATTEMPTS, delay, exc,
+                    attempt,
+                    MAX_ATTEMPTS,
+                    delay,
+                    exc,
                 )
                 await asyncio.sleep(delay)
         raise last_error  # pragma: no cover - unreachable, loop always returns/raises

@@ -59,9 +59,9 @@ def _person(
     settings = get_settings()
     return {
         "name": settings.user_name,
-        "meeting_today": sorted({
-            attendee for event in events for attendee in event.attendees
-        })[:40],
+        "meeting_today": sorted(
+            {attendee for event in events for attendee in event.attendees}
+        )[:40],
         "on_the_calendar_today": [e.title for e in events if not e.is_background][:20],
         "follows": [f for f in (followed or []) if f.strip()][:40],
         "interests": [i for i in (interests or []) if i.strip()][:40],
@@ -112,7 +112,10 @@ async def judge_personal_relevance(
             "relevance: %d stories is over the %d this pass budgets for; "
             "judging the %d highest-ranked and leaving %d on the lexical "
             "personal score",
-            len(stories), MAX_JUDGED, MAX_JUDGED, len(stories) - MAX_JUDGED,
+            len(stories),
+            MAX_JUDGED,
+            MAX_JUDGED,
+            len(stories) - MAX_JUDGED,
         )
 
     person = _person(events, followed_entities, interests)
@@ -152,7 +155,9 @@ async def judge_personal_relevance(
     except Exception as exc:
         log.warning(
             "relevance judgment failed (%s) — all %d story(ies) keep the "
-            "lexical personal score", exc, len(stories),
+            "lexical personal score",
+            exc,
+            len(stories),
         )
         return {}
 
@@ -165,7 +170,9 @@ async def judge_personal_relevance(
     unjudged = len(judged) - len(out)
     (log.warning if out == {} else log.info)(
         "relevance: %d of %d story(ies) judged, %d left on the lexical score",
-        len(out), len(judged), unjudged + max(0, len(stories) - len(judged)),
+        len(out),
+        len(judged),
+        unjudged + max(0, len(stories) - len(judged)),
     )
     return out
 
