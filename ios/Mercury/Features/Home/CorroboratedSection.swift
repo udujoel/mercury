@@ -40,10 +40,14 @@ struct CorroboratedSection: View {
                         // Named, not counted. "3 sources" asks the reader to
                         // trust the number; naming them lets the reader judge
                         // it, which is the point of a corroboration claim.
-                        Text(CorroboratedStories.attribution(item.outlets))
-                            .font(MercuryType.figureCaption)
-                            .foregroundStyle(MercuryColor.inkFaint.color)
-                            .multilineTextAlignment(.leading)
+                        HStack(alignment: .top, spacing: MercurySpace.snug) {
+                            SourceStack(outlets: item.outlets)
+                            Text(CorroboratedStories.attribution(item.outlets))
+                                .font(MercuryType.figureCaption)
+                                .foregroundStyle(MercuryColor.inkFaint.color)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, MercurySpace.snug)

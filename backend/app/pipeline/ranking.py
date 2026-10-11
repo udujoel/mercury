@@ -23,6 +23,7 @@ def score_stories(
     topic_centroid: np.ndarray | None = None,
     followed_entities: set[str] | None = None,
     judged_personal: dict[str, float] | None = None,
+    now: datetime | None = None,
 ) -> list[Story]:
     """Score every story and return sorted descending.
 
@@ -40,7 +41,14 @@ def score_stories(
     a sender, subject and timestamp.
     """
     s = get_settings()
-    now = datetime.now(UTC)
+    # Recency is measured from `now`, which a run passes once so every story
+    # is aged against the same instant. Reading the wall clock here made the
+    # ranking depend on WHEN it was asked: tests with pinned fixtures drifted
+    # until the recency term decayed to ~1e-15 for every story and the scores
+    # tied (four failed on main on 2026-10-07). The default keeps a caller
+    # that passes nothing working exactly as before.
+    if now is None:
+        now = datetime.now(UTC)
 
     attendee_names = {
         a.lower()

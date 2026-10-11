@@ -1340,6 +1340,131 @@ stopped of their own accord and 09-22 ran clean three times before the
 abort. When a run fails, read the signature before assuming it is the same
 problem as last time.
 
+## 2026-10-07 - the story page in Particle's shape, and a morning that says what it lacks
+
+Three things landed together, and two of them were found rather than planned.
+
+**Particle's story anatomy.** The desk already had Particle's feed shape
+(thumbnail rows and one promoted lead). What it lacked was Particle's
+signature: the publishers, shown prominently, on every story. The eyebrow
+said "4 ARTICLES", which counted cluster members rather than outlets and
+asked to be trusted. It is now a row of overlapping outlet marks plus
+"REUTERS +3", and the story page follows Particle's order: picture, headline,
+who says so (directly under the headline), a listen pill, the points on a
+card of their own, why it matters as a ruled aside, and coverage rows that
+open the publisher with the whole row as the target.
+
+Particle's own help pages and design write-ups were blocked by the egress
+proxy from this session, so the design rests on what search results
+confirmed (bullet summaries, sources showcased directly under the summary
+with big tap targets, a listen control) rather than on screenshots. Worth
+checking against the real app before anyone treats it as a copy.
+
+**Monograms, not logos, on purpose.** Favicons would mean a hotlinked fetch
+per outlet per row from sites that refuse hotlinks often enough that
+`LeadCard` already needs a fallback, and ADR-012 says the edition has one
+colour. Forty outlets bringing forty brand reds would make the desk a
+sticker sheet. The marks are ink on paper.
+
+**The headlines were in the hosts' typeface.** `LeadCard` and the story page
+both set headlines in `MercuryType.greeting`, the serif that ADR-012 reserves
+for what a host says, and `DesignTokenTests` could not see it because it
+checks tokens, not which token a call site borrows. A new `headline` token is
+bold SF, which is both the rule and what Particle does. The lesson is the
+same shape as the census: a test of the vocabulary does not test its use.
+
+**Task 33 found a backend bug on the way.** Writing the phone's sentence for
+`degraded_sources` meant mapping every label, and `calendar` turned out to be
+both a SOURCE label from ingestion and a `Segment` value. `cli._only_refusals`
+tested membership in the whole `Segment` enum, on a docstring that said the
+two vocabularies never overlap. So a calendar fetch that failed on its own
+was filed as a model refusal: exit 0, a log line blaming the model, and no
+retry, for a briefing missing the user's day. It now tests against
+`REFUSABLE_SEGMENTS`, the three segments the ladder can actually give up.
+It needed the calendar to fail without Gmail, which a shared OAuth token
+makes rare, and that is why nothing noticed.
+
+**Four tests on main were a slow clock bomb.** `test_interests_reach_the_ranker`
+pinned its fixtures to 2026-09-20 and let `score_stories` read the real
+clock. Seventeen days later `exp(-hours / 12)` is about 1e-15 for every
+fixture, the minutes between them round away, the scores tie and the sort
+falls back to input order. Freezing the clock at the fixtures' `NOW` did not
+fix it, which is the part worth remembering: `_article` stamps items at
+`NOW.replace(minute=59 - age)`, AFTER `NOW`, so every age clamped to zero and
+the stories tied for the opposite reason. The clock has to sit after the
+newest fixture (07:00). A frozen clock is only correct if it is frozen at a
+time the fixtures agree with.
+
+**Backend CI was red for everyone, not for this PR.** `pip-audit` reported
+fourteen new advisories in `pyjwt 2.13.0` on 2026-10-07, so every backend run
+failed before a test executed. It goes to 2.15.0 here, because two of the
+fourteen are fixed only there. Worth remembering: `pip-audit` gates the whole
+job, so a pin that was clean yesterday can turn an unrelated PR red today,
+and the failure reads as this PR's until you see that no test ran.
+
+**Not compiled here.** The session had no Swift toolchain. The iOS changes
+were written against the existing patterns and read adversarially, and the
+`ios` CI job on the PR is the first build they get.
+
+## 2026-10-10 - one clock per run, a voice that says it is the backup, and a morning floor
+
+Three things left open on 2026-10-07, closed on the same branch.
+
+**The ranker takes a clock now.** Review of #68 was right that patching
+`ranking.datetime` from one test file treated the symptom: `score_stories`
+read the wall clock itself, so any test with pinned fixtures was a slow
+clock bomb. It takes `now`, `_build_world_stories` passes it on, and
+`generate_briefing` captures one `run_started` instant. The production
+effect is small but real: every story in a run is aged against the same
+moment, rather than against whenever the ranker happened to run after
+minutes of ingestion and clustering. `test_relevance` also lost its
+`approx`, which existed only because two calls microseconds apart read two
+different clocks.
+
+**The backup voice gets its own field, and the reason is the retry.**
+`narrator_fallback` sits beside `degraded_sources` rather than inside it,
+because `cli.py` regenerates anything listed there, up to three times a
+day. That is right for a credential that comes back at 06:00 and wrong for
+an ElevenLabs quota that is out for the month: three more generations, the
+same fallback voice. `test_a_fallback_voice_is_not_a_reason_to_regenerate`
+pins it. Two quieter cases were also made visible: ElevenLabs failing to
+BUILD used to return the bare Google provider, which read exactly like a run
+configured for Google, and so did a typo in `TTS_PROVIDER`. Both now come
+back wrapped and report `failed_over`. A run genuinely configured for Google
+reports nothing, because the phone must not call someone's own setting a
+degradation.
+
+**The morning floor is the Worker's, as the roadmap said.** Two questions
+had been answered by one check. "Has generation stopped?" belongs to the
+watchdog's age floor (#59). "Does this cover the morning?" belongs to the
+checkpoints, and only they now apply `MORNING_FLOOR_HHMM = "0300"` against
+the id's local time. The part worth remembering is what NOT to do with an
+overnight briefing that came out empty: forcing a repair over it in place
+regenerates under the 00:12 id, which still does not cover the morning, so
+the next checkpoint would dispatch again. A fresh run for the day is the
+repair that holds.
+
+**Review found the floor taught to one reader of three.** The first cut
+put it only in the Worker. The GitHub backstop (`cli check`, no id) still
+counted an overnight briefing as the morning's, and the Worker's alarm sent
+the watchdog a bare DAY, which `check` read as the literal key
+`<day>.manifest.json` that no timed run writes, so it could never clear,
+even when a morning run landed during its re-checks. That second half
+predates the floor and was already true of every "missing" alarm. `check`
+now treats a bare day, or no id, as "is this morning covered?", resolved
+through `storage.covers_morning`, which mirrors the Worker's floor.
+
+Both sides apply the floor only once it is past 03:00 local. The
+checkpoints are fixed UTC times sized for Lisbon, and in a zone where they
+fire before 03:00 local every run they caused would count as overnight
+the moment it landed, dispatching again forever. And an install with NO
+ElevenLabs key is not a fallback: `tts_provider` defaults to elevenlabs,
+so a Google-only install would have been told every morning that its own
+voice was the backup.
+
+**Deployment, again.** The Worker change does nothing until someone runs
+`wrangler deploy`. Merging is not shipping (see the standing facts below).
+
 ## Standing facts worth not rediscovering
 
 - **The Worker has no CI deploy.** Merging is not shipping. A route on `main`

@@ -581,6 +581,15 @@ the same pass — see the file's own comment for the measurements. Its docstring
 promised "same title always produces the same visual identity" and that held
 only until you killed the app.
 
+### Amendment, 2026-10-07: headlines are the app talking
+
+The serif/sans rule above had one unwritten exception in practice: story
+headlines on the lead card and the story page were set in `greeting`, the
+hosts' serif. A headline is a publication speaking, not a host, so that was
+the rule broken rather than an exception to it. Headlines now have their own
+token, `MercuryType.headline`, in bold SF, which is also how Particle sets
+them. The greeting and the transcript keep the serif; nothing else moves.
+
 ## ADR-013 — The digest is a sibling of the manifest, and the desk is bigger than the edit
 
 **Status:** accepted

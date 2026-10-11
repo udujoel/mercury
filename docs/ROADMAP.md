@@ -479,7 +479,7 @@ The evidence, all from the live system on 2026-09-11/12:
       digest and settings artifacts both carry one; task 2's "schema version
       bump" was never done.
 
-- [~] 22. **DECIDED 2026-09-13: ElevenLabs stays.** No paid plan, and none
+- [x] 22. **DECIDED 2026-09-13: ElevenLabs stays.** BOTH HALVES DONE: see task 33. No paid plan, and none
       is needed — the failover is per-run instance state, so the next run
       after the quota resets uses ElevenLabs again with no action.
       WHAT REMAINS is the second half, still worth doing: the iOS client
@@ -822,7 +822,7 @@ produced, ranked by what they buy per hour spent.
       field is missing from that whitelist; it catches `music_set`
       retroactively too.
 
-- [~] 31. **A freshness floor, and a watchdog for all four slots.** HALF DONE (#59). The
+- [~] 31. **A freshness floor, and a watchdog for all four slots.** BOTH FLOORS DONE (#59, #68); the watchdog for the other slots stays blocked on task 28. The
       `00:12` cron generates a briefing named for the NEW day, so all five of
       the Worker's morning checkpoints see "this date has a playable
       briefing" and stand down, the 05:40 alarm included. Masked today only
@@ -869,7 +869,14 @@ produced, ranked by what they buy per hour spent.
       healthy morning trips it or loosened to where the incident does
       not.
 
-      STILL OPEN: the `dayState` half. A 00:12 briefing is 5.7 hours old
+      The `dayState` half is DONE (2026-10-10). The scheduled checkpoints
+      ask `dayState(env, day, { morning: true })`, and a playable briefing
+      stamped before 03:00 local makes the day `stale`, which dispatches a
+      FRESH run for the day rather than standing down or forcing over the
+      overnight one. `/status` keeps the any-playable answer, because "is
+      there anything to play" is a different question. NOT LIVE UNTIL
+      SOMEONE RUNS `wrangler deploy`: the Worker has no CI deploy.
+      Original text of this note: A 00:12 briefing is 5.7 hours old
       at the 05:52 checkpoint, so it passes a 7-hour floor while not
       covering the morning at all — that is a different question
       ("does this cover the morning?") from the one the floor answers
@@ -904,7 +911,23 @@ produced, ranked by what they buy per hour spent.
       path from "a stranger sends a well-worded email" to "the hosts read it
       out as urgent" got shorter today.
 
-- [ ] 33. **Decode `degraded_sources` on the phone.** The manifest has
+- [x] 33. **Decode `degraded_sources` on the phone.** DONE. Decoded
+      leniently, carried through SwiftData (an optional column, so the
+      notice survives a relaunch and an offline open, which is where task
+      21 lost word timings), and said on the briefing card as one muted
+      line: "Made without your calendar and your inbox." A label the build
+      does not know still produces a sentence, so a newer backend cannot
+      make a degraded morning quiet again. Found on the way: `calendar` is
+      a source label AND a `Segment`, so `cli._only_refusals` filed a
+      calendar-only failure as a model refusal and never retried it; it now
+      tests against the three segments the refusal ladder can give up.
+      Task 22's half is DONE too (2026-10-10): the manifest carries
+      `narrator_fallback`, its own field and deliberately not an entry in
+      `degraded_sources`, because `cli.py` retries anything in that list
+      and an ElevenLabs quota that is out for the month would then cost
+      three full generations every morning. The card says "Read by the
+      backup voice today."
+      Original text: The manifest has
       carried it since the schema was written and `BriefingManifest.swift`
       does not declare it, although its doc comment claims the mirror is
       exact. On 2026-09-01, 09-02 and 09-03 the OAuth refresh token was
@@ -983,6 +1006,16 @@ DROP, with reasons, from the review:
       newsletter whose body contained the block delimiter forged a second
       outlet, which mattered because outlet count is both the ranking signal
       and the sentence the hosts are told to say.
+
+- [x] 37. **The story page in Particle's shape.** DONE. Outlet marks and
+      named outlets on every desk row, the lead card and the outlet
+      section; the story page reordered to Particle's anatomy (picture,
+      headline, who says so, listen, the points on a card, why it matters,
+      coverage rows that open the publisher). Headlines moved out of the
+      hosts' serif into a bold SF `headline` token, which ADR-012's own
+      rule asked for. See docs/LOG.md 2026-10-07. NOT DONE and the next
+      Particle step worth taking: summary styles (ELI5, the 5Ws), which is
+      Phase 4 week 17 and needs a backend prompt, not a view.
 
 ## Phase 4 — Depth (weeks 16 to 19)
 

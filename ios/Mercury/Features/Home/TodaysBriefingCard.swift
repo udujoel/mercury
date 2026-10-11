@@ -31,6 +31,9 @@ struct TodaysBriefingCard: View {
     /// the rebuild is that THIS briefing is not the one you already heard,
     /// and the card itself is the thing that changed.
     var isFresh: Bool = false
+    /// What this briefing was made without, as a sentence — see
+    /// `BriefingHealth`. Nil on a healthy morning, which is most of them.
+    var notice: String? = nil
     let onPlay: () -> Void
     let onRetry: () -> Void
 
@@ -81,6 +84,18 @@ struct TodaysBriefingCard: View {
                             .font(MercuryType.figureCaption)
                             .foregroundStyle(MercuryColor.accent.color)
                     }
+                    // Muted ink, not the accent and not red. The briefing
+                    // shipped and is worth playing (rule 7); this says what
+                    // it lacks so nobody waits for a segment that is not
+                    // coming, and it is quieter than the play button by
+                    // design.
+                    if let notice, !isLoading {
+                        Label(notice, systemImage: "info.circle")
+                            .font(MercuryType.figureCaption)
+                            .foregroundStyle(MercuryColor.inkMuted.color)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, MercurySpace.hair)
+                    }
                 }
                 Spacer(minLength: 0)
             }
@@ -90,7 +105,8 @@ struct TodaysBriefingCard: View {
         .buttonStyle(.plain)
         .disabled(isLoading)
         .accessibilityLabel(isPlaying ? "\(title), playing" : "Play \(title.lowercased())")
-        .accessibilityValue(subtitle)
+        .accessibilityValue(isLoading ? subtitle
+                            : [subtitle, notice].compactMap { $0 }.joined(separator: ". "))
     }
 
     private var subtitle: String {
@@ -176,6 +192,11 @@ struct TodaysBriefingCard: View {
                            isPlaying: false, onPlay: {}, onRetry: {})
         TodaysBriefingCard(title: "Today's briefing", state: .loading, summary: nil,
                            isPlaying: false, onPlay: {}, onRetry: {})
+        // The 2026-09-01 morning, with the OAuth token expired.
+        TodaysBriefingCard(title: "Today's briefing", state: .ready,
+                           summary: "4 min · 9 sources", isPlaying: false,
+                           notice: BriefingHealth.notice(for: ["email", "calendar"]),
+                           onPlay: {}, onRetry: {})
         // What Home shows when the cron has not run and the only briefing on
         // the device is older than today.
         TodaysBriefingCard(title: "Thursday's briefing", state: .ready,

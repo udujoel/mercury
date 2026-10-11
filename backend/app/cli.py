@@ -46,7 +46,7 @@ from zoneinfo import ZoneInfo
 
 from app.core.config import apply_to_environment, get_settings
 from app.core.providers import build_embedding_provider
-from app.core.schemas import BriefingLength, Segment
+from app.core.schemas import REFUSABLE_SEGMENTS, BriefingLength
 
 # How many times a briefing may be generated in a day while it keeps
 # shipping degraded, counting the first one. Three: the original plus two
@@ -169,6 +169,41 @@ def _free_briefing_id(day: str, preferred_hhmm: str) -> str:
         f"no free minute left on {day}: it already holds {len(existing)} "
         "briefings, and every remaining name would overwrite one"
     )
+
+
+def _morning_briefing_id(storage, day: str, now_hhmm: str) -> str | None:
+    """The newest briefing that covers `day`'s MORNING, if any.
+
+    What `check` asks about whenever it is given a day rather than a full
+    id: by the scheduled backstop, which names nothing, and by the Worker's
+    alarm, which names the bare day when the morning is missing or stale.
+    Resolving the bare day as a literal key looked for `<day>.manifest.json`,
+    which no timed run writes, so the watchdog reported "no briefing" with a
+    playable one in the bucket and its re-checks could never see a morning
+    run land.
+
+    The floor applies only once it is morning where the user is. Before
+    then every briefing for the day counts, which is what this did before
+    the floor existed: a checkpoint in a timezone where it fires before
+    03:00 local would otherwise never be satisfied by anything it caused.
+
+    Takes `storage` already built, so a MISCONFIGURED store (exit 2) stays
+    distinguishable from one that could not answer (exit 4) — the fixes are
+    different, and the first cut of this merged them. RAISES when the
+    listing fails, for the reason `_newest_briefing_id` documents.
+    """
+    from app.synthesis.storage import (
+        MORNING_FLOOR_HHMM,
+        briefing_day,
+        covers_morning,
+    )
+
+    floor_applies = now_hhmm >= MORNING_FLOOR_HHMM
+    ids = [
+        i for i in storage.list_briefing_ids()
+        if briefing_day(i) == day and (not floor_applies or covers_morning(i))
+    ]
+    return max(ids) if ids else None
 
 
 def _newest_briefing_id(today_id: str) -> str | None:
@@ -506,14 +541,15 @@ def _only_refusals(degraded: list[str]) -> bool:
     failed?
 
     `_ingest_concurrently` records source labels — email, calendar, weather,
-    news. The refusal ladder in `script_chain.generate_script` records
-    segment names — world, inbox, follow_ups. They do not overlap, which is
-    what makes this separable at all; if a future source is ever named after
-    a segment, this is the line that breaks.
+    news. The refusal ladder records segment names — world, inbox,
+    follow_ups. Tested against `REFUSABLE_SEGMENTS`, the ladder's actual
+    vocabulary, NOT the whole `Segment` enum: that shares `calendar` with
+    the sources, so a calendar fetch that failed on its own was filed as a
+    model refusal and never retried. Both sets live in `schemas.py`, beside
+    each other, and a test keeps them disjoint.
     """
-    return bool(degraded) and all(
-        name in {segment.value for segment in Segment} for name in degraded
-    )
+    refusable = {segment.value for segment in REFUSABLE_SEGMENTS}
+    return bool(degraded) and all(name in refusable for name in degraded)
 
 
 async def _generate(
@@ -922,6 +958,35 @@ def main(argv: list[str] | None = None) -> int:
         now = _user_now(settings.user_timezone)
         day = getattr(args, "briefing_day", None) or now.strftime("%Y-%m-%d")
         fallback = _free_briefing_id(day, now.strftime("%H%M"))
+    elif args.command == "check":
+        # A full id is checked as named. A bare DAY, or nothing at all, means
+        # "is this morning covered?", which is answered by the newest
+        # briefing for the day that was made for the morning (task 31).
+        day = args.briefing_id or today_id
+        if args.briefing_id and len(args.briefing_id) > len(today_id):
+            fallback = args.briefing_id
+        else:
+            from app.synthesis.storage import build_storage
+
+            try:
+                storage = build_storage()
+            except Exception as exc:
+                log.error("storage is not configured: %s", exc)
+                return 2
+            try:
+                now_hhmm = _user_now(settings.user_timezone).strftime("%H%M")
+                fallback = _morning_briefing_id(storage, day, now_hhmm) or day
+            except Exception:
+                log.exception("could not list briefings for %s", day)
+                print(
+                    "::error::Could not list briefings from storage. This says "
+                    "nothing about whether today's briefing exists — check the "
+                    "R2 credentials before regenerating anything."
+                )
+                return 4
+            # Already resolved; `_resolve_briefing_id` must not swap the
+            # bare day back in over it.
+            args.briefing_id = None
     elif args.briefing_id:
         # Named explicitly, so there is nothing to look up — and looking
         # anyway would turn a storage outage into a failure of a command

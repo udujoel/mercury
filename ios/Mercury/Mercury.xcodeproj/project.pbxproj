@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A1B2C3D40077444455556666 /* BriefingHealthTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40078444455556666 /* BriefingHealthTests.swift */; };
+		A1B2C3D40075444455556666 /* BriefingHealth.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40076444455556666 /* BriefingHealth.swift */; };
+		A1B2C3D40073444455556666 /* SourceStackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40074444455556666 /* SourceStackTests.swift */; };
+		A1B2C3D40071444455556666 /* SourceStack.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40072444455556666 /* SourceStack.swift */; };
 		A1B2C3D40005444455556666 /* waiting-bed.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40006444455556666 /* waiting-bed.mp3 */; };
 		A1B2C3D40007444455556666 /* WaitingRoom.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40008444455556666 /* WaitingRoom.swift */; };
 		4EFB053B2C9C4ACB9AFAB020 /* ScrubBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2096912312AB40E88333D8D7 /* ScrubBar.swift */; };
@@ -99,6 +103,10 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		A1B2C3D40078444455556666 /* BriefingHealthTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BriefingHealthTests.swift; sourceTree = "<group>"; };
+		A1B2C3D40076444455556666 /* BriefingHealth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BriefingHealth.swift; sourceTree = "<group>"; };
+		A1B2C3D40074444455556666 /* SourceStackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceStackTests.swift; sourceTree = "<group>"; };
+		A1B2C3D40072444455556666 /* SourceStack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceStack.swift; sourceTree = "<group>"; };
 		A1B2C3D40006444455556666 /* waiting-bed.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; name = "waiting-bed.mp3"; path = "Resources/waiting-bed.mp3"; sourceTree = "<group>"; };
 		A1B2C3D40008444455556666 /* WaitingRoom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaitingRoom.swift; sourceTree = "<group>"; };
 		1A8B6C748468445682D56984 /* APIClientCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClientCacheTests.swift; sourceTree = "<group>"; };
@@ -254,6 +262,7 @@
 				66E662F71C2A42E181965E12 /* StoryDetailView.swift */,
 				22AEAAD7312E47F6B0FC77BC /* StoryCards.swift */,
 				4FA51AF6B2404C2FAD4B4B69 /* DeskFeed.swift */,
+				A1B2C3D40072444455556666 /* SourceStack.swift */,
 			);
 			path = Digest;
 			sourceTree = "<group>";
@@ -275,6 +284,7 @@
 				A1B2C3D40008444455556666 /* WaitingRoom.swift */,
 				6734BCFCE5C04CDA9EB44FF1 /* MiniPlayerBar.swift */,
 				2E6D208506BB47919431D65F /* TodaysBriefingCard.swift */,
+				A1B2C3D40076444455556666 /* BriefingHealth.swift */,
 				DDC079C69CB342979682EDCA /* BriefingDigest.swift */,
 				AA11BB22CC33DD44EE55FC04 /* NewsletterSection.swift */,
 				AA11BB22CC33DD44EE55FC02 /* NewsletterDesk.swift */,
@@ -428,6 +438,8 @@
 				A1B2C3D40032444455556666 /* BriefingEndsTests.swift */,
 				A1B2C3D40042444455556666 /* NewsletterDeskTests.swift */,
 				A1B2C3D40052444455556666 /* CorroboratedStoriesTests.swift */,
+				A1B2C3D40078444455556666 /* BriefingHealthTests.swift */,
+				A1B2C3D40074444455556666 /* SourceStackTests.swift */,
 				A1B2C3D40062444455556666 /* CalendarStripTests.swift */,
 				A1B2C3D40034444455556666 /* StoredBriefingLookupTests.swift */,
 				D8FFEB83D34D47D28DDE42CD /* DigestDecodingTests.swift */,
@@ -586,8 +598,10 @@
 				396AAC77AABF462C85365D5C /* StoryDetailView.swift in Sources */,
 				21BEBB0EF0364119812F4D00 /* StoryCards.swift in Sources */,
 				38F00DA481CC44D4BABF92DD /* DeskFeed.swift in Sources */,
+				A1B2C3D40071444455556666 /* SourceStack.swift in Sources */,
 				1235DE202D3043F8B746BDED /* MiniPlayerBar.swift in Sources */,
 				F5E6D44FEA8F4D0E9A6DF08B /* TodaysBriefingCard.swift in Sources */,
+				A1B2C3D40075444455556666 /* BriefingHealth.swift in Sources */,
 				255DE9E1FA154B7B9B54468E /* BriefingDigest.swift in Sources */,
 				AA11BB22CC33DD44EE55FC03 /* NewsletterSection.swift in Sources */,
 				AA11BB22CC33DD44EE55FC01 /* NewsletterDesk.swift in Sources */,
@@ -626,6 +640,8 @@
 				A1B2C3D40031444455556666 /* BriefingEndsTests.swift in Sources */,
 				A1B2C3D40041444455556666 /* NewsletterDeskTests.swift in Sources */,
 				A1B2C3D40051444455556666 /* CorroboratedStoriesTests.swift in Sources */,
+				A1B2C3D40077444455556666 /* BriefingHealthTests.swift in Sources */,
+				A1B2C3D40073444455556666 /* SourceStackTests.swift in Sources */,
 				A1B2C3D40061444455556666 /* CalendarStripTests.swift in Sources */,
 				A1B2C3D40033444455556666 /* StoredBriefingLookupTests.swift in Sources */,
 				E75405F450744A038B656053 /* DigestDecodingTests.swift in Sources */,

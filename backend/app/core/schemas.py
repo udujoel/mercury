@@ -162,6 +162,26 @@ class Segment(str, Enum):
     SIGN_OFF = "sign_off"
 
 
+# The two vocabularies that share `BriefingManifest.degraded_sources`.
+#
+# Named here, together, because they were once kept apart only by a docstring
+# claiming they never overlap — and they did: `calendar` is both an ingestion
+# source and `Segment.CALENDAR`, so `cli._only_refusals` filed a calendar
+# fetch that failed on its own as a model refusal and never retried it.
+# `test_cli_generate` asserts the two sets stay disjoint; the ladder in
+# `script_chain.generate_script` refuses to record a segment outside its set.
+#
+# What ingestion records when a source fails (`generate._ingest_concurrently`).
+INGESTION_SOURCE_LABELS: tuple[str, ...] = ("email", "calendar", "weather", "news")
+
+# What the refusal ladder can give up when the model declines to write a
+# segment. Calendar, weather and the greeting are never given up — the ladder
+# raises instead — so they are not here.
+REFUSABLE_SEGMENTS: frozenset[Segment] = frozenset(
+    {Segment.WORLD, Segment.INBOX, Segment.FOLLOW_UPS}
+)
+
+
 SEGMENT_LABELS: dict[Segment, str] = {
     Segment.COLD_OPEN: "Good morning",
     Segment.WEATHER: "Weather",
@@ -273,6 +293,19 @@ class BriefingManifest(BaseModel):
     # is a million characters a month and a briefing is roughly six
     # thousand, so that is not a rounding error.
     degraded_attempts: int = 0
+
+    # True when this briefing is read by the FALLBACK voice rather than the
+    # one configured: ElevenLabs out of quota, refusing a datacenter IP, or
+    # unbuildable, with Google reading instead (ROADMAP task 22).
+    #
+    # Its own field, deliberately NOT an entry in `degraded_sources`.
+    # `cli.py` regenerates any briefing whose `degraded_sources` is non-empty,
+    # up to three times a day, because what lands there is usually a
+    # credential that comes back. A voice quota that is out for the month
+    # does not come back by 06:00, so recording it there would buy three
+    # full generations every morning to produce the same fallback voice. The
+    # phone reads both and says both; only one of them is worth a retry.
+    narrator_fallback: bool = False
 
 
 # ──────────────────────────────────────────────────────────────

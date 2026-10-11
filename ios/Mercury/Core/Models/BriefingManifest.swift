@@ -155,6 +155,21 @@ struct BriefingManifest: Codable, Equatable {
     let segments: [BriefingSegment]
     let turns: [Turn]
     let sources: [SourceRef]
+    /// What this briefing was made WITHOUT. Empty on a healthy morning.
+    ///
+    /// Source labels from ingestion (`email`, `calendar`) and segment
+    /// names the model refused to write (`world`, `inbox`, `follow_ups`).
+    /// The backend has written this on every manifest since the schema
+    /// existed and this type did not declare it, although the comment
+    /// below claimed the mirror was exact — so on 2026-09-01 to 09-03,
+    /// with the OAuth token expired, three briefings with no inbox and no
+    /// calendar were presented as ordinary mornings (ROADMAP task 33).
+    let degradedSources: [String]
+    /// Read by the backup voice because the configured one was unavailable
+    /// (ROADMAP task 22). Its own field on the backend, not an entry in
+    /// `degradedSources`, because the backend regenerates anything listed
+    /// there and a voice quota does not come back by morning.
+    let narratorFallback: Bool
 
     /// Turns that actually exist in the audio, computed ONCE.
     ///
@@ -180,6 +195,8 @@ struct BriefingManifest: Codable, Equatable {
         case durationMs = "duration_ms"
         case audioUrl = "audio_url"
         case segments, turns, sources
+        case degradedSources = "degraded_sources"
+        case narratorFallback = "narrator_fallback"
     }
 
     init(
@@ -189,7 +206,9 @@ struct BriefingManifest: Codable, Equatable {
         audioUrl: String,
         segments: [BriefingSegment],
         turns: [Turn],
-        sources: [SourceRef]
+        sources: [SourceRef],
+        degradedSources: [String] = [],
+        narratorFallback: Bool = false
     ) {
         self.briefingId = briefingId
         self.generatedAt = generatedAt
@@ -198,6 +217,8 @@ struct BriefingManifest: Codable, Equatable {
         self.segments = segments
         self.turns = turns
         self.sources = sources
+        self.degradedSources = degradedSources
+        self.narratorFallback = narratorFallback
         self.renderedTurns = turns.filter(\.isRendered)
     }
 
@@ -210,7 +231,13 @@ struct BriefingManifest: Codable, Equatable {
             audioUrl: try c.decode(String.self, forKey: .audioUrl),
             segments: try c.decode([BriefingSegment].self, forKey: .segments),
             turns: try c.decode([Turn].self, forKey: .turns),
-            sources: try c.decode([SourceRef].self, forKey: .sources)
+            sources: try c.decode([SourceRef].self, forKey: .sources),
+            // Lenient, like every field added after the first manifests
+            // shipped: absent means healthy, never a decode failure.
+            degradedSources: try c.decodeIfPresent(
+                [String].self, forKey: .degradedSources) ?? [],
+            narratorFallback: try c.decodeIfPresent(
+                Bool.self, forKey: .narratorFallback) ?? false
         )
     }
 

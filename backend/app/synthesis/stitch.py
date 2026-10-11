@@ -277,6 +277,11 @@ async def synthesize_briefing(
         sources=_remap_source_refs(sources, index_map),
         degraded_sources=list(degraded_sources or []),
         degraded_attempts=degraded_attempts,
+        # Read AFTER every turn is synthesised, so a provider that switched
+        # mid-run counts as well as one the probe switched up front. Only a
+        # provider that can fall back carries the attribute; a run configured
+        # for Google has nothing to report.
+        narrator_fallback=bool(getattr(tts, "failed_over", False)),
     )
 
     log.info("synthesized %s: %d turns, %.1fs, %.1fKB, format=%s",

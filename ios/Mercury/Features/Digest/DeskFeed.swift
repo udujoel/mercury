@@ -154,7 +154,7 @@ struct LeadCard: View {
                 DeskEyebrow(story: story, onDarkGround: true)
 
                 Text(story.headline)
-                    .font(MercuryType.greeting)
+                    .font(MercuryType.headline)
                     .foregroundStyle(.white)
                     .multilineTextAlignment(.leading)
                     .lineLimit(3)
@@ -230,21 +230,45 @@ struct LeadCard: View {
     }
 }
 
-/// "4 ARTICLES · 2H AGO", with the waveform when the hosts covered it.
+/// The outlets' marks, then "REUTERS +3 · 2H AGO", with the waveform when
+/// the hosts covered it.
+///
+/// It said "4 ARTICLES", which counted cluster MEMBERS — a newsletter that
+/// wrote about the story twice was two of the four — and a bare count asks
+/// to be trusted. Particle puts the publishers on every story in the feed,
+/// because who reported something is the first thing you judge it by; this
+/// does the same, with the most authoritative outlet named and drawn first.
 struct DeskEyebrow: View {
     let story: DigestStory
     var onDarkGround: Bool = false
 
+    /// Worked out once per view rather than on every read: `body` and
+    /// `line` both need it, and a desk renders a dozen of these.
+    private let outlets: [String]
+
+    init(story: DigestStory, onDarkGround: Bool = false) {
+        self.story = story
+        self.onDarkGround = onDarkGround
+        self.outlets = SourceAttribution.outlets(of: story)
+    }
+
     var body: some View {
-        HStack(spacing: MercurySpace.tight) {
-            if story.coveredInAudio {
-                Image(systemName: "waveform")
-                    .font(.caption2)
+        HStack(spacing: MercurySpace.snug) {
+            if !outlets.isEmpty {
+                SourceStack(outlets: outlets, onDarkGround: onDarkGround)
             }
-            Text(line)
-                .font(MercuryType.eyebrow)
-                .textCase(.uppercase)
-                .tracking(0.6)
+            HStack(spacing: MercurySpace.tight) {
+                if story.coveredInAudio {
+                    Image(systemName: "waveform")
+                        .font(.caption2)
+                        .accessibilityLabel("In your briefing")
+                }
+                Text(line)
+                    .font(MercuryType.eyebrow)
+                    .textCase(.uppercase)
+                    .tracking(0.6)
+                    .lineLimit(1)
+            }
             Spacer(minLength: 0)
         }
         .foregroundStyle(
@@ -254,22 +278,10 @@ struct DeskEyebrow: View {
     }
 
     private var line: String {
-        var parts: [String] = []
-        switch story.sources.count {
-        case 0: break
-        case 1: parts.append(story.sources[0].sourceName)
-        default: parts.append("\(story.sources.count) articles")
-        }
-        if let age { parts.append(age) }
-        return parts.joined(separator: " · ")
-    }
-
-    /// "2h ago". Relative, because on a morning briefing "how fresh" is the
-    /// only thing a timestamp is being asked.
-    private var age: String? {
-        guard let published = story.sources.compactMap(\.publishedAt).max()
-        else { return nil }
-        return published.formatted(.relative(presentation: .numeric))
+        [SourceAttribution.compact(outlets), StoryDetailView.age(of: story)]
+            .compactMap { $0 }
+            .filter { !$0.isEmpty }
+            .joined(separator: " · ")
     }
 }
 

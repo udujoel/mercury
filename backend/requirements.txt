@@ -41,7 +41,11 @@ pydub==0.25.1
 apscheduler==3.11.0
 
 # Push notifications (APNs) — ES256 JWT provider tokens, HTTP/2 transport
-pyjwt==2.13.0
+# >=2.15.0: 2.13.0 carried fourteen advisories (PYSEC-2026-4140..4152 and
+# GHSA-x33g-cr3x-6449), which pip-audit reported on 2026-10-07 and which
+# turned every backend run red regardless of the diff. Two are fixed only in
+# 2.15.0. Only `app/notifications/apns.py` imports it.
+pyjwt==2.15.0
 cryptography==50.0.0
 httpx[http2]==0.28.1
 
