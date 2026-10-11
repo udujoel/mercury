@@ -1070,7 +1070,7 @@ Particle-shaped story page with coverage rows, the calendar strip that
 browses past days, and Show Notes. Everything below is what didn't work.
 Most of it is backend behaviour visible only in production logs.
 
-- [x] 47. **The quality gates have never judged a claim in production.** DONE (#74, 1f0fa60). Still to check: the first scheduled run after it should log judged claims, and nobody here knows the TypeSafe account's quota or price — the owner should, before more runs depend on it.
+- [x] 47. **The quality gates have never judged a claim in production.** DONE (#74, 1f0fa60). Still to check: the first scheduled run after it should log judged claims, and nobody here knows the TypeSafe account's quota or price — the owner should, before more runs depend on it. What was found:
       The judgment budget (`judgment_briefing_budget_seconds`, 20s) is a
       wall-clock window that starts at the FIRST judgment call, and
       triage and cluster verification make that call before the script
@@ -1080,7 +1080,7 @@ Most of it is backend behaviour visible only in production logs.
       time, and the probe judged 0 of its 20 pairs. So rule 3's semantic
       grounding gate has only ever run as its keyword fallback, and task 42
       has no data. Fix: count the time judgment calls actually spend.
-- [x] 48. **The cold open states the wrong weekday.** DONE (#75, 02d0335): `quality.correct_spoken_date` fixes the weekday word in code. The root cause, that the passes after the outline never see the date, is task 57. The 2026-10-11 06:41
+- [x] 48. **The cold open states the wrong weekday.** DONE (#75, 02d0335): `quality.correct_spoken_date` fixes the weekday word in code. The root cause, that the passes after the outline never see the date, is task 57. The 2026-10-11 06:41 What was found:
       briefing opens "It's Monday, October 11th, 2026"; it was a Sunday.
       Only the outline pass is told the date (as "Sunday, 11 October
       2026"). The draft and both critique passes rewrite the cold open
@@ -1089,25 +1089,25 @@ Most of it is backend behaviour visible only in production logs.
       bug (see `script_chain.py`'s comment on the August one). Fix: check
       the weekday in code against the briefing's date, and give every
       pass the date.
-- [x] 49. **Browsing a past day stops the briefing you're listening to.** DONE (#76, checked on the simulator).
+- [x] 49. **Browsing a past day stops the briefing you're listening to.** DONE (#76, checked on the simulator). What was found:
       Tapping a day in the calendar strip replaces the loaded manifest, so
       today's playback is dropped and the mini player shows the other day
       at 0:00. Looking at Saturday's desk shouldn't lose your place in
       Sunday's briefing.
-- [x] 50. **Show Notes lists one source once per turn that cites it.** DONE (#76, checked on the simulator).
+- [x] 50. **Show Notes lists one source once per turn that cites it.** DONE (#76, checked on the simulator). What was found:
       "Flight to Casablanca (AT 556)" appeared four times in a row, because
       `ShowNotesLogic.grouped` doesn't de-duplicate. The section header is
       `sourceType.capitalized`, so RSS items sit under "Rss".
-- [x] 51. **Onboarding shows literal backticks.** DONE (#76, checked on the simulator). "Mercury asks Google for
+- [x] 51. **Onboarding shows literal backticks.** DONE (#76, checked on the simulator). "Mercury asks Google for What was found:
       \`gmail.readonly\`". `DataPromiseView.promise` takes a `String`, so
       `Text` never parses the markdown.
-- [x] 52. **Outlet marks hide their letters.** DONE (#76, checked on the simulator). `SourceStack`'s overlapping
+- [x] 52. **Outlet marks hide their letters.** DONE (#76, checked on the simulator). `SourceStack`'s overlapping What was found:
       monograms cover each other's text ("AJ" reads as "\J" under "F"),
       and four-letter marks like "CNBC" are too small to read.
-- [x] 53. **The story page's floating back button covers scrolled text.** DONE (#76, checked on the simulator).
+- [x] 53. **The story page's floating back button covers scrolled text.** DONE (#76, checked on the simulator). What was found:
       With no bar background behind it, the first letters of the points
       card sit under the button once you scroll.
-- [x] 54. **Swift 6 readiness.** DONE (#76): the two `AppState` isolation errors, `ShowNotesView`'s colours, the captured-var mutations in the observation tests, and the deprecated HFP option name. Two main-actor isolation violations
+- [x] 54. **Swift 6 readiness.** DONE (#76): the two `AppState` isolation errors, `ShowNotesView`'s colours, the captured-var mutations in the observation tests, and the deprecated HFP option name. Two main-actor isolation violations What was found:
       (`AppState.swift:799, 924`, calling `briefingId(for:)`) are errors
       in the Swift 6 language mode. `ShowNotesView` still uses the colour
       tokens ADR-012 deprecated, and three tests mutate a captured var
@@ -1134,7 +1134,8 @@ Most of it is backend behaviour visible only in production logs.
       and on the simulator. Injecting the coordinator would let a test pin
       "browsing never calls `downloadAudio` while another briefing plays".
 - [ ] 59. **A branch with unmerged work: `feat/transactional-mail-off-the-desk`.**
-      A WIP commit (`cba74fc`) with no PR, kept when the merged branches were
+      A LOCAL branch in the main checkout, never pushed (so it is not on
+      GitHub): a WIP commit (`cba74fc`) with no PR, kept when the merged branches were
       pruned on 2026-10-11. Task 27's desk half shipped in #55, probably
       making it obsolete, but that is the owner's call to confirm before the
       branch is deleted.
