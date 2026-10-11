@@ -14,12 +14,27 @@ name: worker
 # instance of it: complete, correct, and reached by nothing.
 on:
   push:
+    # `main` only. On any other branch the `pull_request` trigger below
+    # already runs this suite, and the duplicate run was half of all CI in
+    # October 2026, on the same minutes the daily briefing runs on. Those
+    # minutes ran out on 2026-09-22 and no briefing ran for eight days.
+    # See backend/tests/test_ci_triggers.py.
+    branches: [main]
     # Both triggers, for the reason backend.yml documents: a filter added to
     # `pull_request` alone lets a direct push to the default branch through
     # without the suite ever running.
     paths: ["worker/**", ".github/workflows/worker.yml"]
   pull_request:
     paths: ["worker/**", ".github/workflows/worker.yml"]
+
+# A newer push to the same PR supersedes the run in progress. Runs on `main`
+# are keyed by commit, not branch: GitHub keeps one running and one PENDING
+# run per group and cancels an older pending one when a newer one queues,
+# even with cancel-in-progress false, so a shared `main` group would skip
+# testing a commit whenever three merges land inside one run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
