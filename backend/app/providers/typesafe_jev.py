@@ -23,6 +23,11 @@ from app.core.providers import Claim, EmailJudgment
 
 log = logging.getLogger(__name__)
 
+# The clock the judgment budget is measured on. A seam rather than a direct
+# `time.monotonic` call so a test can move it without moving asyncio's own
+# clock, which reads `time.monotonic` for every timer.
+_clock = time.monotonic
+
 # Four criteria, so the returned score runs 0.0-3.0 as a position on this
 # index. Order matters: `app.pipeline.triage` thresholds against it.
 # Claims per request. 100 was measured fine; this bounds blast radius,
@@ -121,6 +126,11 @@ class JevJudgmentProvider:
         # keyword fallback. ROADMAP task 47.
         self._briefing_budget = settings.judgment_briefing_budget_seconds
         self._spent = 0.0
+        # Calls in flight, and when the current run of overlapping calls
+        # began. Two calls judging at the same moment cost the wall time
+        # they overlap, not the sum of both.
+        self._in_flight = 0
+        self._busy_since = 0.0
 
     def _remaining(self) -> float:
         """Seconds of judgment budget left for this briefing.
@@ -133,12 +143,21 @@ class JevJudgmentProvider:
 
     @contextlib.asynccontextmanager
     async def _spending(self):
-        """Charge the time inside the block to this briefing's budget."""
-        started = time.monotonic()
+        """Charge the time inside the block to this briefing's budget.
+
+        Wall time while ANY call is in flight, so overlapping calls are
+        charged once. Every call is awaited in turn today; this keeps the
+        budget honest for the first change that gathers two of them.
+        """
+        if self._in_flight == 0:
+            self._busy_since = _clock()
+        self._in_flight += 1
         try:
             yield
         finally:
-            self._spent += time.monotonic() - started
+            self._in_flight -= 1
+            if self._in_flight == 0:
+                self._spent += _clock() - self._busy_since
 
     def _deadline(self) -> float:
         """The effective ceiling for ONE call: whichever bound bites first."""
