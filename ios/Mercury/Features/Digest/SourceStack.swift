@@ -144,6 +144,9 @@ struct SourceStack: View {
                              ? AnyShapeStyle(MercuryColor.ink.light.color)
                              : AnyShapeStyle(MercuryColor.inkMuted.color))
             .padding([.top, .bottom, .trailing], diameter * 0.12)
+            // The whole overlap. Half of it was tried (review of #76, to keep
+            // a tucked "CNBC" larger) and on the simulator a tucked "BBC"
+            // read "3BC" under "AJ". Small letters beat hidden ones.
             .padding(.leading, diameter * 0.12 + (tucked ? overlap : 0))
             .frame(width: diameter, height: diameter)
             .background {

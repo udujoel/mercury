@@ -310,7 +310,12 @@ struct HomeView: View {
             .navigationDestination(isPresented: $showArchive) {
                 ArchiveView(
                     ids: appState.archive,
-                    currentId: appState.manifest?.briefingId,
+                    // What is IN THE ENGINE, not what is on screen: while a
+                    // day is browsed they differ, and marking the browsed day
+                    // "Loaded" made its row inert, so it could not be chosen
+                    // to play (found on the simulator, review of #76).
+                    currentId: appState.playback.loadedBriefingId
+                        ?? appState.manifest?.briefingId,
                     failed: appState.archiveFailed,
                     loading: appState.archiveLoading,
                     busy: appState.loadState == .loading,

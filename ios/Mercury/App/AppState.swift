@@ -319,8 +319,22 @@ final class AppState {
     /// one it moved the playhead and left the audio stopped.
     @MainActor
     func play(fromMs ms: Int) async {
-        if !isPlaybackLoaded { await playBriefing() }
-        guard isPlaybackLoaded else { return }
+        // The offset belongs to the briefing ON SCREEN. While another day is
+        // being browsed the engine holds a different one, and seeking it to
+        // this offset would play the wrong briefing from an arbitrary point
+        // (review of #76): the same three cases as the Home card.
+        switch Self.cardTapAction(isLoaded: isPlaybackLoaded,
+                                  isCurrent: isPlaybackCurrent) {
+        case .fetch:
+            await playBriefing()
+        case .openShown:
+            if let shown = manifest {
+                await openBriefing(id: shown.briefingId, andPlay: true)
+            }
+        case .toggle:
+            break
+        }
+        guard isPlaybackLoaded, isPlaybackCurrent else { return }
         playback.seek(toMs: ms)
         // `seek` past the real end of the audio calls `finish()`, and `play()`
         // reads `hasFinished` as a request to replay from zero — so a chapter
