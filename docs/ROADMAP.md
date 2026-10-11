@@ -594,7 +594,7 @@ something in this project:
 
 ### Tasks
 
-- [ ] 16. **Inbox triage that answers a question.** Replace "top emails plus
+- [x] 16. **Inbox triage that answers a question.** Replace "top emails plus
       a count" with a structured read: what needs a reply, what is waiting on
       someone else, what is informational, what is noise. The digest carries
       the buckets; the audio names the first two and the count of the rest.
@@ -631,7 +631,7 @@ something in this project:
       this is a prompt and schema change rather than a rendering job. Only
       40 of 209 stories carry topics at all (`DIGEST_MAX_ENRICHED = 40`).
       See docs/LOG.md.
-- [ ] 18. **Research each topic independently, with Gemini.** The point of
+- [x] 18. **Research each topic independently, with Gemini.** DONE (#48). The point of
       the feature, in the user's words: "make sure the story is rich and
       informed, not just what's in the email." A newsletter is a POINTER to
       a subject someone thought was worth your time; Mercury currently
@@ -1016,6 +1016,79 @@ DROP, with reasons, from the review:
       rule asked for. See docs/LOG.md 2026-10-07. NOT DONE and the next
       Particle step worth taking: summary styles (ELI5, the 5Ws), which is
       Phase 4 week 17 and needs a backend prompt, not a view.
+
+## Next — Backlog from the 2026-10-11 review (current)
+
+Written 2026-10-11 from a pass over this file, `docs/LOG.md`, the open PRs and
+the code. A cloud ultrareview of the open stack (#68–#71, 38 files) found
+nothing. The code has no TODO or FIXME markers. Everything below is the gap
+between "written" and "true in production", plus the docs that had stopped
+being true. Ordered by deadline, then by what is broken, then by what it buys.
+
+**Goal, through 25 October:** everything already written is on `main` and
+live before the clock change, and the docs describe the system as it is.
+Then the Phase 2 dedup gate gets judged on production data rather than a
+fixture written to contain duplicates.
+
+**Owner decisions.** Two PR threads ended in a question only the owner can
+answer. Neither blocks a merge:
+
+- **Task 28: two briefings a day, or four?** It's a cost and cadence call.
+  The answer also settles #68's thread about the `00:12` cron (moving it
+  makes the morning floor unnecessary) and unblocks task 31's watchdog half.
+- **Should a replay rank against its snapshot's time?** #69 made it
+  possible (`generate_briefing(now=...)`) but left the default on the wall
+  clock. RSS ingestion anchors fixtures on the snapshot while ranking ages
+  them against today, so every replayed story has recency ~0 and the
+  world-segment order drifts with the day of the replay.
+
+### Tasks
+
+- [ ] 38. **Land the rest of the stack.** #68 merged as c3df574. Merging it
+      with `gh pr merge --delete-branch` deleted `cl-/kind-clarke-7grdd4`,
+      and GitHub CLOSED #69, which was based on it, instead of retargeting
+      it. To recover: restore that branch at a51f942, reopen #69, retarget
+      it to `main`, and merge `main` into it with `-s ours`. That is
+      correct here because `main`'s tree is byte-identical to a51f942, which
+      is an ancestor of #69's head. Then land #70 and #71 in order. **Never
+      pass `--delete-branch` when another open PR is based on the branch.**
+- [ ] 39. **Deploy the Worker before the 25 October clock change.** Owner
+      action. #68's morning floor (task 31) lives in `worker/src/index.js`
+      and does nothing until `wrangler deploy` runs. The DST change is the
+      event the floor exists for: it moves GitHub's late `00:12` run back
+      into the morning checkpoints' window.
+- [ ] 40. **Watch the watchdog's first scheduled run after #71.** Its
+      morning window now computes the local hour through `app.core.tz` in a
+      one-line `python -c` instead of `TZ="$USER_TIMEZONE" date`. That line
+      was checked by hand with a good and a misspelt zone, never in Actions.
+- [ ] 41. **Look at #68 on a simulator.** CI compiles and tests the Swift,
+      but nobody has seen the story page, the outlet stack or the "made
+      without your inbox" notice on a screen. The quality bar here is a
+      real run, not a green job.
+- [ ] 42. **Judge the 0.78 threshold on production data.** #65 logs the
+      merges the threshold missed without making any. Read those probe lines
+      from the scheduled runs since it shipped, then keep the threshold,
+      move it, or lean on `verify_stories`. Until then Phase 2's dedup gate
+      is "met offline, not in production".
+- [ ] 43. **Format the backend once, then keep it formatted.** CLAUDE.md
+      says "format on save", but 88 of 120 backend files fail
+      `ruff format --check`. Do one mechanical PR after the stack lands, so
+      it conflicts with nothing open, and add `ruff format --check` to
+      `backend.yml` so the debt can't regrow.
+- [ ] 44. **Python 3.13 readiness.** Low priority. `pydub` imports
+      `audioop`, which 3.13 removed, and the suite warns about it on every
+      run. Use `audioop-lts` or drop pydub's audioop path. This isn't urgent
+      while CI pins 3.12, but it is the only thing holding the pin.
+
+Still open from earlier sections, in the order they now rank: **21** (word
+timings that survive the cache, plus `BriefingManifest.schema_version`),
+**34** (continuity between briefings), and **28 / 31**, which wait on the
+owner decision above.
+
+Corrected in the same change that wrote this section: tasks 16 and 18 were
+done (#51 and #48; "6 researched" appears in a production run) but still
+unchecked, and two of the LOG's standing facts described a system that no
+longer exists.
 
 ## Phase 4 — Depth (weeks 16 to 19)
 
