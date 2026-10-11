@@ -85,6 +85,26 @@ def briefing_day(value: str) -> str:
     return value[:DAY_PREFIX_LENGTH]
 
 
+# The local time before which a briefing was made OVERNIGHT, as `HHMM`.
+#
+# Must agree with `MORNING_FLOOR_HHMM` in worker/src/index.js. Ids carry the
+# user's local time, and a run stamped before this was made for the night:
+# GitHub's 00:12 cron files its briefing under the NEW day, and counting it
+# as the morning's let every checkpoint and both watchdogs stand down over a
+# briefing written before the inbox had a morning in it (ROADMAP task 31).
+MORNING_FLOOR_HHMM = "0300"
+
+
+def covers_morning(briefing_id: str) -> bool:
+    """Was this briefing made for the morning, rather than overnight?
+
+    A legacy day-only id has no time to judge by, and counts: those date
+    from when the one run a day was the morning run.
+    """
+    suffix = briefing_id[DAY_PREFIX_LENGTH + 1:]
+    return not suffix or suffix >= MORNING_FLOOR_HHMM
+
+
 def is_briefing_id(value: str) -> bool:
     r"""Is this a real day, optionally at a real time of day?
 

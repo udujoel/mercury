@@ -54,6 +54,7 @@ actor BriefingStore {
             existing.turns = turns
             existing.sources = sources
             existing.degradedSources = manifest.degradedSources
+            existing.narratorFallback = manifest.narratorFallback
 
             // Conditional, not unconditional: `AppState.playBriefing` saves
             // the SAME manifest twice per playback — once when it arrives,
@@ -89,6 +90,7 @@ actor BriefingStore {
                 remoteAudioURL: manifest.audioURL ?? URL(string: "about:blank")!,
                 localAudioPath: localAudioPath,
                 degradedSources: manifest.degradedSources,
+                narratorFallback: manifest.narratorFallback,
                 segments: segments,
                 turns: turns,
                 sources: sources
@@ -207,7 +209,8 @@ actor BriefingStore {
                                  url: $0.url?.absoluteString, sourceName: $0.sourceName,
                                  sourceType: $0.sourceType, clusterSize: $0.clusterSize,
                                  itemId: $0.itemId) },
-            degradedSources: entity.degradedSources ?? []
+            degradedSources: entity.degradedSources ?? [],
+            narratorFallback: entity.narratorFallback ?? false
         )
         return Stored(manifest: manifest, localAudioPath: entity.localAudioPath)
     }

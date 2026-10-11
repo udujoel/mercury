@@ -25,6 +25,9 @@ final class BriefingEntity {
     /// migration. Without it, the one notice that says a morning is not
     /// what you configured would vanish on every relaunch and offline open.
     var degradedSources: [String]?
+    /// `BriefingManifest.narratorFallback`. Optional for the same
+    /// lightweight-migration reason as `degradedSources`; nil reads as false.
+    var narratorFallback: Bool?
 
     @Relationship(deleteRule: .cascade) var segments: [SegmentEntity]
     @Relationship(deleteRule: .cascade) var turns: [TurnEntity]
@@ -39,6 +42,7 @@ final class BriefingEntity {
         lastPositionMs: Int = 0,
         completed: Bool = false,
         degradedSources: [String]? = nil,
+        narratorFallback: Bool? = nil,
         segments: [SegmentEntity] = [],
         turns: [TurnEntity] = [],
         sources: [SourceRefEntity] = []
@@ -51,6 +55,7 @@ final class BriefingEntity {
         self.lastPositionMs = lastPositionMs
         self.completed = completed
         self.degradedSources = degradedSources
+        self.narratorFallback = narratorFallback
         self.segments = segments
         self.turns = turns
         self.sources = sources
