@@ -1107,7 +1107,7 @@ Most of it is backend behaviour visible only in production logs.
 - [x] 53. **The story page's floating back button covers scrolled text.** DONE (#76, checked on the simulator).
       With no bar background behind it, the first letters of the points
       card sit under the button once you scroll.
-- [~] 54. **Swift 6 readiness.** HALF DONE (#76): the two `AppState` isolation errors and `ShowNotesView`'s colours are fixed. The test-only warnings remain. Two main-actor isolation violations
+- [x] 54. **Swift 6 readiness.** DONE (#76): the two `AppState` isolation errors, `ShowNotesView`'s colours, the captured-var mutations in the observation tests, and the deprecated HFP option name. Two main-actor isolation violations
       (`AppState.swift:799, 924`, calling `briefingId(for:)`) are errors
       in the Swift 6 language mode. `ShowNotesView` still uses the colour
       tokens ADR-012 deprecated, and three tests mutate a captured var
