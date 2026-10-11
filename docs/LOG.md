@@ -1744,6 +1744,32 @@ and is left alone without a log. Names come from English tables, not
 `strftime`, whose `%A` follows the host's locale. The prompts are untouched,
 so the regression set doesn't need regenerating for this change.
 
+## 2026-10-11 - what the simulator found in #68, and what fixing it uncovered
+
+#68's iOS work was compiled and unit-tested in CI but never looked at. On an
+iPhone 18 Pro simulator (iOS 27) against production data, its features held
+up: the backup-voice notice, the desk with outlet marks, the story page,
+coverage rows, and the calendar strip. Five smaller things didn't (ROADMAP
+tasks 49-53). The one worth recording is 49, because of what fixing it
+surfaced.
+
+**Browsing a day stopped the briefing you were listening to.**
+`openBriefing(andPlay: false)` still put the browsed day's audio in the
+engine; `andPlay` only skipped the final `play()`. Now a day being LOOKED AT
+while another plays leaves the engine and its persistence alone, the mini
+player names what is actually playing, and opening the player from it
+returns the screen to that briefing.
+
+**The fix made a new state reachable, and the next tap found it.** Before,
+"the briefing on screen" and "the briefing in the engine" were always the
+same while anything played, because browsing replaced one with the other.
+Once they could differ, Saturday's card drew a PAUSE icon while Sunday
+played, since it read `playback.isPlaying` alone, and tapping it would have
+paused Sunday. No unit test of the first fix could see that; the second
+look on the simulator did. The card now asks whether the briefing on screen
+is the one playing, and a tap on a browsed day plays that day. This is
+CLAUDE.md's "review for what is newly reachable" in a single afternoon.
+
 ## Standing facts worth not rediscovering
 
 - **The Worker has no CI deploy.** Merging is not shipping. A route on `main`

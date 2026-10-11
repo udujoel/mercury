@@ -535,8 +535,49 @@ final class AudioSessionCategoryTests: XCTestCase {
     /// likely to play it. `.playback` already routes to A2DP by default.
     func testHandsFreeProfileIsNotRequestedForPlayback() {
         XCTAssertFalse(
-            PlaybackCoordinator.playbackCategoryOptions.contains(.allowBluetooth),
+            // By raw value: `.allowBluetooth` is deprecated, and the name that
+            // replaces it (`.allowBluetoothHFP`) exists only in the iOS 26 SDK,
+            // which CI's Xcode 16.4 does not have.
+            PlaybackCoordinator.playbackCategoryOptions.contains(
+                AVAudioSession.CategoryOptions(rawValue: 0x4)),
             "HFP is for phone calls; a briefing wants A2DP, which .playback gives by default"
         )
+    }
+}
+
+/// A load that fails must not leave the coordinator naming a briefing it
+/// never loaded (cubic, review of #76).
+///
+/// `load` assigned the new manifest BEFORE opening the file, so a file that
+/// would not open left the NEW manifest paired with the PREVIOUS file:
+/// `loadedBriefingId` and the mini player named a briefing that was not in
+/// the engine, and `isPlaybackCurrent` vouched for it.
+final class FailedLoadTests: XCTestCase {
+
+    private func silentAudio() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString + ".caf")
+        let format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1)!
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4_410)!
+        buffer.frameLength = 4_410
+        try file.write(from: buffer)
+        return url
+    }
+
+    @MainActor
+    func testAFailedLoadKeepsNamingWhatIsActuallyLoaded() throws {
+        let coordinator = PlaybackCoordinator()
+        let saturday = ManifestFixtures.made(at: "2026-10-10T21:35:00Z", id: "2026-10-10-2235")
+        let sunday = ManifestFixtures.made(at: "2026-10-11T05:41:00Z", id: "2026-10-11-0641")
+        try coordinator.load(manifest: saturday, audioURL: try silentAudio())
+
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("no-such-briefing.m4a")
+        XCTAssertThrowsError(try coordinator.load(manifest: sunday, audioURL: missing))
+
+        XCTAssertEqual(coordinator.loadedBriefingId, "2026-10-10-2235",
+                       "the engine still holds Saturday, so that is what it must say")
+        XCTAssertEqual(coordinator.loadedManifest?.briefingId, "2026-10-10-2235")
     }
 }

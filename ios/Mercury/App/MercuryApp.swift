@@ -205,13 +205,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     /// "2026-08-21"`). That makes it derivable from the clock with no
     /// server round trip, which is exactly what the background task needs
     /// since it has no channel to be told the id some other way.
-    static func briefingId(for date: Date) -> String {
+    nonisolated static func briefingId(for date: Date) -> String {
         briefingId(for: date, timeZone: BriefingClock.serverTimeZone)
     }
 
     /// Exposed for tests, and to make the timezone dependency explicit
     /// rather than an ambient `.current`.
-    static func briefingId(for date: Date, timeZone: TimeZone) -> String {
+    nonisolated static func briefingId(for date: Date, timeZone: TimeZone) -> String {
         let formatter = DateFormatter()
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.locale = Locale(identifier: "en_US_POSIX")

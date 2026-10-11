@@ -38,6 +38,49 @@ final class ShowNotesTests: XCTestCase {
         XCTAssertEqual(ShowNotesLogic.grouped(sources).first?.label, "News")
     }
 
+    // MARK: - Simulator findings, 2026-10-11 (ROADMAP task 50)
+
+    /// The manifest carries one ref per turn that cites a source, so an
+    /// event the hosts mention four times arrived as four identical rows
+    /// ("Flight to Casablanca (AT 556)" x4 in the 2026-10-10 briefing).
+    func testASourceCitedByManyTurnsIsListedOnceAtItsFirstMention() {
+        let flight = { (turn: Int) in
+            SourceRef(turnIndex: turn, title: "Flight to Casablanca (AT 556)",
+                      url: nil, sourceName: "Calendar", sourceType: "calendar",
+                      clusterSize: 1)
+        }
+        let groups = ShowNotesLogic.grouped([flight(3), flight(4), flight(9), flight(12)])
+
+        XCTAssertEqual(groups.count, 1)
+        XCTAssertEqual(groups[0].sources.count, 1)
+        // The FIRST mention, so a tap seeks to where it is first discussed.
+        XCTAssertEqual(groups[0].sources[0].turnIndex, 3)
+    }
+
+    func testDifferentSourcesWithTheSameTitleStaySeparate() {
+        let sources = [
+            SourceRef(turnIndex: 0, title: "Weekly digest", url: nil,
+                      sourceName: "Stratechery", sourceType: "email", clusterSize: 1),
+            SourceRef(turnIndex: 1, title: "Weekly digest", url: nil,
+                      sourceName: "Platformer", sourceType: "email", clusterSize: 1),
+        ]
+        XCTAssertEqual(ShowNotesLogic.grouped(sources)[0].sources.count, 2)
+    }
+
+    /// `sourceType.capitalized` turned "rss" into a header reading "Rss".
+    func testSectionLabelsAreWordsNotEnumNames() {
+        let label = { (type: String) in
+            ShowNotesLogic.grouped([
+                SourceRef(turnIndex: 0, title: "A", url: nil, sourceName: "X",
+                          sourceType: type, clusterSize: 1),
+            ]).first?.label
+        }
+        XCTAssertEqual(label("rss"), "News")
+        XCTAssertEqual(label("email"), "Email")
+        XCTAssertEqual(label("calendar"), "Calendar")
+        XCTAssertEqual(label("reddit"), "Reddit")
+    }
+
     func testEmptySourceListProducesNoGroups() {
         XCTAssertTrue(ShowNotesLogic.grouped([]).isEmpty)
     }

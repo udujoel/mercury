@@ -38,7 +38,7 @@ struct ShowNotesView: View {
         .listStyle(.insetGrouped)
         .navigationTitle("Show notes")
         .scrollContentBackground(.hidden)
-        .background(MercuryColor.canvas.ignoresSafeArea())
+        .background(MercuryColor.surface.color.ignoresSafeArea())
     }
 }
 
@@ -51,7 +51,7 @@ private struct ShowNotesRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(source.title)
                     .font(MercuryType.chapterTab)
-                    .foregroundStyle(MercuryColor.textPrimary)
+                    .foregroundStyle(MercuryColor.ink.color)
                 HStack(spacing: 6) {
                     Text(source.sourceName)
                     if source.clusterSize > 1 {
@@ -59,7 +59,7 @@ private struct ShowNotesRow: View {
                     }
                 }
                 .font(MercuryType.caption)
-                .foregroundStyle(MercuryColor.textSecondary)
+                .foregroundStyle(MercuryColor.inkMuted.color)
             }
 
             Spacer()
@@ -67,7 +67,7 @@ private struct ShowNotesRow: View {
             if let urlString = source.url, let url = URL(string: urlString) {
                 Link(destination: url) {
                     Image(systemName: "arrow.up.right.square")
-                        .foregroundStyle(MercuryColor.textSecondary)
+                        .foregroundStyle(MercuryColor.inkMuted.color)
                 }
                 .buttonStyle(.plain)
             }
@@ -93,11 +93,21 @@ enum ShowNotesLogic {
     /// group (NOT alphabetical, and NOT `Dictionary`'s undefined iteration
     /// order) so the section list matches the order stories were actually
     /// discussed in the briefing.
+    ///
+    /// One row per SOURCE, not per citation. The manifest carries one ref
+    /// for every turn that cites a source, so an event the hosts mentioned
+    /// four times arrived as four identical rows (ROADMAP task 50). The
+    /// first mention is kept, so tapping a row seeks to where it is first
+    /// discussed.
     static func grouped(_ sources: [SourceRef]) -> [Group] {
         var order: [String] = []
         var buckets: [String: [SourceRef]] = [:]
+        var seen: Set<String> = []
 
+        // Input order is turn order (the backend builds refs turn by turn),
+        // so the first occurrence IS the first mention.
         for source in sources {
+            guard seen.insert(identity(of: source)).inserted else { continue }
             if buckets[source.sourceType] == nil {
                 buckets[source.sourceType] = []
                 order.append(source.sourceType)
@@ -106,7 +116,25 @@ enum ShowNotesLogic {
         }
 
         return order.map { type in
-            Group(id: type, label: type.capitalized, sources: buckets[type] ?? [])
+            Group(id: type, label: label(for: type), sources: buckets[type] ?? [])
+        }
+    }
+
+    /// What makes two refs the same source. The item id when the manifest
+    /// carries one; otherwise everything the row shows, so two outlets that
+    /// happen to share a headline stay two rows.
+    private static func identity(of source: SourceRef) -> String {
+        if let itemId = source.itemId { return "id:\(itemId)" }
+        return [source.sourceType, source.sourceName, source.title, source.url ?? ""]
+            .joined(separator: "\u{1F}")
+    }
+
+    /// A section header in words. `sourceType.capitalized` put RSS items
+    /// under "Rss".
+    static func label(for sourceType: String) -> String {
+        switch sourceType {
+        case "rss", "news": return "News"
+        default: return sourceType.capitalized
         }
     }
 
