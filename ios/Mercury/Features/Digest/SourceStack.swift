@@ -107,10 +107,17 @@ struct SourceStack: View {
     /// of this view lives in another file.
     @ScaledMetric(relativeTo: .caption) var diameter: CGFloat = 20
 
+    /// How far each mark tucks under the one before it.
+    ///
+    /// Earlier marks are drawn on top, so this much of every later mark's
+    /// LEFT edge is hidden. At 0.3 the hidden part reached the letters: on
+    /// the simulator "AJ" read as "\\J" beside an "F" (ROADMAP task 52).
+    private var overlap: CGFloat { diameter * 0.22 }
+
     var body: some View {
-        HStack(spacing: -diameter * 0.3) {
+        HStack(spacing: -overlap) {
             ForEach(Array(outlets.prefix(visible).enumerated()), id: \.offset) { index, name in
-                mark(name)
+                mark(name, tucked: index > 0)
                     // Earlier marks sit on top, so the most authoritative
                     // outlet is the one drawn whole.
                     .zIndex(Double(visible - index))
@@ -121,7 +128,9 @@ struct SourceStack: View {
         .accessibilityHidden(true)
     }
 
-    private func mark(_ name: String) -> some View {
+    /// `tucked`: this mark sits partly under the one before it, so its
+    /// letters are centred in the part that stays visible.
+    private func mark(_ name: String, tucked: Bool = false) -> some View {
         Text(SourceAttribution.monogram(for: name))
             .font(.system(size: diameter * 0.4, weight: .bold, design: .rounded))
             // Four bold letters in a 20pt mark need about 0.68; the floor
@@ -134,7 +143,8 @@ struct SourceStack: View {
                              // dark-mode ink (near-white) would vanish on it.
                              ? AnyShapeStyle(MercuryColor.ink.light.color)
                              : AnyShapeStyle(MercuryColor.inkMuted.color))
-            .padding(diameter * 0.12)
+            .padding([.top, .bottom, .trailing], diameter * 0.12)
+            .padding(.leading, diameter * 0.12 + (tucked ? overlap : 0))
             .frame(width: diameter, height: diameter)
             .background {
                 Circle().fill(onDarkGround

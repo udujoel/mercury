@@ -139,7 +139,11 @@ struct HomeView: View {
                         title: briefingTitle,
                         state: appState.loadState,
                         summary: BriefingDigest.summary(for: appState.manifest),
-                        isPlaying: appState.playback.isPlaying,
+                        // The briefing on SCREEN, not just "something is
+                        // playing": a browsed day's card offers to play it.
+                        isPlaying: AppState.cardShowsPlaying(
+                            isPlaying: appState.playback.isPlaying,
+                            isCurrent: appState.isPlaybackCurrent),
                         // Drawn in the day's accent until it has been
                         // looked at. The rebuild's whole point is that the
                         // briefing changed, so arriving silently would be
@@ -258,11 +262,16 @@ struct HomeView: View {
                 // in was the greeting card, which called `playBriefing()` and
                 // reloaded the coordinator from zero. The bar navigates
                 // instead of loading.
-                if let manifest = appState.manifest {
+                // The briefing IN THE ENGINE, which is not the one on screen
+                // while another day is being browsed (ROADMAP task 49).
+                if let manifest = appState.playback.loadedManifest ?? appState.manifest {
                     MiniPlayerBar(
                         manifest: manifest,
                         playback: appState.playback,
-                        onOpen: { showPlayer = true }
+                        onOpen: {
+                            appState.showPlaying()
+                            showPlayer = true
+                        }
                     )
                 }
             }

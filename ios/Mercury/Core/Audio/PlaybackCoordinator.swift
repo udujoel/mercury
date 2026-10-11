@@ -103,6 +103,11 @@ final class PlaybackCoordinator {
     /// offset from one applied to the other lands anywhere.
     var loadedBriefingId: String? { file == nil ? nil : manifest?.briefingId }
 
+    /// The briefing in the engine, which is not always the one on screen:
+    /// browsing a day while another plays leaves the player alone
+    /// (`AppState.browseAction`), and the mini player names what it plays.
+    var loadedManifest: BriefingManifest? { file == nil ? nil : manifest }
+
     private var file: AVAudioFile?
     private var displayLink: CADisplayLink?
     private let nowPlaying = NowPlayingService()

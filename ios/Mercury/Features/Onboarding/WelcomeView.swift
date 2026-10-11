@@ -156,7 +156,10 @@ struct DataPromiseView: View {
             Text(title)
                 .font(MercuryType.cardTitle)
                 .foregroundStyle(MercuryColor.ink.color)
-            Text(body)
+            // Parsed as markdown, so `gmail.readonly` renders as a scope
+            // name rather than with its backticks showing. `Text(String)`
+            // never parses; only a LocalizedStringKey does (ROADMAP task 51).
+            Text(LocalizedStringKey(body))
                 .font(MercuryType.cardBody)
                 .foregroundStyle(MercuryColor.inkMuted.color)
                 .fixedSize(horizontal: false, vertical: true)
