@@ -425,7 +425,7 @@ allowed to be. Right now "voice quality" is a legitimate reason to turn it off
 and there is nothing to do about it. After task 1 it stops being an excuse;
 after task 3, so does "it sounds like a read-out rather than a show".
 
-## Next — The loop that actually runs (current)
+## Next — The loop that actually runs
 
 Written 2026-09-12 from an audit that read production, not the roadmap. Eight
 regions, sixteen adversarial verification passes. The headline is uncomfortable:
@@ -1048,15 +1048,21 @@ answer. Neither blocks a merge:
       with `gh pr merge --delete-branch` deleted `cl-/kind-clarke-7grdd4`,
       and GitHub CLOSED #69, which was based on it, instead of retargeting
       it. To recover: restore that branch at a51f942, reopen #69, retarget
-      it to `main`, and merge `main` into it with `-s ours`. That is
-      correct here because `main`'s tree is byte-identical to a51f942, which
-      is an ancestor of #69's head. Then land #70 and #71 in order. **Never
+      it to `main`, and merge `main` into it. While `main`'s tree is still
+      byte-identical to a51f942, which is an ancestor of #69's head,
+      `git merge -s ours origin/main` is exact. **Check that first with
+      `git diff --quiet origin/main a51f942`.** If anything else has landed
+      on `main` since (this backlog's own PR, for one), `-s ours` would drop
+      it, and squash-merging #69 would then revert it without a conflict.
+      In that case do a real merge and resolve the `#68`-vs-`#69` hunks in
+      #69's favour. Then land #70 and #71 in order. **Never
       pass `--delete-branch` when another open PR is based on the branch.**
 - [ ] 39. **Deploy the Worker before the 25 October clock change.** Owner
       action. #68's morning floor (task 31) lives in `worker/src/index.js`
-      and does nothing until `wrangler deploy` runs. The DST change is the
-      event the floor exists for: it moves GitHub's late `00:12` run back
-      into the morning checkpoints' window.
+      and does nothing until `wrangler deploy` runs. Task 31 records why the
+      date matters: the `00:12` run's false "morning covered" is masked
+      today only by GitHub running that cron about four hours late, and
+      "the 25 October DST change unmasks it"
 - [ ] 40. **Watch the watchdog's first scheduled run after #71.** Its
       morning window now computes the local hour through `app.core.tz` in a
       one-line `python -c` instead of `TZ="$USER_TIMEZONE" date`. That line
@@ -1078,7 +1084,9 @@ answer. Neither blocks a merge:
 - [ ] 44. **Python 3.13 readiness.** Low priority. `pydub` imports
       `audioop`, which 3.13 removed, and the suite warns about it on every
       run. Use `audioop-lts` or drop pydub's audioop path. This isn't urgent
-      while CI pins 3.12, but it is the only thing holding the pin.
+      while CI pins 3.12. It is the first known blocker, not a verified
+      only one: nobody has installed the full requirements on 3.13 yet, and
+      doing that is the first step.
 
 Still open from earlier sections, in the order they now rank: **21** (word
 timings that survive the cache, plus `BriefingManifest.schema_version`),

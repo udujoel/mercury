@@ -1479,9 +1479,9 @@ it, rather than retargeting it to `main`. A closed PR can only be reopened
 while its base branch exists, so recovery means restoring the branch first.
 For a stack: retarget the next PR to `main`, THEN delete the branch.
 
-**Two sessions fixed one bug in parallel.** #68's ca7a8d0 and #69/#70 both
-gave the ranker a clock and both made the default briefing id timezone-aware,
-on branches stacked on each other. The second arrival found out through a
+**Two sessions fixed one bug in parallel.** #68's ca7a8d0 gave the ranker a
+clock and made the default briefing id timezone-aware; #69 did the first of
+those and #70 the second, on branches stacked on top of #68. The second arrival found out through a
 merge conflict. Nothing was lost, because the merge kept the stricter
 version, but two sessions spent an afternoon on one fix. When a stack is
 open, a new commit on a lower branch should be read by whoever owns the
