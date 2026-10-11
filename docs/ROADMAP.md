@@ -61,60 +61,13 @@ iOS
 **Gate: you tap the greeting card and within ninety seconds two hosts are
 discussing your actual meetings and your actual inbox.**
 
-## Audio identity backlog — CLOSED, absorbed into "The show"
+## Retired sections
 
-Phase 0's gate passed on Google Neural2 — good, not great. See ADR-006.
-
-This list was staged "do before Phase 3", and Phase 3 was dropped (ADR-009).
-Everything on it was done under tasks 1-3 below rather than here; it is kept
-so the trail from ADR-006 to the work is readable.
-
-- [x] ElevenLabs Flash v2.5 behind the existing `TTSProvider` protocol,
-      one new file in `app/providers/`, no pipeline change — task 1
-- [x] A/B the same script through Neural2 and ElevenLabs, listen to both
-      cold opens, keep the winner — task 1, and settled again on 2026-09-05
-      by measuring the shipped audio when both hosts came out male: the
-      briefing's speakers sat at 132Hz and 94Hz against 219Hz for the same
-      voice's own preview, which is how the 402 on a library voice was found
-- [x] Short intro stinger before the cold open, short outro under the
-      sign-off — task 3
-- [x] Offset every manifest timing by the intro duration — task 3. Done by
-      moving `cursor_ms` before the turn loop rather than correcting numbers
-      afterwards, so there is one place that computes offsets
-- [x] Duck the music under the first and last turns rather than hard-cutting.
-      `stitch._duck` OVERLAYS the tail rather than crossfading or appending:
-      both of those move every timing in the manifest, which is ADR-006's
-      failure wearing a nicer coat. Overlay leaves `len(combined)` untouched.
-      Tested on both halves, because either alone passes for the wrong
-      reason — the length must not move AND the audio must actually change
-
-## UI refinement backlog — SUPERSEDED by ADR-012
-
-Every item below describes the dark ambient card deck. ADR-012 replaced that
-register with Particle's light editorial one, and the views these refer to —
-the translucent deck, the placeholder weather card — no longer exist. Left
-unticked rather than deleted, because "we changed our minds" is a more useful
-record than a clean list; do not treat them as work outstanding.
-
-Observed while testing the MVP on the simulator, none of it blocking:
-
-Verified 2026-09-07 by grep, not by memory: no `WeatherCard`, `CalendarCard`
-or `CardDeck` remains in `ios/Mercury` — the only mentions left are
-historical notes in `DesignSystem/Colors.swift` and a fixture's script text.
-The loading item is superseded by ADR-001 rather than ADR-012:
-`TodaysBriefingCard` absorbs the state and says "Getting today's briefing…",
-and there is no ~70-second on-device generation to narrate any more, because
-generation happens on the cron. Task 4's waiting room covers the case where
-there is nothing to fetch.
-
-- [x] CLOSED — Cards are semi-transparent, so the card behind bleeds through the
-      greeting text. PRD 3.3 specifies opaque over true black
-- [x] CLOSED — Weather card shows a placeholder "San Francisco" and is not wired to the
-      Open-Meteo data the backend already fetches correctly
-- [x] CLOSED — Card deck sits small and centred; PRD 3.3 wants roughly 0.62 of screen
-      width with the fanned offsets
-- [x] CLOSED — Loading state is a bare spinner for the ~70s generation — it should say
-      what is happening
+Two lists that were finished or overtaken were pruned on 2026-10-11 to keep
+this file about work that is still open: the **Audio identity backlog**
+(every item done under tasks 1-3, after ADR-006) and the **UI refinement
+backlog** (the dark card deck, superseded by ADR-012). Their full text, with
+the reasoning, is in `git show 1f0fa60:docs/ROADMAP.md`.
 
 ## Phase 2 — News, clustering, automation (weeks 8 to 11)
 
@@ -1023,7 +976,10 @@ Written 2026-10-11 from a pass over this file, `docs/LOG.md`, the open PRs and
 the code. A cloud ultrareview of the open stack (#68–#71, 38 files) found
 nothing. The code has no TODO or FIXME markers. Everything below is the gap
 between "written" and "true in production", plus the docs that had stopped
-being true. Ordered by deadline, then by what is broken, then by what it buys.
+being true. Ordered by urgency: tasks 45 and 46 were found after the first
+draft and sit first because 45 stops the product; 38-44 follow by deadline,
+then by what is broken, then by what it buys. 47-56 came from testing on a
+simulator the same day.
 
 **Goal, through 25 October:** the briefing keeps running for the rest of
 the month, everything already written is on `main` and live before the
@@ -1046,13 +1002,13 @@ answer. Neither blocks a merge:
 
 ### Tasks
 
-- [ ] 45. **The Actions minutes run out around 25 October.** First, because
+- [~] 45. **The Actions minutes run out around 25 October.** HALF DONE: #73 merged (CI runs once per change). The rest is the owner's call below. First, because
       it stops the product. No briefing ran from 23 to 30 September: the
       private repo's 2,000 Free-plan minutes were spent on the 22nd, and
       every run failed with "The job was not started because ... your
       spending limit needs to be increased". 1-11 October used 857 billed
-      minutes (briefing 371, iOS on macOS at 10x 240, backend 207), about
-      81 a day. #73 stops CI running twice per PR push, which brings the
+      minutes over 10.6 days (briefing 371, iOS on macOS at 10x 240, backend
+      207, watchdog/Dependabot/Worker/graph 39), about 81 a day. #73 stops CI running twice per PR push, which brings the
       pace to about 60 a day, but that still runs out around the 30th. The
       rest needs an owner call: task 28 (two a day, about 43 a day in total,
       which lasts the month), a spending limit above zero, or a public repo.
@@ -1062,7 +1018,7 @@ answer. Neither blocks a merge:
       on Cloudflare, outside Actions. When a dispatch is refused, or no
       briefing exists by the last checkpoint, they should tell the owner
       directly rather than relying on another workflow to.
-- [ ] 38. **Land the rest of the stack.** #68 merged as c3df574. Merging it
+- [x] 38. **Land the rest of the stack.** DONE 2026-10-11: #68 (c3df574), #69 and #70 together through #70 (8770774; #69 stayed closed and its branch was carried by #70), #71 (e4356a2). #68 merged as c3df574. Merging it
       with `gh pr merge --delete-branch` deleted `cl-/kind-clarke-7grdd4`,
       and GitHub CLOSED #69, which was based on it, instead of retargeting
       it. To recover: restore that branch at a51f942, reopen #69, retarget
@@ -1114,7 +1070,7 @@ Particle-shaped story page with coverage rows, the calendar strip that
 browses past days, and Show Notes. Everything below is what didn't work.
 Most of it is backend behaviour visible only in production logs.
 
-- [ ] 47. **The quality gates have never judged a claim in production.**
+- [x] 47. **The quality gates have never judged a claim in production.** DONE (#74, 1f0fa60). Still to check: the first scheduled run after it should log judged claims, and nobody here knows the TypeSafe account's quota or price — the owner should, before more runs depend on it.
       The judgment budget (`judgment_briefing_budget_seconds`, 20s) is a
       wall-clock window that starts at the FIRST judgment call, and
       triage and cluster verification make that call before the script

@@ -28,17 +28,24 @@ references persist.
 ## Status
 
 **Running in production.** Phases 0–2 are complete and a briefing is generated
-four times a day, every day.
+four times a day (06:12, 12:12, 18:12 and 00:12 UTC).
 
 - Generation runs on GitHub Actions; audio and manifests live in Cloudflare R2
   behind a Worker (ADR-008)
-- 32 briefings in the bucket as of 2026-09-12, four per day
+- The phone shows a desk of the morning's stories with who covered each, a
+  story page in Particle's shape, a calendar strip for earlier mornings, and
+  says when a briefing was made without a source or read by the backup voice
 - Phase 3 (voice interaction) was built and then **dropped** — ADR-009
 
-Current work is in [docs/ROADMAP.md](docs/ROADMAP.md); the honest gap between
-what is merged and what actually reaches the phone is the phase named "The
-loop that actually runs". [docs/LOG.md](docs/LOG.md) is the running record of
-decisions and why they were made.
+**Operating constraint.** The repository is private on GitHub Free, so every
+briefing, every CI run and the watchdog share 2,000 Actions minutes a month.
+They ran out on 2026-09-22 and no briefing was made for eight days; see
+`docs/LOG.md` (2026-10-11) and ROADMAP task 45 before adding CI jobs,
+especially macOS ones, which bill at 10x.
+
+Current work is in [docs/ROADMAP.md](docs/ROADMAP.md), in the section marked
+"(current)". [docs/LOG.md](docs/LOG.md) is the running record of decisions,
+production findings and what turned out not to be true.
 
 ## Repo layout
 
@@ -114,8 +121,17 @@ cd ios/Mercury && xcodebuild test -scheme Mercury \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 ```
 
-670 backend · 335 iOS · 76 Worker. Two backend tests reach the live network
-and fail without it.
+About 1,100 backend, 420 iOS and 83 Worker tests as of 2026-10-11. CI runs
+each suite once per PR, and again on `main` after a merge (`backend.yml`,
+`ios.yml`, `worker.yml`, path-filtered). Two backend tests need the live
+network and a writable temp directory, so they fail inside a sandbox
+(`test_net_guard.py::test_public_url_allowed` and the audio check in
+`test_generate_e2e.py`); run them unsandboxed before treating either as a
+real failure.
+
+Green tests are necessary, not sufficient. Every phase so far has had a
+feature the suite certified and the product never ran, so check a change on a
+simulator and in a production run's logs, not just in CI.
 
 ## The rules that shape this codebase
 
@@ -131,4 +147,4 @@ Read [CLAUDE.md](CLAUDE.md) before changing anything. The short version:
 7. Any source can fail and the briefing still ships
 
 Design decisions and their rationale: [docs/DECISIONS.md](docs/DECISIONS.md),
-13 ADRs.
+18 ADRs.

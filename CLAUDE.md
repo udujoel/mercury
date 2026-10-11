@@ -88,8 +88,10 @@ product had never once run. When a phase is marked done, check what CALLS
 the new code, not just what tests it.
 
 Phase 0 gate: **met**. Google Cloud TTS Neural2 passed the ten second test —
-"good, but can be better", which is a pass, not an endorsement. ElevenLabs is
-a planned upgrade rather than an emergency swap; see ADR-006.
+"good, but can be better", which is a pass, not an endorsement. ElevenLabs
+was adopted afterwards (ADR-006). As of 2026-10-11 its free quota answers 401
+on every run, so every briefing fails over to Google and the phone says so;
+whether to pay for it is the owner's call (ROADMAP task 56).
 
 Phase 1 gate: **met**. A real briefing from real Gmail and Calendar generates
 in 71 seconds, inside the PRD's 90-second budget.
@@ -100,11 +102,21 @@ sources — goes through real Gmail and RSS ingestion, real clustering and
 real prompt assembly and reaches the briefing exactly once, in one segment,
 with all five sources attributed (`backend/tests/test_news_pipeline_e2e.py`).
 
-What that does not prove: the 0.78 similarity threshold is tuned for Gemini
-embeddings and has still never run against real feeds, and a fixture written
-to contain duplicates cannot tell you whether real newsletters cluster. Both
-need a morning of live data. The automation half of the gate — you stop
-opening the app — belongs to ADR-010/ADR-011.
+What that does not prove: whether the 0.78 similarity threshold is right.
+It has clustered live feeds four times a day since September, and #65 added
+a probe that asks a judge about the pairs it did NOT merge — but until #74
+(2026-10-11) the judgment budget had always expired before the probe ran, so
+it had judged nothing. The next week of runs is the first real evidence
+(ROADMAP task 42). The automation half of the gate — you stop opening the
+app — belongs to ADR-010/ADR-011.
+
+Two production failure modes found on 2026-10-11 belong next to the one
+above. GitHub Actions minutes are a production dependency: they ran out on
+2026-09-22 and no briefing was made for eight days, with nothing to say so,
+because the watchdog runs on the same minutes (task 45). And a check can be
+wired, tested and called and still never run: the semantic quality gates
+judged zero claims in every production run until #74. Read the run logs, not
+just the code path.
 
 ## How work lands
 
