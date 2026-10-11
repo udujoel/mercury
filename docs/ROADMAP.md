@@ -1025,15 +1025,17 @@ nothing. The code has no TODO or FIXME markers. Everything below is the gap
 between "written" and "true in production", plus the docs that had stopped
 being true. Ordered by deadline, then by what is broken, then by what it buys.
 
-**Goal, through 25 October:** everything already written is on `main` and
-live before the clock change, and the docs describe the system as it is.
+**Goal, through 25 October:** the briefing keeps running for the rest of
+the month, everything already written is on `main` and live before the
+clock change, and the docs describe the system as it is.
 Then the Phase 2 dedup gate gets judged on production data rather than a
 fixture written to contain duplicates.
 
 **Owner decisions.** Two PR threads ended in a question only the owner can
 answer. Neither blocks a merge:
 
-- **Task 28: two briefings a day, or four?** It's a cost and cadence call.
+- **Task 28: two briefings a day, or four? This is now urgent (task 45).**
+  It's a cost and cadence call.
   The answer also settles #68's thread about the `00:12` cron (moving it
   makes the morning floor unnecessary) and unblocks task 31's watchdog half.
 - **Should a replay rank against its snapshot's time?** #69 made it
@@ -1044,6 +1046,22 @@ answer. Neither blocks a merge:
 
 ### Tasks
 
+- [ ] 45. **The Actions minutes run out around 25 October.** First, because
+      it stops the product. No briefing ran from 23 to 30 September: the
+      private repo's 2,000 Free-plan minutes were spent on the 22nd, and
+      every run failed with "The job was not started because ... your
+      spending limit needs to be increased". 1-11 October used 857 billed
+      minutes (briefing 371, iOS on macOS at 10x 240, backend 207), about
+      81 a day. #73 stops CI running twice per PR push, which brings the
+      pace to about 60 a day, but that still runs out around the 30th. The
+      rest needs an owner call: task 28 (two a day, about 43 a day in total,
+      which lasts the month), a spending limit above zero, or a public repo.
+- [ ] 46. **An alarm that doesn't run on Actions.** Running out of minutes
+      silenced the briefing AND its watchdog, so eight mornings passed with
+      nothing reporting it. The Worker's scheduled checkpoints already run
+      on Cloudflare, outside Actions. When a dispatch is refused, or no
+      briefing exists by the last checkpoint, they should tell the owner
+      directly rather than relying on another workflow to.
 - [ ] 38. **Land the rest of the stack.** #68 merged as c3df574. Merging it
       with `gh pr merge --delete-branch` deleted `cl-/kind-clarke-7grdd4`,
       and GitHub CLOSED #69, which was based on it, instead of retargeting
