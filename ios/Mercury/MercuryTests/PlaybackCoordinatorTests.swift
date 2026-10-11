@@ -554,10 +554,12 @@ final class AudioSessionCategoryTests: XCTestCase {
 /// the engine, and `isPlaybackCurrent` vouched for it.
 final class FailedLoadTests: XCTestCase {
 
-    /// A tenth of a second of silence, as a real file the engine can load.
-    static func silentAudio() throws -> URL {
+    /// A tenth of a second of silence, as a real file the engine can load,
+    /// deleted when `testCase` finishes.
+    static func silentAudio(removedAfter testCase: XCTestCase) throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString + ".caf")
+        testCase.addTeardownBlock { try? FileManager.default.removeItem(at: url) }
         let format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1)!
         let file = try AVAudioFile(forWriting: url, settings: format.settings)
         let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4_410)!
@@ -571,7 +573,7 @@ final class FailedLoadTests: XCTestCase {
         let coordinator = PlaybackCoordinator()
         let saturday = ManifestFixtures.made(at: "2026-10-10T21:35:00Z", id: "2026-10-10-2235")
         let sunday = ManifestFixtures.made(at: "2026-10-11T05:41:00Z", id: "2026-10-11-0641")
-        try coordinator.load(manifest: saturday, audioURL: try Self.silentAudio())
+        try coordinator.load(manifest: saturday, audioURL: try Self.silentAudio(removedAfter: self))
 
         let missing = FileManager.default.temporaryDirectory
             .appendingPathComponent("no-such-briefing.m4a")

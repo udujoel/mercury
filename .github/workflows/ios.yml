@@ -59,15 +59,30 @@ jobs:
         run: |
           test -f Secrets.xcconfig || cp Secrets.example.xcconfig Secrets.xcconfig
 
-      # The newest non-beta Xcode on the image, not its default. `macos-15`
+      # The newest RELEASED Xcode 26.x on the image, not its default. `macos-15`
       # defaults to Xcode 16.4 (Swift 6.1, the iOS 18 SDK) while the app is
       # built and checked with a far newer one, so CI could not compile an
       # iOS 26 API at all: the first push of #76 failed here and nowhere
       # else (ROADMAP task 60). Code that must still build on an older
       # toolchain keeps its `#if compiler(...)` guard.
-      - name: Use the newest Xcode on the image
+      #
+      # Pinned to a MAJOR version so CI's compiler moves when this line does,
+      # not when GitHub updates the image; minor releases within it are taken
+      # as they come. Betas and release candidates are excluded. If the image
+      # has no released 26.x the step fails and says so, rather than quietly
+      # building with something else.
+      - name: Use the newest released Xcode 26
+        env:
+          XCODE_MAJOR: "26"
         run: |
-          newest=$(ls -d /Applications/Xcode_*.app | grep -iv beta | sort -V | tail -1)
+          set -euo pipefail
+          newest=$(ls -d /Applications/Xcode_${XCODE_MAJOR}*.app 2>/dev/null \
+            | grep -Eiv 'beta|release.?candidate|_rc' | sort -V | tail -1 || true)
+          if [ -z "$newest" ]; then
+            echo "::error::No released Xcode ${XCODE_MAJOR}.x on this image:"
+            ls -d /Applications/Xcode*.app
+            exit 1
+          fi
           echo "Selecting $newest"
           sudo xcode-select -s "$newest"
 
@@ -80,6 +95,7 @@ jobs:
       - name: Pick a simulator
         id: sim
         run: |
+          set -euo pipefail
           udid=$(xcrun simctl list devices available -j | python3 -c '
           import json, sys
           devices = json.load(sys.stdin)["devices"]
@@ -89,6 +105,10 @@ jobs:
           print(next(d["udid"] for r in reversed(runtimes)
                      for d in devices[r] if d["name"].startswith("iPhone")))
           ')
+          if [ -z "$udid" ]; then
+            echo "::error::No available iPhone simulator for this Xcode"
+            exit 1
+          fi
           echo "Using simulator $udid"
           echo "udid=$udid" >> "$GITHUB_OUTPUT"
 

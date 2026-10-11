@@ -88,7 +88,7 @@ final class BrowseWhilePlayingTests: XCTestCase {
         let sunday = ManifestFixtures.made(at: "2026-10-11T05:41:00Z", id: "2026-10-11-0641")
         let saturday = ManifestFixtures.made(at: "2026-10-10T21:35:00Z", id: "2026-10-10-2235")
         let coordinator = PlaybackCoordinator()
-        try coordinator.load(manifest: sunday, audioURL: try FailedLoadTests.silentAudio())
+        try coordinator.load(manifest: sunday, audioURL: try FailedLoadTests.silentAudio(removedAfter: self))
         coordinator.play()
         XCTAssertTrue(coordinator.isPlaying, "the premise: Sunday is playing")
 
