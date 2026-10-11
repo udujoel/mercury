@@ -446,12 +446,22 @@ private extension View {
     /// it: the points card's first letters sat under the button on the
     /// simulator (ROADMAP task 53). Earlier systems draw a bar background
     /// already.
+    ///
+    /// Guarded at COMPILE time as well as run time. `#available` is a runtime
+    /// check, but the symbol has to exist in the SDK being built against, and
+    /// CI builds with Xcode 16.4 (Swift 6.1, the iOS 18 SDK), where it does
+    /// not: the first push of #76 failed there with "cannot find
+    /// 'scrollEdgeEffectStyle' in scope". Swift 6.2 is Xcode 26's.
     @ViewBuilder
     func hardTopScrollEdge() -> some View {
+        #if compiler(>=6.2)
         if #available(iOS 26.0, *) {
             scrollEdgeEffectStyle(.hard, for: .top)
         } else {
             self
         }
+        #else
+        self
+        #endif
     }
 }
