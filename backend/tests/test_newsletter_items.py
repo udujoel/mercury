@@ -294,7 +294,7 @@ def test_a_short_morning_has_no_remainder_to_confess():
 
 
 async def test_the_remainder_reaches_the_prompt():
-    """ "And about twenty other items" is one clause and it is the difference
+    """'And about twenty other items' is one clause and it is the difference
     between a cap and a silent omission."""
     from datetime import UTC, datetime
 

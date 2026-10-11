@@ -274,7 +274,7 @@ async def test_an_agreement_is_not_logged_as_a_disagreement(caplog):
 
 
 async def test_an_unjudged_pair_is_not_a_disagreement(caplog):
-    """ "Not judged" is not "the threshold missed a merge". Counting a
+    """'Not judged' is not "the threshold missed a merge". Counting a
     timeout as evidence would make a bad network look like a bad threshold,
     which is the reading that would move 0.78 for the wrong reason."""
     judge = FakeClaimJudge(unjudged_keys=frozenset({"probe:0"}))

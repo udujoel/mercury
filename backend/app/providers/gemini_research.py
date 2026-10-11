@@ -35,7 +35,7 @@ from app.core.providers import Findings, ResearchSource
 log = logging.getLogger(__name__)
 
 _ENDPOINT = (
-    "https://generativelanguage.googleapis.com/v1beta/models/" "{model}:generateContent"
+    "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 )
 
 # Grounding returns its sources as redirects through
@@ -204,7 +204,7 @@ class GeminiResearchProvider:
 
 
 def _host_of(url: str) -> str:
-    """ "https://en.wikipedia.org/wiki/X" -> "en.wikipedia.org"."""
+    """'https://en.wikipedia.org/wiki/X' -> "en.wikipedia.org"."""
     try:
         from urllib.parse import urlparse
 

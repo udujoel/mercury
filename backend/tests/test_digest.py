@@ -490,7 +490,7 @@ async def test_the_enrichment_prompt_fences_the_source_text_it_sends():
 async def test_every_newsletter_that_arrived_is_listed_including_dropped_ones(
     tmp_path, clustering_threshold
 ):
-    """ "View all the newsletters that dropped" means ALL of them.
+    """'View all the newsletters that dropped' means ALL of them.
 
     A list of only the ones that reached the audio is the manifest's source
     list under another name, and this is the feature that was actually asked

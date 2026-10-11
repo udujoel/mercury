@@ -234,7 +234,7 @@ async def test_the_cluster_really_does_mix_naive_and_aware_timestamps():
 
 
 async def test_every_source_that_carried_the_story_reaches_the_show_notes():
-    """ "Four sources attributed", the visible half of ADR-003. One ref per
+    """'Four sources attributed', the visible half of ADR-003. One ref per
     member, each carrying the cluster size so the client can group them into
     a single show-notes entry."""
     stories = await _stories()
@@ -316,7 +316,7 @@ async def test_the_world_segment_receives_the_clustered_story(
 async def test_the_story_is_offered_to_exactly_one_segment_of_the_briefing(
     tmp_path, clustering_threshold
 ):
-    """ "Appears exactly once IN THE BRIEFING", not merely "clusters into one
+    """'Appears exactly once IN THE BRIEFING', not merely "clusters into one
     story". Clustering the acquisition correctly and then also handing all
     three newsletters to the inbox segment would satisfy every assertion
     above and still read the story out four times.

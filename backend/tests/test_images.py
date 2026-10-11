@@ -1104,7 +1104,7 @@ def test_a_briefing_too_short_to_duck_is_returned_unharmed():
 
 @pytest.mark.asyncio
 async def test_asking_for_no_music_gets_exactly_the_unmusical_briefing():
-    """ "none" is a real choice, and it must not quietly mean "the default"."""
+    """'none' is a real choice, and it must not quietly mean "the default"."""
     from app.core.schemas import Segment, Turn
     from app.providers.fake_tts import FakeTTSProvider
     from app.synthesis.stitch import synthesize_briefing
