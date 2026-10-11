@@ -1493,9 +1493,11 @@ from each job's start and end, rounded up per job, with macOS at 10x:
 | **total** | | **857**, ~81 a day |
 
 At 81 a day, 2,000 minutes run out around 24-25 October, the same weekend
-as the DST change that task 39 is racing. (2,000 is GitHub Free's allowance
-for private repos. The API that would confirm the plan needs a token scope
-this session doesn't have.)
+as the DST change that task 39 is racing. The account is on GitHub Free:
+the branch-protection and rulesets APIs both answer "Upgrade to GitHub Pro
+or make this repository public", and Free's allowance for a private
+repository is 2,000 minutes. That also means nothing can stop a direct push
+to `main`, which is why each suite still runs on `push` to `main`.
 
 **What this change does.** Half of all CI runs were duplicates: the suites
 fired on `push` to every branch AND on `pull_request`, so each push to a

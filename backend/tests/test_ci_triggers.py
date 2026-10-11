@@ -55,13 +55,41 @@ def test_both_triggers_watch_the_same_paths(name):
     assert on["push"]["paths"] == on["pull_request"]["paths"]
 
 
+def _group(expression: str, *, event: str, ref: str, sha: str, workflow: str) -> str:
+    """Evaluate the one expression shape these workflows use for the group:
+    `${{ github.workflow }}-${{ github.event_name == 'pull_request' &&
+    github.ref || github.sha }}`. Anything else fails loudly rather than
+    being guessed at, so a rewrite has to come with a matching evaluator."""
+    expected = (
+        "${{ github.workflow }}-${{ github.event_name == 'pull_request' "
+        "&& github.ref || github.sha }}"
+    )
+    assert expression == expected, f"unrecognised concurrency group: {expression}"
+    return f"{workflow}-{ref if event == 'pull_request' else sha}"
+
+
 @pytest.mark.parametrize("name", SUITES)
 def test_a_superseded_pr_run_is_cancelled(name):
-    """Two quick pushes to a PR should not both run to completion. Runs on
-    `main` are never cancelled: each one is the record of what landed."""
-    concurrency = _spec(name).get("concurrency") or {}
+    """Two quick pushes to a PR share a group, and the newer cancels the
+    older."""
+    concurrency = _spec(name)["concurrency"]
+    group = concurrency["group"]
+    pr = dict(event="pull_request", ref="refs/pull/7/merge", workflow=name)
 
-    assert "github.ref" in concurrency.get("group", "")
-    assert concurrency.get("cancel-in-progress") == (
+    assert _group(group, sha="aaa", **pr) == _group(group, sha="bbb", **pr)
+    assert concurrency["cancel-in-progress"] == (
         "${{ github.event_name == 'pull_request' }}"
     )
+
+
+@pytest.mark.parametrize("name", SUITES)
+def test_main_runs_never_share_a_group(name):
+    """GitHub keeps one running and one PENDING run per group, and cancels
+    an older pending run when a newer one queues, even with
+    `cancel-in-progress: false`. Keyed by ref, three quick merges to `main`
+    would leave the middle commit untested. Keyed by commit, every landed
+    commit gets its own run."""
+    group = _spec(name)["concurrency"]["group"]
+    main = dict(event="push", ref="refs/heads/main", workflow=name)
+
+    assert _group(group, sha="aaa", **main) != _group(group, sha="bbb", **main)
