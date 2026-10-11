@@ -24,7 +24,7 @@ moved there and GitHub's schedule became the backstop. See ADR-010.
 
 | Piece | Role | Free tier | Why this one |
 |---|---|---|---|
-| GitHub Actions | Runs generation daily | 2000 min/mo private; a 2-min job uses ~60 | Already where the code lives; `apt install ffmpeg` works |
+| GitHub Actions | Runs generation four times a day, plus CI and the watchdog | 2000 min/mo private, **and it runs out**: about 81 billed min/day in October 2026, ~2,500 a month (see Cost) | Already where the code lives; `apt install ffmpeg` works |
 | Cloudflare R2 | Stores audio + manifests | 10 GB, **zero egress** | The phone downloads ~4 MB every morning; egress is what makes other object stores expensive |
 | iPhone | Plays | — | ADR-001: the server generates, the phone plays |
 
@@ -373,3 +373,13 @@ Point the app at it with `API_SCHEME = http`, `API_HOST = localhost:8000`.
 
 Zero, plus whatever Gemini and Google TTS charge beyond their free tiers —
 the PRD budgets 3-8 USD a month for TTS once the 1M free characters are used.
+
+**Except the Actions minutes, which are the binding limit.** The free plan's
+2,000 private-repo minutes ran out on 2026-09-22 and no briefing was made
+until the month reset, because generation, CI and the watchdog all spend the
+same minutes. 1-11 October 2026 used 857 billed minutes: briefings 371, iOS
+CI 240 (macOS bills at 10x), backend CI 207, everything else 39. #73 stopped
+CI running twice per PR push. Lasting the month needs two briefings a day
+instead of four (ROADMAP task 28), a spending limit above zero, or a public
+repository. The billing API needs a token with the `user` scope; without one,
+sum job durations from the jobs API, rounding each job up to a minute.

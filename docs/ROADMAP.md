@@ -61,60 +61,13 @@ iOS
 **Gate: you tap the greeting card and within ninety seconds two hosts are
 discussing your actual meetings and your actual inbox.**
 
-## Audio identity backlog — CLOSED, absorbed into "The show"
+## Retired sections
 
-Phase 0's gate passed on Google Neural2 — good, not great. See ADR-006.
-
-This list was staged "do before Phase 3", and Phase 3 was dropped (ADR-009).
-Everything on it was done under tasks 1-3 below rather than here; it is kept
-so the trail from ADR-006 to the work is readable.
-
-- [x] ElevenLabs Flash v2.5 behind the existing `TTSProvider` protocol,
-      one new file in `app/providers/`, no pipeline change — task 1
-- [x] A/B the same script through Neural2 and ElevenLabs, listen to both
-      cold opens, keep the winner — task 1, and settled again on 2026-09-05
-      by measuring the shipped audio when both hosts came out male: the
-      briefing's speakers sat at 132Hz and 94Hz against 219Hz for the same
-      voice's own preview, which is how the 402 on a library voice was found
-- [x] Short intro stinger before the cold open, short outro under the
-      sign-off — task 3
-- [x] Offset every manifest timing by the intro duration — task 3. Done by
-      moving `cursor_ms` before the turn loop rather than correcting numbers
-      afterwards, so there is one place that computes offsets
-- [x] Duck the music under the first and last turns rather than hard-cutting.
-      `stitch._duck` OVERLAYS the tail rather than crossfading or appending:
-      both of those move every timing in the manifest, which is ADR-006's
-      failure wearing a nicer coat. Overlay leaves `len(combined)` untouched.
-      Tested on both halves, because either alone passes for the wrong
-      reason — the length must not move AND the audio must actually change
-
-## UI refinement backlog — SUPERSEDED by ADR-012
-
-Every item below describes the dark ambient card deck. ADR-012 replaced that
-register with Particle's light editorial one, and the views these refer to —
-the translucent deck, the placeholder weather card — no longer exist. Left
-unticked rather than deleted, because "we changed our minds" is a more useful
-record than a clean list; do not treat them as work outstanding.
-
-Observed while testing the MVP on the simulator, none of it blocking:
-
-Verified 2026-09-07 by grep, not by memory: no `WeatherCard`, `CalendarCard`
-or `CardDeck` remains in `ios/Mercury` — the only mentions left are
-historical notes in `DesignSystem/Colors.swift` and a fixture's script text.
-The loading item is superseded by ADR-001 rather than ADR-012:
-`TodaysBriefingCard` absorbs the state and says "Getting today's briefing…",
-and there is no ~70-second on-device generation to narrate any more, because
-generation happens on the cron. Task 4's waiting room covers the case where
-there is nothing to fetch.
-
-- [x] CLOSED — Cards are semi-transparent, so the card behind bleeds through the
-      greeting text. PRD 3.3 specifies opaque over true black
-- [x] CLOSED — Weather card shows a placeholder "San Francisco" and is not wired to the
-      Open-Meteo data the backend already fetches correctly
-- [x] CLOSED — Card deck sits small and centred; PRD 3.3 wants roughly 0.62 of screen
-      width with the fanned offsets
-- [x] CLOSED — Loading state is a bare spinner for the ~70s generation — it should say
-      what is happening
+Two lists that were finished or overtaken were pruned on 2026-10-11 to keep
+this file about work that is still open: the **Audio identity backlog**
+(every item done under tasks 1-3, after ADR-006) and the **UI refinement
+backlog** (the dark card deck, superseded by ADR-012). Their full text, with
+the reasoning, is in `git show 1f0fa60:docs/ROADMAP.md`.
 
 ## Phase 2 — News, clustering, automation (weeks 8 to 11)
 
@@ -425,7 +378,7 @@ allowed to be. Right now "voice quality" is a legitimate reason to turn it off
 and there is nothing to do about it. After task 1 it stops being an excuse;
 after task 3, so does "it sounds like a read-out rather than a show".
 
-## Next — The loop that actually runs (current)
+## Next — The loop that actually runs
 
 Written 2026-09-12 from an audit that read production, not the roadmap. Eight
 regions, sixteen adversarial verification passes. The headline is uncomfortable:
@@ -631,7 +584,7 @@ something in this project:
       this is a prompt and schema change rather than a rendering job. Only
       40 of 209 stories carry topics at all (`DIGEST_MAX_ENRICHED = 40`).
       See docs/LOG.md.
-- [ ] 18. **Research each topic independently, with Gemini.** The point of
+- [x] 18. **Research each topic independently, with Gemini.** DONE (#48). The point of
       the feature, in the user's words: "make sure the story is rich and
       informed, not just what's in the email." A newsletter is a POINTER to
       a subject someone thought was worth your time; Mercury currently
@@ -1016,6 +969,198 @@ DROP, with reasons, from the review:
       rule asked for. See docs/LOG.md 2026-10-07. NOT DONE and the next
       Particle step worth taking: summary styles (ELI5, the 5Ws), which is
       Phase 4 week 17 and needs a backend prompt, not a view.
+
+## Next — Backlog from the 2026-10-11 review (current)
+
+Written 2026-10-11 from a pass over this file, `docs/LOG.md`, the open PRs and
+the code. A cloud ultrareview of the open stack (#68–#71, 38 files) found
+nothing. The code has no TODO or FIXME markers. Everything below is the gap
+between "written" and "true in production", plus the docs that had stopped
+being true. Ordered by urgency: tasks 45 and 46 were found after the first
+draft and sit first because 45 stops the product; 38-44 follow by deadline,
+then by what is broken, then by what it buys. 47-56 came from testing on a
+simulator the same day.
+
+**Goal, through 25 October:** the briefing keeps running for the rest of
+the month, everything already written is on `main` and live before the
+clock change, and the docs describe the system as it is.
+Then the Phase 2 dedup gate gets judged on production data rather than a
+fixture written to contain duplicates.
+
+**Owner decisions.** Two PR threads ended in a question only the owner can
+answer. Neither blocks a merge:
+
+- **Task 28: two briefings a day, or four? This is now urgent (task 45).**
+  It's a cost and cadence call.
+  The answer also settles #68's thread about the `00:12` cron (moving it
+  makes the morning floor unnecessary) and unblocks task 31's watchdog half.
+- **Should a replay rank against its snapshot's time?** #69 made it
+  possible (`generate_briefing(now=...)`) but left the default on the wall
+  clock. RSS ingestion anchors fixtures on the snapshot while ranking ages
+  them against today, so every replayed story has recency ~0 and the
+  world-segment order drifts with the day of the replay.
+
+### Tasks
+
+- [~] 45. **The Actions minutes run out around 25 October.** HALF DONE: #73 merged (CI runs once per change). The rest is the owner's call below. First, because
+      it stops the product. No briefing ran from 23 to 30 September: the
+      private repo's 2,000 Free-plan minutes were spent on the 22nd, and
+      every run failed with "The job was not started because ... your
+      spending limit needs to be increased". 1-11 October used 857 billed
+      minutes over 10.6 days (briefing 371, iOS on macOS at 10x 240, backend
+      207, watchdog/Dependabot/Worker/graph 39), about 81 a day. #73 stops CI running twice per PR push, which brings the
+      pace to about 60 a day, but that still runs out around the 30th. The
+      rest needs an owner call: task 28 (two a day, about 43 a day in total,
+      which lasts the month), a spending limit above zero, or a public repo.
+- [ ] 46. **An alarm that doesn't run on Actions.** Running out of minutes
+      silenced the briefing AND its watchdog, so eight mornings passed with
+      nothing reporting it. The Worker's scheduled checkpoints already run
+      on Cloudflare, outside Actions. When a dispatch is refused, or no
+      briefing exists by the last checkpoint, they should tell the owner
+      directly rather than relying on another workflow to.
+- [x] 38. **Land the rest of the stack.** DONE 2026-10-11: #68 (c3df574), #69 and #70 together through #70 (8770774; #69 stayed closed and its branch was carried by #70), #71 (e4356a2). #68 merged as c3df574. Merging it
+      with `gh pr merge --delete-branch` deleted `cl-/kind-clarke-7grdd4`,
+      and GitHub CLOSED #69, which was based on it, instead of retargeting
+      it. To recover: restore that branch at a51f942, reopen #69, retarget
+      it to `main`, and merge `main` into it. While `main`'s tree is still
+      byte-identical to a51f942, which is an ancestor of #69's head,
+      `git merge -s ours origin/main` is exact. **Check that first with
+      `git diff --quiet origin/main a51f942`.** If anything else has landed
+      on `main` since (this backlog's own PR, for one), `-s ours` would drop
+      it, and squash-merging #69 would then revert it without a conflict.
+      In that case do a real merge and resolve the `#68`-vs-`#69` hunks in
+      #69's favour. Then land #70 and #71 in order. **Never
+      pass `--delete-branch` when another open PR is based on the branch.**
+- [ ] 39. **Deploy the Worker before the 25 October clock change.** Owner
+      action. #68's morning floor (task 31) lives in `worker/src/index.js`
+      and does nothing until `wrangler deploy` runs. Task 31 records why the
+      date matters: the `00:12` run's false "morning covered" is masked
+      today only by GitHub running that cron about four hours late, and
+      "the 25 October DST change unmasks it"
+- [ ] 40. **Watch the watchdog's first scheduled run after #71.** Its
+      morning window now computes the local hour through `app.core.tz` in a
+      one-line `python -c` instead of `TZ="$USER_TIMEZONE" date`. That line
+      was checked by hand with a good and a misspelt zone, never in Actions.
+- [ ] 41. **Look at #68 on a simulator.** CI compiles and tests the Swift,
+      but nobody has seen the story page, the outlet stack or the "made
+      without your inbox" notice on a screen. The quality bar here is a
+      real run, not a green job.
+- [ ] 42. **Judge the 0.78 threshold on production data.** #65 logs the
+      merges the threshold missed without making any. Read those probe lines
+      from the scheduled runs since it shipped, then keep the threshold,
+      move it, or lean on `verify_stories`. Until then Phase 2's dedup gate
+      is "met offline, not in production".
+- [ ] 43. **Format the backend once, then keep it formatted.** CLAUDE.md
+      says "format on save", but 88 of 120 backend files fail
+      `ruff format --check`. Do one mechanical PR after the stack lands, so
+      it conflicts with nothing open, and add `ruff format --check` to
+      `backend.yml` so the debt can't regrow.
+- [ ] 44. **Python 3.13 readiness.** Low priority. `pydub` imports
+      `audioop`, which 3.13 removed, and the suite warns about it on every
+      run. Use `audioop-lts` or drop pydub's audioop path. This isn't urgent
+      while CI pins 3.12. It is the first known blocker, not a verified
+      only one: nobody has installed the full requirements on 3.13 yet, and
+      doing that is the first step.
+
+**Found by testing on 2026-10-11.** The stack head (#68–#71) was run on
+an iPhone 18 Pro simulator (iOS 27) against production data, with 416 iOS
+tests, 83 Worker tests and 1076 backend tests passing. #68's features work
+on real data: the backup-voice notice, today's desk with outlet marks, the
+Particle-shaped story page with coverage rows, the calendar strip that
+browses past days, and Show Notes. Everything below is what didn't work.
+Most of it is backend behaviour visible only in production logs.
+
+- [x] 47. **The quality gates have never judged a claim in production.** DONE (#74, 1f0fa60). Still to check: the first scheduled run after it should log judged claims, and nobody here knows the TypeSafe account's quota or price — the owner should, before more runs depend on it. What was found:
+      The judgment budget (`judgment_briefing_budget_seconds`, 20s) is a
+      wall-clock window that starts at the FIRST judgment call, and
+      triage and cluster verification make that call before the script
+      exists. The semantic gates and the threshold probe run about two
+      minutes later, after script generation, so the window has always
+      closed. In the last six runs, all 67-93 claims went unjudged every
+      time, and the probe judged 0 of its 20 pairs. So rule 3's semantic
+      grounding gate has only ever run as its keyword fallback, and task 42
+      has no data. Fix: count the time judgment calls actually spend.
+- [x] 48. **The cold open states the wrong weekday.** DONE (#75, 02d0335): `quality.correct_spoken_date` fixes the weekday word in code. The root cause, that the passes after the outline never see the date, is task 57. The 2026-10-11 06:41 What was found:
+      briefing opens "It's Monday, October 11th, 2026"; it was a Sunday.
+      Only the outline pass is told the date (as "Sunday, 11 October
+      2026"). The draft and both critique passes rewrite the cold open
+      without it. The keyword grounding gate can't catch it, because
+      "Monday" appears somewhere in 35 emails. This is the third weekday
+      bug (see `script_chain.py`'s comment on the August one). Fix: check
+      the weekday in code against the briefing's date, and give every
+      pass the date.
+- [x] 49. **Browsing a past day stops the briefing you're listening to.** DONE (#76, checked on the simulator). What was found:
+      Tapping a day in the calendar strip replaces the loaded manifest, so
+      today's playback is dropped and the mini player shows the other day
+      at 0:00. Looking at Saturday's desk shouldn't lose your place in
+      Sunday's briefing.
+- [x] 50. **Show Notes lists one source once per turn that cites it.** DONE (#76, checked on the simulator). What was found:
+      "Flight to Casablanca (AT 556)" appeared four times in a row, because
+      `ShowNotesLogic.grouped` doesn't de-duplicate. The section header is
+      `sourceType.capitalized`, so RSS items sit under "Rss".
+- [x] 51. **Onboarding shows literal backticks.** DONE (#76, checked on the simulator). "Mercury asks Google for What was found:
+      \`gmail.readonly\`". `DataPromiseView.promise` takes a `String`, so
+      `Text` never parses the markdown.
+- [x] 52. **Outlet marks hide their letters.** DONE (#76, checked on the simulator). `SourceStack`'s overlapping What was found:
+      monograms cover each other's text ("AJ" reads as "\J" under "F"),
+      and four-letter marks like "CNBC" are too small to read.
+- [x] 53. **The story page's floating back button covers scrolled text.** DONE (#76, checked on the simulator). What was found:
+      With no bar background behind it, the first letters of the points
+      card sit under the button once you scroll.
+- [x] 54. **Swift 6 readiness.** DONE (#76): the two `AppState` isolation errors, `ShowNotesView`'s colours, the captured-var mutations in the observation tests, and the deprecated HFP option name. Two main-actor isolation violations What was found:
+      (`AppState.swift:799, 924`, calling `briefingId(for:)`) are errors
+      in the Swift 6 language mode. `ShowNotesView` still uses the colour
+      tokens ADR-012 deprecated, and three tests mutate a captured var
+      from concurrent code.
+- [ ] 55. **The cold open frames yesterday as today.** The same briefing
+      says "your calendar already shows a busy start to the day, with a
+      confirmed bus journey ... that departed yesterday". A trip that's
+      over isn't today's agenda. This is content selection, so add it to
+      the regression set (CLAUDE.md) before anyone tunes a prompt for it.
+- [ ] 56. **ElevenLabs returns 401 on every run.** Each run fails over to
+      Google, and the phone now says so (task 22's notice works). The
+      quota isn't coming back by itself; it's an owner call (ADR-006).
+
+- [ ] 57. **Give every script pass the date.** Only the outline pass is told
+      "DATE: Sunday, 11 October 2026"; the draft and both critique passes
+      rewrite the cold open without it. #75's guard holds the weekday in
+      code, but no regex catches "tomorrow is Tuesday" or a past event
+      framed as today (task 55). A prompt change, so it needs the regression
+      set run (CLAUDE.md), which costs Gemini quota against the monthly cap:
+      do it together with task 55.
+- [ ] 58. **Make `AppState`'s player injectable.** `AppState` builds its own
+      `PlaybackCoordinator`, so no unit test can put it in a playing state.
+      The browse-while-playing wiring (#76) is tested only as pure decisions
+      and on the simulator. Injecting the coordinator would let a test pin
+      "browsing never calls `downloadAudio` while another briefing plays".
+- [ ] 59. **A branch with unmerged work: `feat/transactional-mail-off-the-desk`.**
+      A LOCAL branch in the main checkout, never pushed (so it is not on
+      GitHub): a WIP commit (`cba74fc`) with no PR, kept when the merged branches were
+      pruned on 2026-10-11. Task 27's desk half shipped in #55, probably
+      making it obsolete, but that is the owner's call to confirm before the
+      branch is deleted.
+
+- [ ] 60. **CI builds iOS with Xcode 16.4; the app is built with Xcode 27.**
+      `ios.yml` runs on `macos-15`, whose Xcode is 16.4 (Swift 6.1, the
+      iOS 18 SDK). The first push of #76 used an iOS 26 API behind
+      `#available` and failed to compile in CI only; it is now also behind
+      `#if compiler(>=6.2)`. Either pin a newer Xcode on the runner, or keep
+      guarding every new-SDK call at compile time and accept that CI never
+      compiles those paths. Decide before more iOS 26 APIs land.
+
+Still open from earlier sections, in the order they now rank: **21** (word
+timings that survive the cache, plus `BriefingManifest.schema_version`),
+**34** (continuity between briefings), and **28 / 31**, which wait on the
+owner decision above.
+
+Corrected in the same change that wrote this section: task 18 was done
+(#48; "6 researched" appears in production run 35534389198) but still
+unchecked, and two of the LOG's standing facts described a system that no
+longer exists. **Task 16 stays open**, despite the "DONE" in its text. That
+note refers to subject extraction. The deliverable, the four buckets
+(needs a reply / waiting on someone / informational / noise), was never
+built: the code has `priority` and `requires_response` and no others.
+cubic caught this on #72 after the first draft had ticked it.
 
 ## Phase 4 — Depth (weeks 16 to 19)
 

@@ -1770,6 +1770,43 @@ look on the simulator did. The card now asks whether the briefing on screen
 is the one playing, and a tap on a browsed day plays that day. This is
 CLAUDE.md's "review for what is newly reachable" in a single afternoon.
 
+## 2026-10-11 - a backlog, and three docs that had stopped being true
+
+A pass over the roadmap, this log, the open PRs and the code produced the
+backlog now at the bottom of `docs/ROADMAP.md` (tasks 38-44, plus two owner
+decisions). A cloud ultrareview of the open stack, #68-#71 at 38 files,
+found nothing. The code has no TODO or FIXME markers. The real findings were
+all about the gap between what was written and what is true.
+
+**`gh pr merge --delete-branch` closes the PRs stacked on top.** Merging #68
+deleted `cl-/kind-clarke-7grdd4`, and GitHub CLOSED #69, which was based on
+it, rather than retargeting it to `main`. A closed PR can only be reopened
+while its base branch exists, so recovery means restoring the branch first.
+For a stack: retarget the next PR to `main`, THEN delete the branch.
+
+**Two sessions fixed one bug in parallel.** #68's ca7a8d0 gave the ranker a
+clock and made the default briefing id timezone-aware; #69 did the first of
+those and #70 the second, on branches stacked on top of #68. The second arrival found out through a
+merge conflict. Nothing was lost, because the merge kept the stricter
+version, but two sessions spent an afternoon on one fix. When a stack is
+open, a new commit on a lower branch should be read by whoever owns the
+branches above it.
+
+**Standing facts decay without anyone noticing.** Two of the facts below
+were wrong. "There is no iOS job and no Worker job in CI" had been false
+since #44 on 2026-09-13. "`follow_ups` ... still open as task 24" was false
+from the day task 24 closed. Task 18 was done but unchecked. Task 16 shows
+the opposite failure: it says "DONE" in its text, but about a different
+deliverable, and the first draft of this pass ticked it on that word alone.
+The four triage buckets it promises were never built (cubic, on #72). Every
+one of these reads as authoritative, which is worse than reading as
+uncertain. Both facts are corrected. A fact here is only as
+current as the last time someone checked it.
+
+**The date that matters is 25 October.** That's the DST change. #68's
+morning floor in the Worker is the fix for what it unmasks, and it is inert
+until `wrangler deploy` runs (task 39).
+
 ## Standing facts worth not rediscovering
 
 - **The Worker has no CI deploy.** Merging is not shipping. A route on `main`
@@ -1789,9 +1826,6 @@ CLAUDE.md's "review for what is newly reachable" in a single afternoon.
   `else` branch returns `{}` gives a green end-to-end test of a code path
   that never executed. `app/pipeline/census.py` now runs this check on every
   briefing rather than leaving it to whoever remembers.
-- **`follow_ups` is built from the literal string `"(none)"`**
-  (`script_chain.py:1347`) — the same shape as `n_stories=0`, still open as
-  task 24.
 - **The Gemini project has a monthly SPEND CAP.** When it is reached every
   call returns `429 ResourceExhausted: Your project has exceeded its
   monthly spending cap`, and every briefing run fails outright — there is
@@ -1799,6 +1833,8 @@ CLAUDE.md's "review for what is newly reachable" in a single afternoon.
   raise it, at https://ai.studio/spend. Generating a briefing to verify a
   change costs real quota on top of the four scheduled runs a day, so
   prefer ONE live verification run.
-- **Two suites run only by hand.** There is no iOS job and no Worker job in
-  CI. The Worker test written specifically to stop the next `music_set`-class
-  bug is itself run by nothing.
+- **The iOS and Worker suites run in CI, but only on their own paths.**
+  `ios.yml` (macos-15, `xcodebuild build` and `test`) and `worker.yml` arrived
+  in #44 and are path-filtered to `ios/**` and `worker/**`. A backend-only PR
+  doesn't run them, and a green iOS job still means compiled-and-unit-tested,
+  not seen on a screen.
