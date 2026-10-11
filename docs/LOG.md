@@ -1470,7 +1470,7 @@ voice was the backup.
 Found by reading production logs while testing the stack. Every run checked
 from 2026-10-08 to 10-11 logged the same thing: "semantic quality gates: N
 claim(s), N unjudged", with N between 67 and 93, and "threshold probe: 20
-near-threshold pair(s) ... 0 judged".
+near-threshold pair(s) ... examined, 0 judged the same event, 20 unjudged".
 
 The cause was one line. `judgment_briefing_budget_seconds` is documented as
 "a ceiling on ALL judgment work in one briefing", but `_remaining()`

@@ -470,3 +470,39 @@ async def test_overlapping_calls_are_charged_once(monkeypatch):
     assert provider._remaining() == pytest.approx(8.0), (
         "12 seconds of overlapping judging was charged as more than 12"
     )
+
+
+async def test_triage_time_is_charged_to_the_same_budget(monkeypatch):
+    """Triage spends from the same budget as the gates. It is the first
+    judgment call of a briefing, so it is the one most likely to use the
+    budget up."""
+    import typesafe_sdk
+
+    from app.providers import typesafe_jev
+
+    clock = [1000.0]
+
+    class _Scored:
+        score = 0.5
+        confidence = 0.5
+
+    class _TriageClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *e): return False
+        async def system_one(self, *, state, questions):
+            clock[0] += 18.0  # triage takes eighteen of the twenty seconds
+            return type("R", (), {
+                "scores": {"consequence": _Scored()},
+                "nouls": {"awaiting_reply": _JevAnswer(0.1), "bulk": _JevAnswer(0.1)},
+            })()
+
+    provider = _jev_provider(monkeypatch, _TriageClient, clock)
+    monkeypatch.setattr(typesafe_jev, "_questions", lambda: {})
+    judged = await provider.triage_emails([{"subject": "s"}])
+
+    assert judged[0] is not None
+    assert provider._remaining() == pytest.approx(2.0)
+    monkeypatch.setattr(typesafe_sdk, "AsyncTypeSafeClient", _fake_jev_client())
+    # Two seconds are left, so the gates are still asked.
+    assert await provider.judge_claims({}, [Claim("g", "i")]) == {"g": 0.9}
