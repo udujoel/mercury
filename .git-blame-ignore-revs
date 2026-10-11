@@ -1,0 +1,5 @@
+# Formatting-only commits, skipped by `git blame` (GitHub honours this file
+# by default; locally: git config blame.ignoreRevsFile .git-blame-ignore-revs).
+
+# chore: format the backend once, and keep it formatted (#79)
+818b80a7b5a33fa448b3aabe1d4b84e776ca1986
