@@ -161,3 +161,27 @@ def drain_live_fetch_attempts() -> list[str]:
     attempts = list(_live_fetch_attempts)
     _live_fetch_attempts.clear()
     return attempts
+
+
+@pytest.fixture(autouse=True)
+def _ranker_never_reads_the_wall_clock(monkeypatch):
+    """Make `score_stories` fail if a test lets it fall back to real time.
+
+    Recency is `exp(-hours / 12)` measured from `now`. Fixtures are stamped
+    on fixed dates, so a ranking test that let the ranker read the wall
+    clock passed the week it was written and decayed after: seventeen days
+    on, every story's recency was ~1e-15, the scores tied, and four tests
+    in `test_interests_reach_the_ranker.py` failed on an untouched main on
+    2026-10-07. `generate_briefing` captures its own run clock and passes
+    it, so only a direct caller that omits `now=` reaches this.
+    """
+    from app.pipeline import ranking
+
+    def _refuse():
+        raise AssertionError(
+            "score_stories read the wall clock inside a test. Pass now= with "
+            "a clock just after the fixtures' newest timestamp, so the "
+            "result does not depend on the day the suite runs."
+        )
+
+    monkeypatch.setattr(ranking, "_wall_clock", _refuse)

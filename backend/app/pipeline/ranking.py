@@ -39,16 +39,20 @@ def score_stories(
     `cluster_id` is not unique: `clustering._singleton` derives it from
     `Item.id`, which is a content hash that collides for two emails sharing
     a sender, subject and timestamp.
+
+    `now` is the instant recency is measured from. `generate_briefing`
+    reads it once and passes it; None falls back to the wall clock for any
+    other caller. A naive value is taken as UTC, the same rule `_aware`
+    applies to item timestamps.
+
+    Tests always pass it. Read from the wall clock, a fixture stamped on a
+    fixed date ages a day for every day the suite goes unrun, and
+    seventeen days on `exp(-hours / 12)` is ~1e-15 for every story, so
+    scores tie and the sort falls back to input order. That failed four
+    tests on an untouched main on 2026-10-07.
     """
     s = get_settings()
-    # Recency is measured from `now`, which a run passes once so every story
-    # is aged against the same instant. Reading the wall clock here made the
-    # ranking depend on WHEN it was asked: tests with pinned fixtures drifted
-    # until the recency term decayed to ~1e-15 for every story and the scores
-    # tied (four failed on main on 2026-10-07). The default keeps a caller
-    # that passes nothing working exactly as before.
-    if now is None:
-        now = datetime.now(UTC)
+    now = _aware(_wall_clock() if now is None else now)
 
     attendee_names = {
         a.lower()
@@ -150,6 +154,12 @@ def score_stories(
         )
 
     return sorted(stories, key=lambda x: x.score, reverse=True)
+
+
+def _wall_clock() -> datetime:
+    """The one place ranking reads real time. A seam so the suite can
+    forbid it (`tests/conftest.py`)."""
+    return datetime.now(UTC)
 
 
 def _aware(dt: datetime) -> datetime:

@@ -1465,6 +1465,132 @@ voice was the backup.
 **Deployment, again.** The Worker change does nothing until someone runs
 `wrangler deploy`. Merging is not shipping (see the standing facts below).
 
+## 2026-10-10 - the ranker is handed its clock instead of reading one
+
+#69, stacked on #68. Both branches added `now` to `score_stories` on the
+same day, and the merge keeps #68's shape and timezone-aware default id with
+this entry's additions on top: `generate_briefing` takes `now` (None meaning
+the wall clock), `_build_world_stories` requires it, a naive `now` is taken
+as UTC, and the suite refuses a wall-clock read outright.
+
+The benefit is injectability, not run-wide consistency. `score_stories`
+already read the clock once per call, before its loop, so stories in a run
+were never aged against different instants; and ingestion, the digest and
+stitching still read their own clocks. The entry above says otherwise, and
+so did the first draft of this one, until review of #69 caught it.
+
+**Why `now` is optional in one place and required in the other.**
+`score_stories` keeps `None` as "use the wall clock", because it is a public
+function and a caller outside the pipeline should not have to know about run
+clocks. `_build_world_stories` has exactly one production caller, so `now` is
+a required keyword there: a default would have let every test that calls it
+inherit the real date without saying so, which is the bug.
+
+**A guard, not a convention.** The monkeypatch in #68 fixed one file, while
+`test_relevance.py` had the same hazard and had papered over it with
+`pytest.approx` in #66 (two calls a few microseconds apart decayed
+differently). An instruction to "pass `now=` in tests" would have held until
+the next new test file. So the wall-clock read now lives in
+`ranking._wall_clock`, and `tests/conftest.py` makes it raise for every test.
+One test swaps in a fixed clock to keep the `None` fallback covered. With the
+clock pinned, the `approx` in `test_relevance.py` went back to `==`, and an
+exact comparison there is now the stronger assertion it was meant to be.
+
+**The guard only sees `now=None`.** Review of #69 pointed out that a caller
+reading `datetime.now(UTC)` itself and passing it on gets straight past the
+conftest guard, because the ranker is still handed a clock. Checked by
+hand: a fresh `datetime.now(UTC)` in place of `run_started_at` survived the
+whole suite, and one in place of `now=now` was caught only by the four
+ordering tests, and only because their fixtures happen to be old by now.
+On the day they were written it would have passed. So the forwarding tests
+assert IDENTITY with the clock they passed, which an aware datetime from
+anywhere else cannot satisfy. Deleting either argument outright fails
+anyway, as a missing required keyword or on the guard.
+
+**A naive `now` is taken as UTC.** Item timestamps already went through
+`_aware`; an injectable clock that skipped it raised a TypeError on the
+first subtraction, from inside the world segment.
+
+**What still reads the real date.** Production runs rank against the wall
+clock by design, and so does a fixture run that does not pass `now`. RSS
+ingestion anchors its recency window on the fixture's newest entry
+(`_fixture_snapshot_time`), so an offline run replayed days later filters by
+the snapshot's time and ranks by today's, and every story's recency is then
+~0. That predates this change; `now=` is now the way to fix it for a replay,
+and whether `generate_briefing` should default to the snapshot time is a
+separate decision.
+
+**One test fails in the cloud sandbox and nowhere else.**
+`test_net_guard.py::test_public_url_allowed` resolves `arstechnica.com`, and
+the sandbox's DNS cannot. It failed identically before this change.
+
+## 2026-10-10 - the default briefing id was the one date still read in UTC
+
+`generate_briefing` stamped a missing `briefing_id` from the UTC instant
+while every other date in the run (`_parse_briefing_date`, `cli._user_now`,
+`cron._target_briefing_id`) is the user's local day. At 00:11 in Lisbon that
+names yesterday, so a run would land on yesterday's stored briefing while
+its calendar segment talks about today. That is the same bug as the
+"Friday, August 21st" cold open, one function over.
+
+**Two fixes for one bug.** #68's ca7a8d0 independently changed the same
+default to the user's day, through an inline `ZoneInfo` lookup that fell
+back to UTC silently. The two met as a merge conflict on 2026-10-11. The
+merge kept this version, which also pins a naive `now` and hands the run's
+clock to `_parse_briefing_date`, and #71 removes the inline lookup's kind
+altogether.
+
+**Fixed although nothing reaches it.** The CLI, the API and the cron job
+all pass an id, so only tests hit the default. It was fixed anyway because
+a default that disagrees with the rest of the codebase is the one a future
+caller inherits without reading. That is how this project's five earlier
+date bugs arrived.
+
+**Why the zone helper lives in `generate.py`.** There are now four copies
+of "resolve USER_TIMEZONE, fall back to UTC": `cli._user_now`,
+`cron._user_tz`, `api.briefing._today_briefing_id` and `generate._user_tz`.
+`ingestion/calendar.py` makes a fifth lookup with no fallback at all, so a
+bad zone fails the calendar source outright. `generate._user_tz` was lifted
+out of `_parse_briefing_date` so the id and the greeting cannot drift apart.
+Importing `cron`'s copy would point the pipeline at the scheduler, which
+calls it. Collapsing them into `app/core` is a separate change. The first
+draft of this entry counted three copies and said only the CLI logs a bad
+zone name. Both were wrong: cubic found the API's copy, `cron._user_tz` logs
+too, and the silent copies were this one and the API's. Review of #70 caught
+it, and this one now logs.
+
+**A naive `now` had to be pinned for this to hold.** `astimezone()` reads
+a naive datetime as the HOST's local time, while `ranking._aware` reads it
+as UTC. Without normalising, a naive `now` would have named the day from one
+instant and ranked from another, and the day named would differ between a
+Lisbon laptop and a UTC runner. The test pins the process `TZ` to Tokyo so
+the difference shows on any host. A test that relied on the machine's zone
+would pass on CI whether or not the fix was there.
+
+**Test dates chosen to bite.** 2026-03-29 is the night Europe's clocks go
+forward, so Lisbon is already UTC+1 at 23:30Z. Los Angeles is the opposite
+direction, so a fix that always added a day would fail it.
+
+**What review of #70 found.** A misspelt USER_TIMEZONE fell back to UTC
+without a word, which quietly reinstates the bug this entry is about. It now
+logs an error. `_parse_briefing_date` also fell back to the wall clock for an
+id that is not a date, so a replay at `now=` greeted whatever day it was
+re-run on. It now takes the run's clock, as a required keyword like
+`_build_world_stories`. Neither was reachable from production. One finding
+was declined: the default id has no `-HHMM` suffix, so two default runs on
+one day share an id. That is deliberate. The scheduler names briefings the
+same bare way, and collision policy belongs to the caller: cron skips an
+existing id and the CLI picks a free one. `generate_briefing` stores what
+it is told.
+
+**Two failures that were the sandbox, not the code.** Inside the Claude
+Code Bash sandbox, `test_generate_e2e.py::test_generate_briefing_end_to_end_produces_audio_and_valid_manifest`
+and `test_net_guard.py::test_public_url_allowed` fail (ffmpeg cannot use a
+temp file, and there is no DNS). The first draft of this entry blamed the
+ffmpeg failure on Homebrew's ffmpeg 9.0.2. That was wrong. Run outside the
+sandbox, the full suite is 1044 passed. Confirm by running unsandboxed
+before diagnosing either of these.
+
 ## 2026-10-11 - no briefing ran from 23 to 30 September, and nothing said so
 
 Found while pulling production runs to judge the 0.78 threshold. Of the 116

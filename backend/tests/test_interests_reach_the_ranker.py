@@ -103,7 +103,9 @@ async def test_the_centroid_reaches_score_stories_from_the_real_path(
         "weight goes on cancelling and the segment stays a recency sort"
     )
     assert seen["followed_entities"] == {"Reuters"}
-    assert seen["now"] == CLOCK, (
+    # Identity, not equality: a `datetime.now(UTC)` read on the way down
+    # would also be an aware datetime, and only `is` tells them apart.
+    assert seen["now"] is CLOCK, (
         "the ranker aged stories against something other than the run's "
         "clock, so its order depends on the day the test runs"
     )
@@ -140,7 +142,9 @@ async def test_no_interests_leaves_the_ranking_exactly_as_it_was():
 
     assert await _world() == await _world(interests=[])
     # And the ranker really does fall back to its constant.
-    assert score_stories([], calendar_events=[], topic_centroid=None) == []
+    assert score_stories(
+        [], calendar_events=[], topic_centroid=None, now=CLOCK
+    ) == []
 
 
 async def test_an_empty_setting_says_so_every_morning(caplog):
@@ -228,6 +232,7 @@ async def test_generate_briefing_itself_forwards_the_interests(
         research_provider=None,
         interests=["war in Ukraine"],
         followed_entities=["Reuters"],
+        now=CLOCK,
     )
 
     assert seen.get("topic_centroid") is not None, (
@@ -235,6 +240,12 @@ async def test_generate_briefing_itself_forwards_the_interests(
         "back to a recency sort and every test above still passes"
     )
     assert seen.get("followed_entities") == {"Reuters"}
+    # The clock `generate_briefing` was given reaches the ranker unchanged.
+    # Dropping the argument fails earlier, as a missing required keyword on
+    # `_build_world_stories`; this catches the subtler mutation, a fresh
+    # `datetime.now(UTC)` passed in its place, which the conftest guard
+    # cannot see because the ranker is still handed a clock.
+    assert seen.get("now") is CLOCK
 
 
 async def test_the_scheduled_job_forwards_the_settings(monkeypatch):
@@ -444,7 +455,8 @@ async def test_the_interest_term_points_the_right_way():
             now=CLOCK,
             emails=[], articles=[old_dark_mode, fresh_strike], events=[],
             embeddings=FakeEmbeddingProvider(),
-            length=BriefingLength.STANDARD, interests=interests,
+            length=BriefingLength.STANDARD,
+            interests=interests,
         )
         return [s.canonical.source_name for s in world]
 
