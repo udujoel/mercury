@@ -13,9 +13,10 @@ the spike's raw dicts.
 from __future__ import annotations
 
 import re
+from datetime import datetime
 
 from app.core.config import get_settings
-from app.core.schemas import Turn
+from app.core.schemas import Segment, Turn
 
 # ──────────────────────────────────────────────────────────────
 # Rule 1 — no filler words. Naturalness comes from the TTS model.
@@ -174,6 +175,107 @@ _STOPWORDS = {
     "It", "We", "You", "Your", "My", "Our", "Their", "His", "Her", "Its",
     "For", "With", "About", "Into", "Over", "Under", "Between", "Across",
 }
+
+
+# ──────────────────────────────────────────────────────────────
+# Rule 3, the one fact the hosts always state: what day it is.
+# ──────────────────────────────────────────────────────────────
+
+_WEEKDAYS = (
+    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+)
+_MONTHS = (
+    "January", "February", "March", "April", "May", "June", "July",
+    "August", "September", "October", "November", "December",
+)
+_WD = "|".join(_WEEKDAYS)
+_MO = "|".join(_MONTHS)
+# "Monday, October 11th" / "Monday October 11" / "Monday, 11 October" /
+# "Monday, the 11th of October".
+_DATED_WEEKDAY = re.compile(
+    rf"\b(?P<wd>{_WD}),?\s+(?:the\s+)?"
+    rf"(?:(?P<m1>{_MO})\s+(?P<d1>\d{{1,2}})(?:st|nd|rd|th)?"
+    rf"|(?P<d2>\d{{1,2}})(?:st|nd|rd|th)?\s+(?:of\s+)?(?P<m2>{_MO}))\b",
+    re.IGNORECASE,
+)
+# "It's Monday" / "It is Monday" / "Today is Monday" / "Happy Monday".
+_TODAY_WEEKDAY = re.compile(
+    rf"\b(?:it's|it’s|it is|today is|happy)\s+(?P<wd>{_WD})\b", re.IGNORECASE
+)
+
+
+def correct_spoken_date(
+    turns: list[Turn], date: datetime
+) -> tuple[list[Turn], list[dict]]:
+    """Make the weekday the hosts say the weekday it is.
+
+    The 2026-10-11 briefing opened "It's Monday, October 11th"; it was a
+    Sunday. Only the outline pass is told the date, and a model that
+    derives a weekday gets it wrong often enough that this is the third
+    time (ROADMAP task 48). The grounding gate can't help, because a
+    weekday is a word that appears in any inbox.
+
+    Corrects ONLY the weekday word, and only where the sentence is
+    unambiguously about today:
+
+    - a weekday followed by TODAY's month and day, in any segment;
+    - "it's / today is / happy <weekday>" in the cold open, unless a
+      different date follows it.
+
+    A weekday followed by a DIFFERENT date is left alone. If that is the
+    cold open's "It's ...", it is reported as `other_date`: the date itself
+    is wrong, and swapping the weekday would make it wrong in a new way.
+
+    Returns new turns and a list of what changed or was reported. The
+    turns passed in are not mutated.
+    """
+    actual = date.strftime("%A")
+    month, day = date.strftime("%B"), date.day
+    out: list[Turn] = []
+    found: list[dict] = []
+
+    for i, turn in enumerate(turns):
+        text = turn.text
+        spans: list[tuple[int, int]] = []
+
+        for m in _DATED_WEEKDAY.finditer(text):
+            said_month = (m.group("m1") or m.group("m2")).capitalize()
+            said_day = int(m.group("d1") or m.group("d2"))
+            if (said_month, said_day) != (month, day):
+                continue
+            if m.group("wd").capitalize() != actual:
+                spans.append(m.span("wd"))
+                found.append(
+                    {"turn_index": i, "said": m.group("wd"), "kind": "weekday"}
+                )
+
+        if turn.segment == Segment.COLD_OPEN:
+            for m in _TODAY_WEEKDAY.finditer(text):
+                dated = _DATED_WEEKDAY.match(text, m.start("wd"))
+                if dated:
+                    said_month = (dated.group("m1") or dated.group("m2")).capitalize()
+                    said_day = int(dated.group("d1") or dated.group("d2"))
+                    if (said_month, said_day) != (month, day):
+                        found.append({
+                            "turn_index": i,
+                            "said": dated.group(0),
+                            "kind": "other_date",
+                        })
+                    # Today's date: the loop above has already handled it.
+                    continue
+                if m.group("wd").capitalize() != actual:
+                    spans.append(m.span("wd"))
+                    found.append(
+                        {"turn_index": i, "said": m.group("wd"), "kind": "weekday"}
+                    )
+
+        for start, end in sorted(set(spans), reverse=True):
+            text = text[:start] + actual + text[end:]
+        if text != turn.text:
+            turn = turn.model_copy(update={"text": text})
+        out.append(turn)
+
+    return out, found
 
 
 def check_grounding(turns: list[Turn], source_text: str) -> list[dict]:
