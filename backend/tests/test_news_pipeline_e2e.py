@@ -447,6 +447,12 @@ ACQUISITION_BODY = (
 )
 
 
+# After every fixture in this section (the newest is stamped 06:00 on
+# 2026-08-31), so ranking ages them against a fixed instant rather than the
+# day the suite happens to run.
+WORLD_CLOCK = datetime(2026, 8, 31, 7, 0, tzinfo=UTC)
+
+
 async def _world(emails, articles, length=BriefingLength.STANDARD):
     # Drops the third return value — every clustered story, which the digest
     # needs and these gate tests do not.
@@ -456,6 +462,7 @@ async def _world(emails, articles, length=BriefingLength.STANDARD):
         events=[],
         embeddings=FakeEmbeddingProvider(),
         length=length,
+        now=WORLD_CLOCK,
     )
     return world, inbox
 
