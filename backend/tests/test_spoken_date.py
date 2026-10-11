@@ -123,3 +123,58 @@ async def test_the_shipped_script_carries_the_corrected_weekday():
     cold_open = " ".join(t.text for t in turns if t.segment == Segment.COLD_OPEN)
     assert "It's Monday" not in cold_open
     assert "It's Friday" in cold_open
+
+
+# ── review of #75 ─────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("said", "fixed", "kind"),
+    [
+        # Spelled ordinals, the style the fake LLM's own cold open uses.
+        (
+            "It's Monday, the eleventh of October.",
+            "It's Sunday, the eleventh of October.",
+            "weekday",
+        ),
+        (
+            "It's Saturday, the twenty-first of October.",
+            "It's Saturday, the twenty-first of October.",
+            "other_date",
+        ),
+        # A spelled date that is NOT today must not have its weekday swapped.
+        (
+            "It's Monday, the twelfth of October.",
+            "It's Monday, the twelfth of October.",
+            "other_date",
+        ),
+    ],
+)
+def test_spelled_out_dates_are_read_as_dates(said, fixed, kind):
+    turns, corrections = correct_spoken_date([_turn(said)], SUNDAY)
+
+    assert turns[0].text == fixed
+    assert [c["kind"] for c in corrections] == [kind]
+
+
+def test_a_wrong_year_is_reported_not_rewritten():
+    said = "It's Sunday, October 11th, 2025."
+    turns, corrections = correct_spoken_date([_turn(said)], SUNDAY)
+
+    assert turns[0].text == said
+    assert [c["kind"] for c in corrections] == ["other_date"]
+
+
+def test_names_do_not_depend_on_the_host_locale(monkeypatch):
+    """`strftime("%A")` is localised; the script is English whatever the
+    host's LC_TIME says."""
+    import app.pipeline.quality as quality
+
+    class _Portuguese(type(SUNDAY)):
+        def strftime(self, fmt):
+            return {"%A": "domingo", "%B": "outubro"}.get(fmt, super().strftime(fmt))
+
+    sunday = _Portuguese(2026, 10, 11, tzinfo=SUNDAY.tzinfo)
+    turns, _ = quality.correct_spoken_date([_turn("It's Monday.")], sunday)
+
+    assert turns[0].text == "It's Sunday."
