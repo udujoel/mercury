@@ -32,7 +32,6 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from app.core.config import get_settings
 from app.core.providers import EmbeddingProvider, LLMProvider, TTSProvider
@@ -45,6 +44,7 @@ from app.core.schemas import (
     SourceType,
     Story,
 )
+from app.core.tz import user_tz
 from app.pipeline.census import RunCensus
 from app.pipeline.cluster_verify import probe_threshold, verify_stories
 from app.pipeline.dedup import build_stories
@@ -130,6 +130,10 @@ async def generate_briefing(
     length: BriefingLength = BriefingLength.STANDARD,
     embeddings: EmbeddingProvider | None = None,
     previous_degraded_attempts: int = 0,
+    # The instant ranking ages stories against. None means the wall clock,
+    # which is what every production caller wants; a test or a replay of a
+    # saved snapshot passes the moment the snapshot represents instead.
+    now: datetime | None = None,
     fetch_emails: Any = _real_fetch_emails,
     fetch_events: Any = _real_fetch_events,
     fetch_weather: Any = _real_fetch_weather,
@@ -194,19 +198,23 @@ async def generate_briefing(
     # that forgets — which is exactly when writing to local disk instead of R2
     # would go unnoticed.
     storage = storage or build_storage()
-    # One instant for the whole run. Ranking ages every story against it, so
-    # a story's recency cannot depend on how long ingestion and clustering
-    # took before the ranker happened to read the clock.
-    run_started = datetime.now(UTC)
-    # The default id is the USER's day, never UTC's: at 00:30 in Lisbon in
-    # summer the UTC date is still yesterday. Every deployed caller names
-    # the id itself, so this guards the caller that forgets.
-    try:
-        user_tz = ZoneInfo(settings.user_timezone)
-    except Exception:
-        user_tz = UTC
-    briefing_id = briefing_id or run_started.astimezone(user_tz).strftime("%Y-%m-%d")
-    briefing_date = _parse_briefing_date(briefing_id)
+    # Read once here and handed to the ranker, so the only wall-clock read
+    # on the ranking path is one a caller can replace. Not a run-wide clock:
+    # ingestion, the digest and stitching still read their own.
+    run_started_at = now if now is not None else datetime.now(UTC)
+    # A naive `now` means UTC, as it already does to the ranker
+    # (`ranking._aware`). Left naive, `astimezone` below would read it as the
+    # HOST's local time, and the id would name a different day on a laptop
+    # than on a UTC CI runner.
+    if run_started_at.tzinfo is None:
+        run_started_at = run_started_at.replace(tzinfo=UTC)
+    # The id is the user's local day, the same day `_parse_briefing_date`
+    # greets them with. Formatting the UTC instant filed a run at 00:11 in
+    # Lisbon under yesterday's id, on top of yesterday's stored briefing.
+    briefing_id = briefing_id or run_started_at.astimezone(user_tz()).strftime(
+        "%Y-%m-%d"
+    )
+    briefing_date = _parse_briefing_date(briefing_id, now=run_started_at)
 
     (emails, events, weather, articles), degraded = await _ingest_concurrently(
         fetch_emails=fetch_emails,
@@ -282,7 +290,7 @@ async def generate_briefing(
             length=length,
             interests=interests,
             followed_entities=followed_entities,
-            now=run_started,
+            now=run_started_at,
         )
 
         # Semantic triage before ordering (ADR-014). Runs on `inbox_emails`
@@ -931,10 +939,10 @@ async def _build_world_stories(
     events: list[Any],
     embeddings: EmbeddingProvider | None,
     length: BriefingLength,
+    now: datetime,
     interests: list[str] | None = None,
     followed_entities: list[str] | None = None,
     judgment_provider: Any = None,
-    now: datetime | None = None,
 ) -> tuple[list[Story], list[Item], list[Story]]:
     """Cluster the day's news and decide what the world segment gets.
 
@@ -970,6 +978,11 @@ async def _build_world_stories(
     appear twice however many newsletters covered it. Absorbed is computed
     after the cap, so a newsletter whose story missed the cut is still read
     out as email rather than vanishing from the briefing entirely.
+
+    `now` is required rather than defaulted: it is the clock ranking ages
+    every story against, and the one caller that should supply it from
+    the wall clock is `generate_briefing`, once per run. A default here
+    would let a test inherit the real date without saying so.
     """
     clusterable = emails + articles
     if not clusterable:
@@ -1125,20 +1138,14 @@ def _scrub_email_bodies(items: list[Item]) -> None:
         item.body = ""
 
 
-def _parse_briefing_date(briefing_id: str) -> datetime:
+def _parse_briefing_date(briefing_id: str, *, now: datetime) -> datetime:
     """`briefing_id` is normally a "YYYY-MM-DD" string (see the manifest's
     docstring in app/core/schemas.py), but `generate_script`'s `date`
-    parameter is typed as a real `datetime`. Parse it back out; fall back
-    to now() for a caller-supplied id that isn't date-shaped."""
-    # The date must be resolved in the USER's timezone, never UTC. Generated
-    # at 00:11 in Europe/Lisbon (UTC+1), datetime.now(UTC) still reads as the
-    # previous day — so the cold open announced "Friday, August 21st" while
-    # the calendar segment, built from real events, talked about the 22nd.
-    # The hosts contradicted each other inside one briefing.
-    try:
-        tz = ZoneInfo(get_settings().user_timezone)
-    except Exception:
-        tz = UTC
+    parameter is typed as a real `datetime`. Parse it back out; for a
+    caller-supplied id that isn't date-shaped, fall back to `now` (the
+    run's clock, aware) rather than the wall clock, so a replay greets the
+    morning it replays."""
+    tz = user_tz()
     # The DAY, whether or not the id carries a time of day.
     #
     # Ids gained a `-HHMM` suffix so several briefings can share a date
@@ -1155,4 +1162,4 @@ def _parse_briefing_date(briefing_id: str) -> datetime:
             briefing_day(briefing_id), "%Y-%m-%d"
         ).replace(tzinfo=tz)
     except ValueError:
-        return datetime.now(tz)
+        return now.astimezone(tz)

@@ -341,3 +341,168 @@ def test_a_gate_with_no_polarity_is_refused():
         _regrade_per_turn(
             [turn("x")], {"ground:0": 0.5}, [], "ground", kind="k",
         )
+
+
+# ── review findings (2026-10-11, ROADMAP task 47) ─────────────────────
+
+
+class _JevAnswer:
+    def __init__(self, value: float):
+        self.noul = value
+
+
+def _fake_jev_client(on_call=None, value: float = 0.9):
+    """An `AsyncTypeSafeClient` stand-in that answers every question with
+    `value`. `on_call` runs inside each request (to advance a fake clock,
+    say, or to await something)."""
+
+    class _Client:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *e): return False
+        async def system_one(self, *, state, questions):
+            if on_call is not None:
+                await on_call()
+            return type(
+                "R", (), {"nouls": {q: _JevAnswer(value) for q in questions}}
+            )()
+
+    return _Client
+
+
+def _jev_provider(monkeypatch, client, clock, budget: float = 20.0):
+    import typesafe_sdk
+
+    from app.core.config import Settings
+    from app.providers import typesafe_jev
+
+    monkeypatch.setattr(
+        "app.core.config.get_settings",
+        lambda: Settings(
+            typesafe_api_key="k", judgment_briefing_budget_seconds=budget
+        ),
+    )
+    monkeypatch.setattr(typesafe_sdk, "AsyncTypeSafeClient", client)
+    # The module's own clock seam, not `time.monotonic`: asyncio's event
+    # loop reads `time.monotonic` for every timer, so freezing it there
+    # would freeze the loop's timeouts too.
+    monkeypatch.setattr(typesafe_jev, "_clock", lambda: clock[0])
+    return typesafe_jev.JevJudgmentProvider()
+
+
+async def test_time_between_calls_does_not_spend_the_budget(monkeypatch):
+    """The budget is time spent JUDGING, not time since the first judgment.
+
+    It was a wall-clock window opened by the first call. Triage and
+    cluster verification make that call before the script exists, and the
+    semantic gates run about two minutes later, after script generation. So
+    in every production run checked (2026-10-08 to 2026-10-11) the window
+    had closed before the gates ran: 67-93 claims a run, all unjudged, and
+    rule 3's grounding gate only ever ran as its keyword fallback.
+    """
+    clock = [1000.0]
+    asked = []
+
+    async def record():
+        asked.append(1)
+
+    provider = _jev_provider(monkeypatch, _fake_jev_client(record), clock)
+
+    # Cluster verification, before the script exists.
+    first = await provider.judge_claims({"x": 1}, [Claim("verify:0", "i")])
+    # Script generation: two minutes in which nothing is judged.
+    clock[0] += 120.0
+    # The semantic gates, on the finished script.
+    second = await provider.judge_claims({"x": 1}, [Claim("ground:0", "i")])
+
+    assert first == {"verify:0": 0.9}
+    assert second == {"ground:0": 0.9}, (
+        "the gates were refused a budget that judging had barely touched"
+    )
+    assert len(asked) == 2
+
+
+async def test_time_spent_judging_still_spends_the_budget(monkeypatch):
+    """The other half: the ceiling still holds across calls, counted in time
+    actually spent inside them."""
+    import typesafe_sdk
+
+    clock = [1000.0]
+
+    async def fifteen_seconds():
+        clock[0] += 15.0
+
+    provider = _jev_provider(monkeypatch, _fake_jev_client(fifteen_seconds), clock)
+    await provider.judge_claims({}, [Claim("a", "i")])  # 15s spent
+    await provider.judge_claims({}, [Claim("b", "i")])  # 30s spent
+
+    class _Forbidden:
+        def __init__(self, *a, **k):
+            raise AssertionError("a third call was made past the budget")
+
+    monkeypatch.setattr(typesafe_sdk, "AsyncTypeSafeClient", _Forbidden)
+    assert await provider.judge_claims({}, [Claim("c", "i")]) == {"c": None}
+
+
+async def test_overlapping_calls_are_charged_once(monkeypatch):
+    """Two judgment calls running at the same time cost the wall time they
+    overlap, not the sum of both. Every call is awaited in turn today, so
+    this guards the first change that gathers two of them."""
+    import asyncio
+
+    clock = [1000.0]
+    both_inside = asyncio.Event()
+    inside = []
+
+    async def overlap():
+        inside.append(1)
+        if len(inside) == 2:
+            clock[0] += 12.0  # twelve seconds pass while BOTH are in flight
+            both_inside.set()
+        await both_inside.wait()
+
+    provider = _jev_provider(monkeypatch, _fake_jev_client(overlap), clock)
+    await asyncio.gather(
+        provider.judge_claims({}, [Claim("a", "i")]),
+        provider.judge_claims({}, [Claim("b", "i")]),
+    )
+
+    assert provider._remaining() == pytest.approx(8.0), (
+        "12 seconds of overlapping judging was charged as more than 12"
+    )
+
+
+async def test_triage_time_is_charged_to_the_same_budget(monkeypatch):
+    """Triage spends from the same budget as the gates. It is the first
+    judgment call of a briefing, so it is the one most likely to use the
+    budget up."""
+    import typesafe_sdk
+
+    from app.providers import typesafe_jev
+
+    clock = [1000.0]
+
+    class _Scored:
+        score = 0.5
+        confidence = 0.5
+
+    class _TriageClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *e): return False
+        async def system_one(self, *, state, questions):
+            clock[0] += 18.0  # triage takes eighteen of the twenty seconds
+            return type("R", (), {
+                "scores": {"consequence": _Scored()},
+                "nouls": {"awaiting_reply": _JevAnswer(0.1), "bulk": _JevAnswer(0.1)},
+            })()
+
+    provider = _jev_provider(monkeypatch, _TriageClient, clock)
+    monkeypatch.setattr(typesafe_jev, "_questions", lambda: {})
+    judged = await provider.triage_emails([{"subject": "s"}])
+
+    assert judged[0] is not None
+    assert provider._remaining() == pytest.approx(2.0)
+    monkeypatch.setattr(typesafe_sdk, "AsyncTypeSafeClient", _fake_jev_client())
+    # Two seconds are left, so the gates are still asked.
+    assert await provider.judge_claims({}, [Claim("g", "i")]) == {"g": 0.9}

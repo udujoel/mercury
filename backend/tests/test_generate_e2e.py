@@ -17,6 +17,8 @@ modules on disk.
 
 from __future__ import annotations
 
+import os
+import time
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
@@ -221,6 +223,149 @@ async def test_generate_briefing_end_to_end_produces_audio_and_valid_manifest(st
     assert stored_manifest is not None
     assert stored_manifest.briefing_id == manifest.briefing_id
     assert stored_manifest.duration_ms == manifest.duration_ms
+
+
+async def _generate_on(storage, monkeypatch, *, tz_name, **kwargs):
+    """Run the pipeline offline as a user in `tz_name`.
+
+    Returns the manifest and the date the script chain was told to greet the
+    listener with, because the id and the greeting agreeing on the day is
+    the point of every test below.
+    """
+    from app.core.config import get_settings
+
+    monkeypatch.setenv("USER_TIMEZONE", tz_name)
+    get_settings.cache_clear()
+    greeted: list[datetime] = []
+
+    async def _recording_generate_script(**script_kwargs):
+        greeted.append(script_kwargs["date"])
+        return await _fake_generate_script(**script_kwargs)
+
+    manifest = await generate_briefing(
+        length=BriefingLength.STANDARD,
+        llm=FakeLLMProvider(),
+        tts=FakeTTSProvider(),
+        fetch_events=_fake_fetch_events,
+        fetch_weather=_fake_fetch_weather,
+        score_emails=_fake_score_emails,
+        fetch_articles=_fake_fetch_articles,
+        select_for_briefing=_fake_select_for_briefing,
+        generate_script=_recording_generate_script,
+        storage=storage,
+        gmail_fixture=FIXTURES_DIR / "gmail_messages.json",
+        calendar_fixture=None,
+        weather_fixture=None,
+        **kwargs,
+    )
+    assert len(greeted) == 1
+    return manifest, greeted[0]
+
+
+@pytest.mark.parametrize(
+    ("tz_name", "instant", "local_day"),
+    [
+        # 23:30Z is 00:30 the next morning in Lisbon — and 2026-03-29 is the
+        # night Europe's clocks go forward, so Lisbon is UTC+1 by then.
+        ("Europe/Lisbon", datetime(2026, 3, 29, 23, 30, tzinfo=UTC), "2026-03-30"),
+        # The other direction: 03:30Z is still the previous evening in LA.
+        # A fix that always added a day would pass the Lisbon case alone.
+        (
+            "America/Los_Angeles",
+            datetime(2026, 3, 30, 3, 30, tzinfo=UTC),
+            "2026-03-29",
+        ),
+    ],
+)
+async def test_default_briefing_id_is_the_users_local_day_not_utcs(
+    storage, monkeypatch, tz_name, instant, local_day
+):
+    """With no `briefing_id`, the id is the date where the user is.
+
+    Every production caller passes an id today, so only this default is at
+    stake — but formatting the UTC instant would file a just-after-midnight
+    run under yesterday, colliding with yesterday's stored briefing while
+    the calendar segment talks about today.
+    """
+    manifest, greeted = await _generate_on(
+        storage, monkeypatch, tz_name=tz_name, now=instant
+    )
+
+    assert manifest.briefing_id == local_day
+    stored = storage.load_manifest(local_day)
+    assert stored is not None and stored.briefing_id == local_day
+    # And the hosts greet the listener with the same day the id names.
+    assert greeted.strftime("%Y-%m-%d") == local_day
+
+
+@pytest.mark.skipif(not hasattr(time, "tzset"), reason="time.tzset is Unix-only")
+async def test_a_naive_now_is_read_as_utc_like_the_ranker_reads_it(
+    storage, monkeypatch
+):
+    """A naive `now` means UTC, the convention `ranking._aware` already uses.
+
+    `datetime.astimezone()` reads a naive value as the HOST's local time,
+    so without this the id and the ranker would work from two different
+    instants, and which day the id named would depend on the machine. The
+    host zone is pinned here so the test means the same thing on a UTC CI
+    runner as on a laptop.
+    """
+    # By hand rather than monkeypatch: time.tzset() has to run AFTER the
+    # restore, and monkeypatch only restores at teardown.
+    host_tz = os.environ.get("TZ")
+    os.environ["TZ"] = "Asia/Tokyo"
+    time.tzset()
+    try:
+        manifest, _ = await _generate_on(
+            storage,
+            monkeypatch,
+            tz_name="Europe/Lisbon",
+            # 23:30 UTC is 00:30 on the 30th in Lisbon. Read as Tokyo time it
+            # would be 14:30Z, still the 29th in Lisbon.
+            now=datetime(2026, 3, 29, 23, 30),
+        )
+    finally:
+        if host_tz is None:
+            del os.environ["TZ"]
+        else:
+            os.environ["TZ"] = host_tz
+        time.tzset()
+
+    assert manifest.briefing_id == "2026-03-30"
+
+
+async def test_an_id_that_is_not_a_date_greets_with_the_injected_day(
+    storage, monkeypatch
+):
+    """A caller-chosen id that names no day falls back to the run's clock,
+    not the wall clock, so a replay at `now=` greets the replayed morning."""
+    _, greeted = await _generate_on(
+        storage,
+        monkeypatch,
+        tz_name="Europe/Lisbon",
+        briefing_id="replay-a",
+        now=datetime(2026, 3, 29, 23, 30, tzinfo=UTC),
+    )
+
+    assert greeted.strftime("%Y-%m-%d") == "2026-03-30"
+
+
+async def test_an_unknown_zone_falls_back_to_utc_and_says_so(
+    storage, monkeypatch, caplog
+):
+    """A misspelt USER_TIMEZONE brings back the UTC day, which is the bug
+    the rest of this file pins. It has to be loud, as it already is in
+    `cron._user_tz` and `cli._user_now`."""
+    with caplog.at_level("ERROR", logger="app.core.tz"):
+        manifest, _ = await _generate_on(
+            storage,
+            monkeypatch,
+            tz_name="Europe/Lisbn",
+            now=datetime(2026, 3, 29, 23, 30, tzinfo=UTC),
+        )
+
+    assert manifest.briefing_id == "2026-03-29"
+    assert any("Europe/Lisbn" in r.getMessage() for r in caplog.records)
 
 
 async def test_generate_briefing_drops_raw_email_bodies_before_persisting(storage):

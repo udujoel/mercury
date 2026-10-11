@@ -4,7 +4,7 @@
 outside 03:00-12:00:
 
     if [ "$EVENT_NAME" = "schedule" ] && [ -z "$BRIEFING_ID" ]; then
-      local_hour=$(TZ="${USER_TIMEZONE:-UTC}" date +%-H)
+      local_hour=<the hour now, in app.core.tz.user_tz()>
       if [ "$local_hour" -lt 3 ] || [ "$local_hour" -ge 12 ]; then
         exit 0
       fi

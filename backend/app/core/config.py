@@ -336,6 +336,10 @@ class Settings(BaseSettings):
     #
     # The provider instance is built once per briefing and threaded, so
     # "the life of the instance" and "one briefing" are the same thing.
+    #
+    # Measured as time spent INSIDE judgment calls. It was once measured as
+    # time since the first call, which closed the window during script
+    # generation and left the gates with nothing (ROADMAP task 47).
     judgment_briefing_budget_seconds: float = 20.0
 
     # A cluster member is pulled back out when P(same underlying event as

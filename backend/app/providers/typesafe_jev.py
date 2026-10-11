@@ -15,12 +15,18 @@ body reaches this file in full, and this file never reads an `Item`.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 
 from app.core.providers import Claim, EmailJudgment
 
 log = logging.getLogger(__name__)
+
+# The clock the judgment budget is measured on. A seam rather than a direct
+# `time.monotonic` call so a test can move it without moving asyncio's own
+# clock, which reads `time.monotonic` for every timer.
+_clock = time.monotonic
 
 # Four criteria, so the returned score runs 0.0-3.0 as a position on this
 # index. Order matters: `app.pipeline.triage` thresholds against it.
@@ -108,22 +114,50 @@ class JevJudgmentProvider:
         # briefing, it would make it miss the morning.
         self._budget = settings.judgment_total_budget_seconds
         # Shared across every call on this instance — see
-        # judgment_briefing_budget_seconds. Started lazily on first use so
-        # building the provider early does not spend the budget.
+        # judgment_briefing_budget_seconds.
+        #
+        # Counted as time spent INSIDE judgment calls, not time since the
+        # first one. It used to be a wall-clock window opened by the first
+        # call, and triage and cluster verification make that call before
+        # the script exists. The semantic gates run about two minutes later,
+        # after script generation, so the window had always closed: every
+        # production run checked (2026-10-08 to 10-11) judged 0 of its
+        # 67-93 claims, and rule 3's grounding gate only ever ran as its
+        # keyword fallback. ROADMAP task 47.
         self._briefing_budget = settings.judgment_briefing_budget_seconds
-        self._started_at: float | None = None
+        self._spent = 0.0
+        # Calls in flight, and when the current run of overlapping calls
+        # began. Two calls judging at the same moment cost the wall time
+        # they overlap, not the sum of both.
+        self._in_flight = 0
+        self._busy_since = 0.0
 
     def _remaining(self) -> float:
         """Seconds of judgment budget left for this briefing.
 
-        Starts the clock on first use. Zero or less means every remaining
-        call returns immediately and its callers fall back to the
-        heuristics, which is the intended behaviour rather than a failure.
+        Zero or less means every remaining call returns immediately and its
+        callers fall back to the heuristics, which is the intended
+        behaviour rather than a failure.
         """
-        now = time.monotonic()
-        if self._started_at is None:
-            self._started_at = now
-        return self._briefing_budget - (now - self._started_at)
+        return self._briefing_budget - self._spent
+
+    @contextlib.asynccontextmanager
+    async def _spending(self):
+        """Charge the time inside the block to this briefing's budget.
+
+        Wall time while ANY call is in flight, so overlapping calls are
+        charged once. Every call is awaited in turn today; this keeps the
+        budget honest for the first change that gathers two of them.
+        """
+        if self._in_flight == 0:
+            self._busy_since = _clock()
+        self._in_flight += 1
+        try:
+            yield
+        finally:
+            self._in_flight -= 1
+            if self._in_flight == 0:
+                self._spent += _clock() - self._busy_since
 
     def _deadline(self) -> float:
         """The effective ceiling for ONE call: whichever bound bites first."""
@@ -160,7 +194,10 @@ class JevJudgmentProvider:
         ]
         semaphore = asyncio.Semaphore(self._concurrency)
 
-        async with AsyncTypeSafeClient(api_key=self._api_key) as client:
+        async with (
+            self._spending(),
+            AsyncTypeSafeClient(api_key=self._api_key) as client,
+        ):
 
             async def ask(chunk: list[Claim]) -> None:
                 # Positional ids, not `Claim.key`: the key is the caller's
@@ -221,7 +258,10 @@ class JevJudgmentProvider:
         # judgment that landed before the deadline survives the deadline.
         out: list[EmailJudgment | None] = [None] * len(states)
 
-        async with AsyncTypeSafeClient(api_key=self._api_key) as client:
+        async with (
+            self._spending(),
+            AsyncTypeSafeClient(api_key=self._api_key) as client,
+        ):
 
             async def judge(index: int, state: dict) -> None:
                 async with semaphore:

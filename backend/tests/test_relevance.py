@@ -89,9 +89,9 @@ async def test_an_empty_story_list_makes_no_call():
 
 def test_a_judgment_replaces_the_lexical_personal_term():
     s = story("Anything at all")
-    score_stories([s], calendar_events=[], judged_personal={id(s): 1.0})
+    score_stories([s], calendar_events=[], judged_personal={id(s): 1.0}, now=NOW)
     high = s.score
-    score_stories([s], calendar_events=[], judged_personal={id(s): 0.0})
+    score_stories([s], calendar_events=[], judged_personal={id(s): 0.0}, now=NOW)
     assert high > s.score
 
 
@@ -104,9 +104,11 @@ def test_a_judged_zero_does_not_fall_through_to_the_email_default():
     through to that 0.5, so the judgment could only ever RAISE a score.
     """
     mail = story("A newsletter", kind=SourceType.EMAIL)
-    score_stories([mail], calendar_events=[], judged_personal={id(mail): 0.0})
+    score_stories(
+        [mail], calendar_events=[], judged_personal={id(mail): 0.0}, now=NOW
+    )
     judged_zero = mail.score
-    score_stories([mail], calendar_events=[], judged_personal=None)
+    score_stories([mail], calendar_events=[], judged_personal=None, now=NOW)
     assert judged_zero < mail.score, "a judged 0.0 fell through to the 0.5 default"
 
 
@@ -131,9 +133,10 @@ def test_ranking_is_byte_identical_without_a_judgment_map():
     """Rule 7: an absent judgment must leave ranking exactly as it was."""
     stories = [story(f"S{i}", kind=SourceType.EMAIL if i % 2 else SourceType.RSS)
                for i in range(6)]
-    a = [s.cluster_id for s in score_stories(list(stories), calendar_events=[])]
+    a = [s.cluster_id for s in score_stories(
+        list(stories), calendar_events=[], now=NOW)]
     b = [s.cluster_id for s in score_stories(
-        list(stories), calendar_events=[], judged_personal={})]
+        list(stories), calendar_events=[], judged_personal={}, now=NOW)]
     assert a == b
 
 
@@ -230,6 +233,8 @@ async def test_two_stories_with_a_colliding_cluster_id_get_their_own_verdict():
     )
     assert len(judged) == 2, "two stories collapsed into one verdict"
 
-    ranked = score_stories([sa, sb], calendar_events=[], judged_personal=judged)
+    ranked = score_stories(
+        [sa, sb], calendar_events=[], judged_personal=judged, now=NOW
+    )
     assert ranked[0] is sa, "the relevant story took the other's verdict"
     assert ranked[0].score > ranked[1].score
