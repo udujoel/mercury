@@ -51,7 +51,28 @@ enum BriefingHealth {
     /// backend adding a source must not turn a degraded morning back into a
     /// silent one, which is the failure this exists to end; it just cannot
     /// be named.
-    static func notice(for degraded: [String]) -> String? {
+    ///
+    /// `narratorFallback` is task 22: the briefing was read by the backup
+    /// voice because the configured one was unavailable. It arrives in its
+    /// own manifest field rather than in `degraded`, because the backend
+    /// retries everything in `degraded_sources` and a voice quota does not
+    /// come back by morning. To the listener it is the same kind of fact,
+    /// so it joins the same sentence rather than adding a second line.
+    static func notice(for degraded: [String], narratorFallback: Bool = false) -> String? {
+        switch (missing(degraded), narratorFallback) {
+        case (nil, false):
+            return nil
+        case (nil, true):
+            return "Read by the backup voice today."
+        case (let lacking?, false):
+            return "Made without \(lacking)."
+        case (let lacking?, true):
+            return "Made without \(lacking), and read by the backup voice."
+        }
+    }
+
+    /// "your calendar and your inbox", or nil when nothing is missing.
+    private static func missing(_ degraded: [String]) -> String? {
         let labels = Set(degraded.map { $0.lowercased() }.filter { !$0.isEmpty })
         guard !labels.isEmpty else { return nil }
 
@@ -62,16 +83,14 @@ enum BriefingHealth {
         // exactly the direction this notice exists to stop.
         let unknown = labels.subtracting(known).count
 
-        guard !named.isEmpty else {
-            return "Made without part of what you usually get."
-        }
+        guard !named.isEmpty else { return "part of what you usually get" }
         let others: [String]
         switch unknown {
         case 0: others = []
         case 1: others = ["one other source"]
         default: others = ["\(unknown) other sources"]
         }
-        return "Made without \(sentenceList(named + others))."
+        return sentenceList(named + others)
     }
 
     /// "a", "a and b", "a, b and c".

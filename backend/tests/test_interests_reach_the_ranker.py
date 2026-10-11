@@ -32,18 +32,16 @@ from app.providers.fake_embeddings import FakeEmbeddingProvider
 NOW = datetime(2026, 9, 20, 6, tzinfo=UTC)
 
 
-# The clock every ranking in this file is measured from: the minute after
-# the newest fixture. `_article` stamps items at
+# The clock every ranking in this file is aged against, passed as `now=`.
+#
+# The minute after the newest fixture. `_article` stamps items at
 # `NOW.replace(minute=59 - minutes_old)`, so they land between 06:00 and
 # 06:59 and their ages are measured from 07:00 — NOT from NOW, which would
 # put every fixture in the future and clamp all their recency to 1.
 #
-# Passed explicitly as `now=CLOCK`. These tests once let the ranker read
-# the real clock, which held the week they were written: seventeen days
-# later `exp(-hours / 12)` was about 1e-15 for every fixture, the minutes
-# between them vanished into float rounding, and four tests failed on an
-# untouched main on 2026-10-07, one with a message blaming "the same +0.28
-# personal boost" for two stories whose ages had become indistinguishable.
+# Passed explicitly rather than patched in. These tests read the real clock
+# until 2026-10-07, when seventeen days of decay tied every fixture's
+# recency at ~1e-15 and four of them failed on an untouched main.
 CLOCK = NOW.replace(hour=7)
 
 
@@ -71,9 +69,9 @@ STRIKE = _article(
 
 async def _world(interests=None, entities=None):
     world, _, _ = await _build_world_stories(
+        now=CLOCK,
         emails=[], articles=[DARK_MODE, STRIKE], events=[],
         embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
-        now=CLOCK,
         interests=interests, followed_entities=entities,
     )
     return [story.canonical.source_name for story in world]
@@ -100,15 +98,17 @@ async def test_the_centroid_reaches_score_stories_from_the_real_path(
     monkeypatch.setattr(gen, "score_stories", _spy)
     await _world(interests=["war in Ukraine"], entities=["Reuters"])
 
-    # The clock it was handed, not one read on the way down. Identity, not
-    # equality: a `datetime.now(UTC)` substituted here would also be an
-    # aware datetime.
-    assert seen["now"] is CLOCK
     assert seen["topic_centroid"] is not None, (
         "generate_briefing computed no centroid, so the 0.20 interest "
         "weight goes on cancelling and the segment stays a recency sort"
     )
     assert seen["followed_entities"] == {"Reuters"}
+    # Identity, not equality: a `datetime.now(UTC)` read on the way down
+    # would also be an aware datetime, and only `is` tells them apart.
+    assert seen["now"] is CLOCK, (
+        "the ranker aged stories against something other than the run's "
+        "clock, so its order depends on the day the test runs"
+    )
 
 
 async def test_interests_change_which_story_leads():
@@ -316,9 +316,9 @@ async def test_an_unembeddable_item_does_not_lead_the_world_segment():
     rather than run-wide.
     """
     world, _, _ = await _build_world_stories(
+        now=CLOCK,
         emails=[], articles=[DARK_MODE, STRIKE, JUNK], events=[],
         embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
-        now=CLOCK,
         interests=["war in Ukraine", "Russian missile strikes"],
     )
     leaders = [s.canonical.source_name for s in world]
@@ -342,9 +342,9 @@ async def test_a_degenerate_interest_topic_does_not_nan_every_score():
     assert np.isfinite(centroid).all(), "a degenerate topic poisoned it"
 
     world, _, _ = await _build_world_stories(
+        now=CLOCK,
         emails=[], articles=[DARK_MODE, STRIKE], events=[],
         embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
-        now=CLOCK,
         interests=["war in Ukraine", "!!!"],
     )
     assert all(np.isfinite(s.score) for s in world)
@@ -387,9 +387,9 @@ async def test_following_a_short_name_does_not_match_inside_words():
     because "extension" contains an x, and put the dark-mode post above a
     missile strike at 3.2x its score."""
     world, _, _ = await _build_world_stories(
+        now=CLOCK,
         emails=[], articles=[DARK_MODE, STRIKE], events=[],
         embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
-        now=CLOCK,
         interests=["war in Ukraine"], followed_entities=["X"],
     )
     assert [s.canonical.source_name for s in world][0] == "reuters"
@@ -397,9 +397,9 @@ async def test_following_a_short_name_does_not_match_inside_words():
 
 async def test_an_all_whitespace_entity_does_not_match_everything():
     world, _, _ = await _build_world_stories(
+        now=CLOCK,
         emails=[], articles=[DARK_MODE, STRIKE], events=[],
         embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
-        now=CLOCK,
         followed_entities=[" "],
     )
     assert len({s.score for s in world}) > 1, (
@@ -412,9 +412,9 @@ async def test_following_a_publication_by_name_works():
     review it was the one thing that could not match: the haystack was
     title and body only, never `source_name`."""
     world, _, _ = await _build_world_stories(
+        now=CLOCK,
         emails=[], articles=[DARK_MODE, STRIKE], events=[],
         embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
-        now=CLOCK,
         followed_entities=["reuters"],
     )
     assert [s.canonical.source_name for s in world][0] == "reuters"
@@ -422,9 +422,9 @@ async def test_following_a_publication_by_name_works():
 
 async def test_a_trailing_space_does_not_stop_a_match():
     world, _, _ = await _build_world_stories(
+        now=CLOCK,
         emails=[], articles=[DARK_MODE, STRIKE], events=[],
         embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
-        now=CLOCK,
         followed_entities=["Reuters "],
     )
     assert [s.canonical.source_name for s in world][0] == "reuters"
@@ -452,10 +452,11 @@ async def test_the_interest_term_points_the_right_way():
 
     async def _rank(interests):
         world, _, _ = await _build_world_stories(
+            now=CLOCK,
             emails=[], articles=[old_dark_mode, fresh_strike], events=[],
             embeddings=FakeEmbeddingProvider(),
             length=BriefingLength.STANDARD,
-            now=CLOCK, interests=interests,
+            interests=interests,
         )
         return [s.canonical.source_name for s in world]
 
@@ -485,9 +486,9 @@ async def test_an_entity_does_not_match_inside_a_longer_word():
         minutes_old=30,
     )
     world, _, _ = await _build_world_stories(
+        now=CLOCK,
         emails=[], articles=[about_metadata, STRIKE], events=[],
         embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
-        now=CLOCK,
         followed_entities=["Meta"],
     )
     assert [s.canonical.source_name for s in world][0] == "reuters", (
@@ -511,18 +512,18 @@ async def test_a_one_letter_entity_does_not_boost_ordinary_prose():
         "hn", DARK_MODE.title, DARK_MODE.body, minutes_old=30,
     )
     baseline, _, _ = await _build_world_stories(
+        now=CLOCK,
         emails=[], articles=[aged_dark_mode, STRIKE], events=[],
         embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
-        now=CLOCK,
     )
     assert [s.canonical.source_name for s in baseline][0] == "reuters", (
         "precondition: without any entity, recency puts the strike first"
     )
 
     world, _, _ = await _build_world_stories(
+        now=CLOCK,
         emails=[], articles=[aged_dark_mode, STRIKE], events=[],
         embeddings=FakeEmbeddingProvider(), length=BriefingLength.STANDARD,
-        now=CLOCK,
         followed_entities=["I"],
     )
     assert "I" in aged_dark_mode.body, "precondition: a standalone I"

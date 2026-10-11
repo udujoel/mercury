@@ -113,14 +113,14 @@ def test_a_judged_zero_does_not_fall_through_to_the_email_default():
 
 
 def test_an_unjudged_story_keeps_its_lexical_score():
-    """Exact, because the clock is pinned.
+    """Exactly equal, because both calls are aged against the same clock.
 
-    This was `pytest.approx` in #66, because `score_stories` read
-    `datetime.now(UTC)` itself and `recency` decays continuously: two calls
-    microseconds apart differed in the tenth decimal, and an `==` (as
-    written in #63) passed only when both landed in the same tick. With
-    `now=` passed, both calls age the story against the same instant, so
-    any difference at all is the judgment leaking into an unjudged story.
+    This used `approx`, and the reason was not float sloppiness:
+    `score_stories` read `datetime.now(UTC)` itself, so two calls
+    microseconds apart differed in the tenth decimal, and an `==` written
+    in #63 passed only when both landed in the same tick. With `now`
+    passed in, the two scores can differ only if the judgment map leaked
+    into a story it does not mention, which is the thing under test.
     """
     mail = story("A newsletter", kind=SourceType.EMAIL)
     score_stories([mail], calendar_events=[], judged_personal={-1: 1.0}, now=NOW)

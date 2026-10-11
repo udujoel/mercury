@@ -65,6 +65,27 @@ final class BriefingHealthTests: XCTestCase {
         XCTAssertEqual(BriefingHealth.notice(for: ["Email"]), "Made without your inbox.")
     }
 
+    // MARK: - The backup voice (task 22)
+
+    func testAFallbackVoiceAloneIsSaid() {
+        XCTAssertEqual(BriefingHealth.notice(for: [], narratorFallback: true),
+                       "Read by the backup voice today.")
+    }
+
+    func testAFallbackVoiceJoinsTheSameSentence() {
+        // One line, not two: to the listener both are "this morning is not
+        // what you configured".
+        XCTAssertEqual(
+            BriefingHealth.notice(for: ["email", "calendar"], narratorFallback: true),
+            "Made without your calendar and your inbox, and read by the backup voice.")
+    }
+
+    func testNoFallbackChangesNothing() {
+        XCTAssertNil(BriefingHealth.notice(for: [], narratorFallback: false))
+        XCTAssertEqual(BriefingHealth.notice(for: ["calendar"], narratorFallback: false),
+                       "Made without your calendar.")
+    }
+
     // MARK: - The decode
 
     private func manifestJSON(id: String = "2026-09-01-0535",
@@ -87,6 +108,19 @@ final class BriefingHealthTests: XCTestCase {
         let m = try JSONDecoder.mercury().decode(
             BriefingManifest.self, from: manifestJSON())
         XCTAssertEqual(m.degradedSources, [])
+    }
+
+    func testTheFallbackFlagIsDecodedAndDefaultsToFalse() throws {
+        let flagged = Data("""
+        {"briefing_id":"2026-10-10-0535","generated_at":"2026-10-10T05:35:00Z",
+         "duration_ms":1000,"audio_url":"/a","segments":[],"turns":[],"sources":[],
+         "narrator_fallback":true}
+        """.utf8)
+        XCTAssertTrue(try JSONDecoder.mercury().decode(
+            BriefingManifest.self, from: flagged).narratorFallback)
+        XCTAssertFalse(try JSONDecoder.mercury().decode(
+            BriefingManifest.self, from: manifestJSON()).narratorFallback,
+            "every manifest written before the field existed is not a fallback")
     }
 
     func testANullFieldIsHealthyNotBroken() throws {
@@ -118,6 +152,18 @@ final class BriefingHealthTests: XCTestCase {
 
         let restored = try await store.storedBriefing(id: m.briefingId)
         XCTAssertEqual(restored?.manifest.degradedSources, ["email", "calendar"])
+    }
+
+    func testTheFallbackFlagSurvivesTheCache() async throws {
+        let store = try makeStore()
+        let m = BriefingManifest(
+            briefingId: "2026-10-10-0535", generatedAt: Date(timeIntervalSince1970: 0),
+            durationMs: 1000, audioUrl: "/a", segments: [], turns: [], sources: [],
+            narratorFallback: true)
+        try await store.save(m, localAudioPath: nil)
+
+        let restored = try await store.storedBriefing(id: m.briefingId)
+        XCTAssertEqual(restored?.manifest.narratorFallback, true)
     }
 
     func testAHealthyReplacementClearsTheCachedNotice() async throws {

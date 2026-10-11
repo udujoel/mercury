@@ -274,6 +274,15 @@ class FallbackTTSProvider:
     def voice_b(self) -> str:
         return self._primary.voice_b
 
+    @property
+    def failed_over(self) -> bool:
+        """Whether this run is being read by the fallback voice.
+
+        Read by `stitch` AFTER every turn is synthesised, so a mid-run
+        switch counts as well as one the probe decided up front.
+        """
+        return self._failed_over
+
     def _translated(self, voice_id: str) -> str:
         """The fallback's equivalent of a primary voice id.
 
@@ -374,6 +383,32 @@ class FallbackTTSProvider:
         return await self._fallback.synthesize(text, self._translated(voice_id))
 
 
+class _FellBackBeforeTheRun:
+    """The fallback provider, standing in for a primary that could not be built.
+
+    `build_tts_provider` used to return the bare Google provider here, which
+    reads the same as a run CONFIGURED for Google. The manifest could not
+    tell "you chose this voice" from "the voice you chose was unavailable",
+    and only the second is worth telling the listener. This says which.
+    """
+
+    failed_over = True
+
+    def __init__(self, inner: TTSProvider) -> None:
+        self._inner = inner
+
+    @property
+    def voice_a(self) -> str:
+        return self._inner.voice_a
+
+    @property
+    def voice_b(self) -> str:
+        return self._inner.voice_b
+
+    async def synthesize(self, text: str, voice_id: str) -> Speech:
+        return await self._inner.synthesize(text, voice_id)
+
+
 def build_tts_provider() -> TTSProvider:
     """The TTS provider named by TTS_PROVIDER, with Google behind it.
 
@@ -417,6 +452,15 @@ def build_tts_provider() -> TTSProvider:
                 "highlighting degrades to whole-line.",
                 exc,
             )
+            # No key at all is not a fallback, it is an install that never
+            # set ElevenLabs up. `tts_provider` DEFAULTS to elevenlabs, so a
+            # Google-only deployment lands here every run, and marking it
+            # would tell that listener every morning that their own voice is
+            # a degradation. A key that is set and still fails is the case
+            # worth saying.
+            if not getattr(get_settings(), "elevenlabs_api_key", "").strip():
+                return _google()
+            return _FellBackBeforeTheRun(_google())
     elif choice not in GOOGLE_NAMES:
         # A typo is the case this docstring warns about, so it must not be
         # the case that passes silently. "elvenlabs" used to land here and
@@ -427,6 +471,7 @@ def build_tts_provider() -> TTSProvider:
             "and the briefing is about to ship in the wrong voice.",
             choice, sorted(ELEVENLABS_NAMES | {"google"}),
         )
+        return _FellBackBeforeTheRun(_google())
 
     return _google()
 

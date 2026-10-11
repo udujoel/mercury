@@ -196,6 +196,7 @@ def _settings(**kwargs):
     class _S:
         def __init__(self) -> None:
             self.tts_provider = kwargs.get("tts_provider", "google")
+            self.elevenlabs_api_key = kwargs.get("elevenlabs_api_key", "")
 
     return lambda: _S()
 
@@ -548,3 +549,118 @@ async def test_a_spent_quota_402_does_not_blame_the_voice(caplog, monkeypatch):
     assert "PREMADE" not in rendered, (
         "a spent quota is not a reason to change the voice"
     )
+
+
+# ── the manifest says when the fallback voice read it (task 22) ───────
+
+
+def test_an_unbuildable_elevenlabs_is_reported_as_a_fallback(monkeypatch):
+    """The bare Google provider this used to return read exactly like a run
+    CONFIGURED for Google, so the manifest could not tell "you chose this
+    voice" from "the voice you chose was unavailable"."""
+    import app.core.config as config
+
+    monkeypatch.setattr(config, "get_settings", _settings(
+        tts_provider="elevenlabs", elevenlabs_api_key="sk-set-but-refused"))
+    _build_with_stubs(monkeypatch, elevenlabs_raises=True)
+
+    assert getattr(build_tts_provider(), "failed_over", False) is True
+
+
+def test_an_install_with_no_elevenlabs_key_is_not_a_fallback(monkeypatch):
+    """Review of #68. `tts_provider` DEFAULTS to elevenlabs, so every
+    Google-only install reaches the unbuildable branch on every run. With
+    no key it never set ElevenLabs up, and telling that listener each
+    morning that their voice is the backup would be false."""
+    import app.core.config as config
+
+    monkeypatch.setattr(config, "get_settings", _settings(tts_provider="elevenlabs"))
+    _build_with_stubs(monkeypatch, elevenlabs_raises=True)
+
+    assert getattr(build_tts_provider(), "failed_over", False) is False
+
+
+def test_a_run_configured_for_google_is_not_a_fallback(monkeypatch):
+    """The control. Choosing Google is a choice, and the phone must not
+    tell someone their own setting is a degradation."""
+    import app.core.config as config
+
+    monkeypatch.setattr(config, "get_settings", _settings(tts_provider="google"))
+    _build_with_stubs(monkeypatch)
+
+    assert getattr(build_tts_provider(), "failed_over", False) is False
+
+
+def test_a_typo_in_the_provider_name_is_reported_as_a_fallback(monkeypatch):
+    import app.core.config as config
+
+    monkeypatch.setattr(config, "get_settings", _settings(tts_provider="elvenlabs"))
+    _build_with_stubs(monkeypatch)
+
+    assert getattr(build_tts_provider(), "failed_over", False) is True
+
+
+@pytest.mark.asyncio
+async def test_a_mid_run_failover_reaches_the_manifest():
+    """ElevenLabs answering the probe and then running out partway.
+
+    `stitch` reads `failed_over` after every turn is synthesised, so a
+    switch the probe could not see still marks the briefing."""
+    from app.core.schemas import Segment, Turn
+    from app.providers.fake_tts import FakeTTSProvider
+    from app.synthesis.stitch import synthesize_briefing
+
+    class _OutAfterTheProbe:
+        voice_a = "el-a"
+        voice_b = "el-b"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def synthesize(self, text: str, voice_id: str) -> Speech:
+            self.calls += 1
+            # Two probe calls (one per host) succeed; the first real turn
+            # does not.
+            if self.calls > 2:
+                raise RuntimeError("quota_exceeded")
+            return await FakeTTSProvider().synthesize(text, FakeTTSProvider().voice_a)
+
+    turns = [
+        Turn(speaker="A", segment=Segment.COLD_OPEN, text="good morning"),
+        Turn(speaker="B", segment=Segment.COLD_OPEN, text="morning"),
+    ]
+    _, manifest, _ = await synthesize_briefing(
+        turns,
+        tts=FallbackTTSProvider(_OutAfterTheProbe(), FakeTTSProvider),
+        briefing_id="2026-10-10-0535",
+        audio_url_for=lambda fmt: f"x.{fmt}",
+        sources=[],
+    )
+
+    assert manifest.narrator_fallback is True
+    assert manifest.degraded_sources == [], (
+        "a voice fallback must not land in degraded_sources, which cli.py "
+        "retries three times a day"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_healthy_primary_is_not_reported_as_a_fallback():
+    from app.core.schemas import Segment, Turn
+    from app.providers.fake_tts import FakeTTSProvider
+    from app.synthesis.stitch import synthesize_briefing
+
+    turns = [Turn(speaker="A", segment=Segment.COLD_OPEN, text="good morning")]
+
+    def _never():
+        raise AssertionError("the fallback must not be built for a healthy run")
+
+    _, manifest, _ = await synthesize_briefing(
+        turns,
+        tts=FallbackTTSProvider(FakeTTSProvider(), _never),
+        briefing_id="2026-10-10-0535",
+        audio_url_for=lambda fmt: f"x.{fmt}",
+        sources=[],
+    )
+
+    assert manifest.narrator_fallback is False

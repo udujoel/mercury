@@ -1406,16 +1406,78 @@ and the failure reads as this PR's until you see that no test ran.
 were written against the existing patterns and read adversarially, and the
 `ios` CI job on the PR is the first build they get.
 
+## 2026-10-10 - one clock per run, a voice that says it is the backup, and a morning floor
+
+Three things left open on 2026-10-07, closed on the same branch.
+
+**The ranker takes a clock now.** Review of #68 was right that patching
+`ranking.datetime` from one test file treated the symptom: `score_stories`
+read the wall clock itself, so any test with pinned fixtures was a slow
+clock bomb. It takes `now`, `_build_world_stories` passes it on, and
+`generate_briefing` captures one `run_started` instant. The production
+effect is small but real: every story in a run is aged against the same
+moment, rather than against whenever the ranker happened to run after
+minutes of ingestion and clustering. `test_relevance` also lost its
+`approx`, which existed only because two calls microseconds apart read two
+different clocks.
+
+**The backup voice gets its own field, and the reason is the retry.**
+`narrator_fallback` sits beside `degraded_sources` rather than inside it,
+because `cli.py` regenerates anything listed there, up to three times a
+day. That is right for a credential that comes back at 06:00 and wrong for
+an ElevenLabs quota that is out for the month: three more generations, the
+same fallback voice. `test_a_fallback_voice_is_not_a_reason_to_regenerate`
+pins it. Two quieter cases were also made visible: ElevenLabs failing to
+BUILD used to return the bare Google provider, which read exactly like a run
+configured for Google, and so did a typo in `TTS_PROVIDER`. Both now come
+back wrapped and report `failed_over`. A run genuinely configured for Google
+reports nothing, because the phone must not call someone's own setting a
+degradation.
+
+**The morning floor is the Worker's, as the roadmap said.** Two questions
+had been answered by one check. "Has generation stopped?" belongs to the
+watchdog's age floor (#59). "Does this cover the morning?" belongs to the
+checkpoints, and only they now apply `MORNING_FLOOR_HHMM = "0300"` against
+the id's local time. The part worth remembering is what NOT to do with an
+overnight briefing that came out empty: forcing a repair over it in place
+regenerates under the 00:12 id, which still does not cover the morning, so
+the next checkpoint would dispatch again. A fresh run for the day is the
+repair that holds.
+
+**Review found the floor taught to one reader of three.** The first cut
+put it only in the Worker. The GitHub backstop (`cli check`, no id) still
+counted an overnight briefing as the morning's, and the Worker's alarm sent
+the watchdog a bare DAY, which `check` read as the literal key
+`<day>.manifest.json` that no timed run writes, so it could never clear,
+even when a morning run landed during its re-checks. That second half
+predates the floor and was already true of every "missing" alarm. `check`
+now treats a bare day, or no id, as "is this morning covered?", resolved
+through `storage.covers_morning`, which mirrors the Worker's floor.
+
+Both sides apply the floor only once it is past 03:00 local. The
+checkpoints are fixed UTC times sized for Lisbon, and in a zone where they
+fire before 03:00 local every run they caused would count as overnight
+the moment it landed, dispatching again forever. And an install with NO
+ElevenLabs key is not a fallback: `tts_provider` defaults to elevenlabs,
+so a Google-only install would have been told every morning that its own
+voice was the backup.
+
+**Deployment, again.** The Worker change does nothing until someone runs
+`wrangler deploy`. Merging is not shipping (see the standing facts below).
+
 ## 2026-10-10 - the ranker is handed its clock instead of reading one
 
-Review of #68 asked for the structural version of its frozen-clock fixture,
-and this is it. `score_stories` takes `now`, and `generate_briefing` takes one
-too (None meaning the wall clock), reads it once and hands it down through
-`_build_world_stories`. The benefit is injectability, not run-wide
-consistency: `score_stories` already read the clock once per call, and
-ingestion, the digest and stitching still read their own. The first draft
-of this entry claimed a single clock for the whole run, and review of #69
-caught that it was not true.
+#69, stacked on #68. Both branches added `now` to `score_stories` on the
+same day, and the merge keeps #68's shape and timezone-aware default id with
+this entry's additions on top: `generate_briefing` takes `now` (None meaning
+the wall clock), `_build_world_stories` requires it, a naive `now` is taken
+as UTC, and the suite refuses a wall-clock read outright.
+
+The benefit is injectability, not run-wide consistency. `score_stories`
+already read the clock once per call, before its loop, so stories in a run
+were never aged against different instants; and ingestion, the digest and
+stitching still read their own clocks. The entry above says otherwise, and
+so did the first draft of this one, until review of #69 caught it.
 
 **Why `now` is optional in one place and required in the other.**
 `score_stories` keeps `None` as "use the wall clock", because it is a public
@@ -1470,6 +1532,13 @@ while every other date in the run (`_parse_briefing_date`, `cli._user_now`,
 names yesterday, so a run would land on yesterday's stored briefing while
 its calendar segment talks about today. That is the same bug as the
 "Friday, August 21st" cold open, one function over.
+
+**Two fixes for one bug.** #68's ca7a8d0 independently changed the same
+default to the user's day, through an inline `ZoneInfo` lookup that fell
+back to UTC silently. The two met as a merge conflict on 2026-10-11. The
+merge kept this version, which also pins a naive `now` and hands the run's
+clock to `_parse_briefing_date`, and #71 removes the inline lookup's kind
+altogether.
 
 **Fixed although nothing reaches it.** The CLI, the API and the cron job
 all pass an id, so only tests hit the default. It was fixed anyway because
