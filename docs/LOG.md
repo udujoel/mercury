@@ -1689,6 +1689,32 @@ Cutting the briefing crons from four a day to two (task 28, the owner's
 call) brings it to about 43 a day, which lasts the month. The other ways
 out are a spending limit above zero, or a public repository.
 
+## 2026-10-11 - the quality gates had never judged a claim
+
+Found by reading production logs while testing the stack. Every run checked
+from 2026-10-08 to 10-11 logged the same thing: "semantic quality gates: N
+claim(s), N unjudged", with N between 67 and 93, and "threshold probe: 20
+near-threshold pair(s) ... examined, 0 judged the same event, 20 unjudged".
+
+The cause was one line. `judgment_briefing_budget_seconds` is documented as
+"a ceiling on ALL judgment work in one briefing", but `_remaining()`
+measured time since the FIRST judgment call. Triage and cluster
+verification make that call before the script exists. The gates and the
+probe run about two minutes later, after the LLM has written the script.
+By then 20 seconds of wall clock had long passed, while judging had used
+well under one of them.
+
+So rule 3's semantic grounding gate has only ever run as its keyword
+fallback in production, and it is a weak fallback. It checks whether a
+word appears ANYWHERE in the source, which is why "It's Monday" passed on a
+Sunday: with 35 emails in the input, "Monday" is in there somewhere (task
+48). The threshold probe, built to give task 42 its evidence, had produced
+none.
+
+The test suite couldn't see this. Each test builds a fresh provider and
+calls it straight away, so no test ever had two minutes between calls. The
+new test fakes the clock and puts them there.
+
 ## Standing facts worth not rediscovering
 
 - **The Worker has no CI deploy.** Merging is not shipping. A route on `main`
