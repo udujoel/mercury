@@ -1106,6 +1106,65 @@ answer. Neither blocks a merge:
       only one: nobody has installed the full requirements on 3.13 yet, and
       doing that is the first step.
 
+**Found by testing on 2026-10-11.** The stack head (#68–#71) was run on
+an iPhone 18 Pro simulator (iOS 27) against production data, with 416 iOS
+tests, 83 Worker tests and 1076 backend tests passing. #68's features work
+on real data: the backup-voice notice, today's desk with outlet marks, the
+Particle-shaped story page with coverage rows, the calendar strip that
+browses past days, and Show Notes. Everything below is what didn't work.
+Most of it is backend behaviour visible only in production logs.
+
+- [ ] 47. **The quality gates have never judged a claim in production.**
+      The judgment budget (`judgment_briefing_budget_seconds`, 20s) is a
+      wall-clock window that starts at the FIRST judgment call, and
+      triage and cluster verification make that call before the script
+      exists. The semantic gates and the threshold probe run about two
+      minutes later, after script generation, so the window has always
+      closed. In the last six runs, all 67-93 claims went unjudged every
+      time, and the probe judged 0 of its 20 pairs. So rule 3's semantic
+      grounding gate has only ever run as its keyword fallback, and task 42
+      has no data. Fix: count the time judgment calls actually spend.
+- [ ] 48. **The cold open states the wrong weekday.** The 2026-10-11 06:41
+      briefing opens "It's Monday, October 11th, 2026"; it was a Sunday.
+      Only the outline pass is told the date (as "Sunday, 11 October
+      2026"). The draft and both critique passes rewrite the cold open
+      without it. The keyword grounding gate can't catch it, because
+      "Monday" appears somewhere in 35 emails. This is the third weekday
+      bug (see `script_chain.py`'s comment on the August one). Fix: check
+      the weekday in code against the briefing's date, and give every
+      pass the date.
+- [ ] 49. **Browsing a past day stops the briefing you're listening to.**
+      Tapping a day in the calendar strip replaces the loaded manifest, so
+      today's playback is dropped and the mini player shows the other day
+      at 0:00. Looking at Saturday's desk shouldn't lose your place in
+      Sunday's briefing.
+- [ ] 50. **Show Notes lists one source once per turn that cites it.**
+      "Flight to Casablanca (AT 556)" appeared four times in a row, because
+      `ShowNotesLogic.grouped` doesn't de-duplicate. The section header is
+      `sourceType.capitalized`, so RSS items sit under "Rss".
+- [ ] 51. **Onboarding shows literal backticks.** "Mercury asks Google for
+      \`gmail.readonly\`". `DataPromiseView.promise` takes a `String`, so
+      `Text` never parses the markdown.
+- [ ] 52. **Outlet marks hide their letters.** `SourceStack`'s overlapping
+      monograms cover each other's text ("AJ" reads as "\J" under "F"),
+      and four-letter marks like "CNBC" are too small to read.
+- [ ] 53. **The story page's floating back button covers scrolled text.**
+      With no bar background behind it, the first letters of the points
+      card sit under the button once you scroll.
+- [ ] 54. **Swift 6 readiness.** Two main-actor isolation violations
+      (`AppState.swift:799, 924`, calling `briefingId(for:)`) are errors
+      in the Swift 6 language mode. `ShowNotesView` still uses the colour
+      tokens ADR-012 deprecated, and three tests mutate a captured var
+      from concurrent code.
+- [ ] 55. **The cold open frames yesterday as today.** The same briefing
+      says "your calendar already shows a busy start to the day, with a
+      confirmed bus journey ... that departed yesterday". A trip that's
+      over isn't today's agenda. This is content selection, so add it to
+      the regression set (CLAUDE.md) before anyone tunes a prompt for it.
+- [ ] 56. **ElevenLabs returns 401 on every run.** Each run fails over to
+      Google, and the phone now says so (task 22's notice works). The
+      quota isn't coming back by itself; it's an owner call (ADR-006).
+
 Still open from earlier sections, in the order they now rank: **21** (word
 timings that survive the cache, plus `BriefingManifest.schema_version`),
 **34** (continuity between briefings), and **28 / 31**, which wait on the
