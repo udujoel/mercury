@@ -25,6 +25,7 @@ import asyncio
 import json
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,7 @@ from app.pipeline.prompts import (  # noqa: E402
     REVISE_PROMPT,
     SEGMENT_DEFINITIONS,
 )
+from app.pipeline.quality import spoken_date  # noqa: E402
 from app.providers.fake import FakeLLMProvider  # noqa: E402
 
 CANONICAL_SEGMENT_ORDER = [
@@ -389,7 +391,7 @@ async def run_chain(provider, fixture: dict) -> dict:
     source_data = flatten_source_text(fixture)
 
     outline_prompt = OUTLINE_PROMPT.format(
-        date=fixture["date"],
+        date=spoken_date(datetime.fromisoformat(fixture["date"])),
         weather=json.dumps(fixture["weather"]),
         n_events=len(fixture["calendar"]),
         calendar=format_calendar(fixture),
@@ -419,7 +421,7 @@ async def run_chain(provider, fixture: dict) -> dict:
     print(f"  {len(outline.get('segments', []))} segments planned")
 
     draft_prompt = DRAFT_PROMPT.format(
-        date=fixture["date"],
+        date=spoken_date(datetime.fromisoformat(fixture["date"])),
         outline=json.dumps(outline), source_data=source_data
     )
     print("--- PASS 2: draft ---")
@@ -432,7 +434,7 @@ async def run_chain(provider, fixture: dict) -> dict:
     print(f"  {len(draft_turns)} turns, {word_count(draft_turns)} words")
 
     critique_prompt = CRITIQUE_PROMPT.format(
-        date=fixture["date"],
+        date=spoken_date(datetime.fromisoformat(fixture["date"])),
         script=json.dumps(draft_json), source_data=source_data
     )
     print("--- PASS 3: critique ---")
@@ -443,7 +445,7 @@ async def run_chain(provider, fixture: dict) -> dict:
     print(f"  {len(critique.get('issues', []))} issues found")
 
     revise_prompt = REVISE_PROMPT.format(
-        date=fixture["date"],
+        date=spoken_date(datetime.fromisoformat(fixture["date"])),
         script=json.dumps(draft_json), critique=json.dumps(critique)
     )
     print("--- PASS 4: revise ---")
