@@ -2,6 +2,12 @@ name: backend
 
 on:
   push:
+    # `main` only. On any other branch the `pull_request` trigger below
+    # already runs this suite, and the duplicate run was half of all CI in
+    # October 2026, on the same minutes the daily briefing runs on. Those
+    # minutes ran out on 2026-09-22 and no briefing ran for eight days.
+    # See backend/tests/test_ci_triggers.py.
+    branches: [main]
     # `assets/**` on BOTH triggers. Adding it only to `pull_request` left
     # a direct push of an unreadable track reaching the default branch
     # without this suite ever running — the exact gap the filter was added
@@ -12,6 +18,12 @@ on:
     # change to an asset must run this suite. Without it, replacing a track
     # with something unreadable would be reported by nothing.
     paths: ["backend/**", "assets/**", ".github/workflows/backend.yml"]
+
+# A newer push to the same PR supersedes the run in progress. Runs on `main`
+# are never cancelled: each one is the record of what landed.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:

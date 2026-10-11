@@ -1465,6 +1465,48 @@ voice was the backup.
 **Deployment, again.** The Worker change does nothing until someone runs
 `wrangler deploy`. Merging is not shipping (see the standing facts below).
 
+## 2026-10-11 - no briefing ran from 23 to 30 September, and nothing said so
+
+Found while pulling production runs to judge the 0.78 threshold. Of the 116
+`briefing.yml` runs since 2026-09-22, 68 failed. Every run from the 23rd to
+the 30th failed, 8 a day counting retries, and every run since 1 October has
+passed. The runs carry no logs because no job ever started. The annotation
+on each one reads "The job was not started because recent account payments
+have failed or your spending limit needs to be increased". The repository
+is private, so its Actions minutes are capped monthly. They ran out on
+22 September and came back with the month.
+
+Task 28 predicted this in so many words, including the part that bit: the
+watchdog is an Actions workflow too, so it stopped with the thing it
+watches. Eight mornings without a briefing, and the only signal was the
+absence of one.
+
+**October is on the same course.** Billed minutes for 1-11 October, counted
+from each job's start and end, rounded up per job, with macOS at 10x:
+
+| workflow | jobs | billed minutes |
+|---|---|---|
+| daily briefing | 47 | 371 |
+| ios (macOS) | 12 | 240 |
+| backend | 34 | 207 |
+| watchdog, dependabot, worker, graph | 30 | 39 |
+| **total** | | **857**, ~81 a day |
+
+At 81 a day, 2,000 minutes run out around 24-25 October, the same weekend
+as the DST change that task 39 is racing. (2,000 is GitHub Free's allowance
+for private repos. The API that would confirm the plan needs a token scope
+this session doesn't have.)
+
+**What this change does.** Half of all CI runs were duplicates: the suites
+fired on `push` to every branch AND on `pull_request`, so each push to a
+branch with an open PR ran twice. That was 17 of 34 backend runs, 6 of 12
+iOS and 5 of 8 Worker. `push` is now `main` only, and a newer push to a PR
+cancels the run it supersedes. That saves about 230 of the 857 minutes, for
+a pace of about 60 a day. **That alone still runs out around 30 October.**
+Cutting the briefing crons from four a day to two (task 28, the owner's
+call) brings it to about 43 a day, which lasts the month. The other ways
+out are a spending limit above zero, or a public repository.
+
 ## Standing facts worth not rediscovering
 
 - **The Worker has no CI deploy.** Merging is not shipping. A route on `main`

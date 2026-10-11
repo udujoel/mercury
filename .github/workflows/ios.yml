@@ -16,12 +16,24 @@ name: ios
 # someone remembers.
 on:
   push:
+    # `main` only. On any other branch the `pull_request` trigger below
+    # already runs this suite, and the duplicate run was half of all CI in
+    # October 2026, on the same minutes the daily briefing runs on. Those
+    # minutes ran out on 2026-09-22 and no briefing ran for eight days.
+    # See backend/tests/test_ci_triggers.py.
+    branches: [main]
     # Both triggers, for the reason backend.yml documents: a filter on
     # `pull_request` alone lets a direct push to the default branch through
     # with the suite never running.
     paths: ["ios/**", ".github/workflows/ios.yml"]
   pull_request:
     paths: ["ios/**", ".github/workflows/ios.yml"]
+
+# A newer push to the same PR supersedes the run in progress. Runs on `main`
+# are never cancelled: each one is the record of what landed.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
