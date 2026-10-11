@@ -1715,6 +1715,35 @@ The test suite couldn't see this. Each test builds a fresh provider and
 calls it straight away, so no test ever had two minutes between calls. The
 new test fakes the clock and puts them there.
 
+## 2026-10-11 - "It's Monday", said on a Sunday
+
+Heard on the simulator while testing #68's features against production: the
+06:41 briefing for Sunday 11 October opens "Good morning, Joel. It's Monday,
+October 11th, 2026." This is the third weekday bug. `script_chain.py` keeps
+a comment about the August one, which ended with "never make the model
+derive a fact you can simply state", and the outline prompt does state it:
+"DATE: Sunday, 11 October 2026". But only the outline pass gets that line.
+The draft and both critique passes rewrite the cold open without it, so
+whichever pass rewrote it last derived the weekday again.
+
+The keyword grounding gate can't catch this. It checks that a word occurs
+somewhere in the source, and with 35 emails in the input "Monday" always
+does. The semantic gate could have caught it, but it had never judged
+anything in production (the judgment budget bug, task 47).
+
+**Fixed in code, not in the prompt.** `quality.correct_spoken_date` runs on
+the script that ships and changes only the weekday word, and only where the
+sentence is unambiguously about today: a weekday followed by today's month
+and day (numeric or spelled, with an optional year), or "it's / today is /
+happy <weekday>" in the cold open. When the cold open's "It's <weekday>"
+comes with a DIFFERENT date or year, the words are left as written and
+logged as an error, because then the date itself is wrong, and swapping the
+weekday would make it wrong in a new way. Anywhere else, a weekday with
+another date is about another day ("your dentist on Monday, October 12th")
+and is left alone without a log. Names come from English tables, not
+`strftime`, whose `%A` follows the host's locale. The prompts are untouched,
+so the regression set doesn't need regenerating for this change.
+
 ## Standing facts worth not rediscovering
 
 - **The Worker has no CI deploy.** Merging is not shipping. A route on `main`

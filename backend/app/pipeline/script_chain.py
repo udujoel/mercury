@@ -68,7 +68,7 @@ from app.pipeline.prompts import (  # noqa: F401
     _fence_untrusted,
     _strip_fence_markers,
 )
-from app.pipeline.quality import run_all_gates
+from app.pipeline.quality import correct_spoken_date, run_all_gates
 from app.pipeline.semantic_quality import (
     check_relayed_semantic,
     run_all_gates_semantic,
@@ -1863,6 +1863,25 @@ async def _generate_script_once(
     # but "normally" is doing work in that sentence, and the cost of being
     # sure is one set comparison.
     final_turns = _drop_disabled(final_turns, segments)
+
+    # The one fact every briefing states. Checked in code because three
+    # weekday bugs have shown a prompt can't hold it: only the outline pass
+    # is told the date, and the passes after it rewrite the cold open
+    # without it (ROADMAP task 48). Before the shipped-relay check below,
+    # so that check reads the words that actually ship.
+    final_turns, spoken_dates = correct_spoken_date(final_turns, date)
+    for found in spoken_dates:
+        if found["kind"] == "weekday":
+            logger.warning(
+                "corrected a spoken weekday in turn %d: %r is not %s",
+                found["turn_index"], found["said"], date.strftime("%A"),
+            )
+        else:
+            logger.error(
+                "the cold open names another date (%r in turn %d) and was "
+                "left as written",
+                found["said"], found["turn_index"],
+            )
 
     # The last word on what actually ships, whatever route it took here.
     #
