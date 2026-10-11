@@ -1,0 +1,11 @@
+# Formatting-only commits, skipped by `git blame` (GitHub honours this file
+# by default; locally: git config blame.ignoreRevsFile .git-blame-ignore-revs).
+
+# chore: format the backend once, and keep it formatted (#79)
+#
+# Not purely formatting. It also added the `ruff format --check` step in
+# backend.yml, test_backend_ci_keeps_the_code_formatted, the ROADMAP ticks
+# for tasks 41 and 43, the single `_ENDPOINT` literal in gemini_research.py
+# and eight docstrings reworded to not start with a double quote. Blame skips
+# those lines too; for them, read #79 itself.
+818b80a7b5a33fa448b3aabe1d4b84e776ca1986
