@@ -59,8 +59,61 @@ jobs:
         run: |
           test -f Secrets.xcconfig || cp Secrets.example.xcconfig Secrets.xcconfig
 
+      # The newest RELEASED Xcode 26.x on the image, not its default. `macos-15`
+      # defaults to Xcode 16.4 (Swift 6.1, the iOS 18 SDK) while the app is
+      # built and checked with a far newer one, so CI could not compile an
+      # iOS 26 API at all: the first push of #76 failed here and nowhere
+      # else (ROADMAP task 60). Code that must still build on an older
+      # toolchain keeps its `#if compiler(...)` guard.
+      #
+      # Pinned to a MAJOR version so CI's compiler moves when this line does,
+      # not when GitHub updates the image; minor releases within it are taken
+      # as they come. Betas and release candidates are excluded. If the image
+      # has no released 26.x the step fails and says so, rather than quietly
+      # building with something else.
+      - name: Use the newest released Xcode 26
+        env:
+          XCODE_MAJOR: "26"
+        run: |
+          set -euo pipefail
+          # XCODE_APPS_DIR exists for backend/tests/test_ci_triggers.py, which
+          # runs this script against fake app bundles.
+          apps="${XCODE_APPS_DIR:-/Applications}"
+          newest=$(ls -d "$apps"/Xcode_${XCODE_MAJOR}*.app 2>/dev/null \
+            | grep -Eiv 'beta|release.?candidate|_rc' | sort -V | tail -1 || true)
+          if [ -z "$newest" ]; then
+            echo "::error::No released Xcode ${XCODE_MAJOR}.x on this image:"
+            ls -d "$apps"/Xcode*.app || true
+            exit 1
+          fi
+          echo "Selecting $newest"
+          sudo xcode-select -s "$newest"
+
       - name: Show the toolchain
         run: xcodebuild -version && xcrun simctl list runtimes | tail -5
+
+      # An available iPhone on the newest iOS runtime, by UDID. A pinned
+      # model name ("iPhone 16") is a red build waiting for the Xcode above
+      # to ship a different set of simulators.
+      - name: Pick a simulator
+        id: sim
+        run: |
+          set -euo pipefail
+          udid=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          def version(runtime):
+              return [int(p) for p in runtime.rsplit("iOS-", 1)[1].split("-")]
+          runtimes = sorted((r for r in devices if ".iOS-" in r), key=version)
+          print(next(d["udid"] for r in reversed(runtimes)
+                     for d in devices[r] if d["name"].startswith("iPhone")))
+          ')
+          if [ -z "$udid" ]; then
+            echo "::error::No available iPhone simulator for this Xcode"
+            exit 1
+          fi
+          echo "Using simulator $udid"
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
 
       # `-destination` names a device FAMILY rather than a specific model:
       # GitHub's images change which simulators are installed, and pinning
@@ -75,7 +128,7 @@ jobs:
           xcodebuild test \
             -project Mercury.xcodeproj \
             -scheme Mercury \
-            -destination 'platform=iOS Simulator,OS=latest,name=iPhone 16' \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
             -resultBundlePath TestResults.xcresult \
             CODE_SIGNING_ALLOWED=NO
 
