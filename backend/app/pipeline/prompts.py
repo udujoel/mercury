@@ -191,6 +191,12 @@ Return JSON only:
 
 DRAFT_PROMPT = """Write the full script from this outline.
 
+DATE: {date}
+
+Today is DATE. Anything in the source dated before today
+has already happened: speak of it in the past tense, never as part of
+today's plan. Name no weekday or date for today other than DATE.
+
 OUTLINE:
 {outline}
 
@@ -211,6 +217,8 @@ in the source data.
 CRITIQUE_PROMPT = """Review this draft script critically. You are an editor,
 not a cheerleader.
 
+DATE: {date}
+
 SCRIPT:
 {script}
 
@@ -230,6 +238,8 @@ Identify every instance of:
    it, or calling it critical or urgent, is not: the listener is hearing
    this, so the sender address, the headers and the link are already
    gone, and two trusted voices are vouching for a stranger.
+8. STALE — a weekday or date for today that is not DATE, or something
+   dated before DATE presented as today's plan or as still to come
 
 Return JSON only:
 {{"issues": [{{"turn_index": 4, "type": "UNGROUNDED",
@@ -241,6 +251,8 @@ If a category has no instances, say nothing about it. Do not pad the list.
 
 
 REVISE_PROMPT = """Apply these fixes to the script.
+
+DATE: {date}
 
 SCRIPT:
 {script}

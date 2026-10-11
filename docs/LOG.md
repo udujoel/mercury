@@ -1807,6 +1807,24 @@ current as the last time someone checked it.
 morning floor in the Worker is the fix for what it unmasks, and it is inert
 until `wrangler deploy` runs (task 39).
 
+## 2026-10-11 - every script pass is told the date, and there is no regression set
+
+Only the outline pass ever received "DATE: ...". The draft and both critique
+passes rewrote the cold open without it, which is how Sunday's briefing came
+to open "It's Monday" (fixed in code by #75) and how a bus trip that left on
+Saturday became "a busy start to the day" (task 55). All four passes now get
+the same `DATE:` line from `quality.spoken_date`, which uses the guard's
+English tables rather than `strftime`. The draft is told that anything dated
+before today has already happened, and the critique has a STALE category.
+The critique's JSON schema had to gain STALE too; a schema test caught that.
+
+**CLAUDE.md's regression set does not exist.** It says to regenerate five
+saved snapshots after every prompt change and to listen to each cold open.
+There are no such snapshots in the repo, so that step could not be done.
+This change is pinned by prompt-wiring tests, and whether it actually
+changes what the hosts say is a question for the next scheduled runs, not
+for the suite. Task 61 builds the set.
+
 ## Standing facts worth not rediscovering
 
 - **The Worker has no CI deploy.** Merging is not shipping. A route on `main`

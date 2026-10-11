@@ -321,6 +321,7 @@ async def test_a_one_sided_failure_regrades_both_with_the_heuristic(caplog):
     budget = sum(len(t.text.split()) for t in draft_turns)
     with caplog.at_level(logging.WARNING, logger="app.pipeline.script_chain"):
         await _run_critique_and_revise(
+            date="Friday, 21 August 2026",
             llm=FakeLLMProvider(),
             draft_turns=draft_turns,
             source_data="source",

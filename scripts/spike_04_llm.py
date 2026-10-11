@@ -419,6 +419,7 @@ async def run_chain(provider, fixture: dict) -> dict:
     print(f"  {len(outline.get('segments', []))} segments planned")
 
     draft_prompt = DRAFT_PROMPT.format(
+        date=fixture["date"],
         outline=json.dumps(outline), source_data=source_data
     )
     print("--- PASS 2: draft ---")
@@ -431,6 +432,7 @@ async def run_chain(provider, fixture: dict) -> dict:
     print(f"  {len(draft_turns)} turns, {word_count(draft_turns)} words")
 
     critique_prompt = CRITIQUE_PROMPT.format(
+        date=fixture["date"],
         script=json.dumps(draft_json), source_data=source_data
     )
     print("--- PASS 3: critique ---")
@@ -441,6 +443,7 @@ async def run_chain(provider, fixture: dict) -> dict:
     print(f"  {len(critique.get('issues', []))} issues found")
 
     revise_prompt = REVISE_PROMPT.format(
+        date=fixture["date"],
         script=json.dumps(draft_json), critique=json.dumps(critique)
     )
     print("--- PASS 4: revise ---")

@@ -307,3 +307,53 @@ async def test_the_remainder_example_uses_the_real_count():
     prompt = llm.outline_prompt
     assert "plus 4 others" in prompt
     assert "eleven" not in prompt.lower()
+
+
+# ──────────────────────────────────────────────────────────────
+# Every pass knows the date (ROADMAP tasks 57 and 55)
+# ──────────────────────────────────────────────────────────────
+#
+# Only the outline pass was told the date. The draft and both critique
+# passes rewrote the cold open without it, so the weekday was derived again
+# ("It's Monday" on Sunday 2026-10-11), and a bus trip that left yesterday
+# became "a busy start to the day". #75 guards the weekday in code; these
+# give every pass the fact so nothing has to be derived.
+
+
+def _prompt(llm: PromptCapturingLLM, marker: str) -> str:
+    return next(p for p in llm.prompts if marker in p)
+
+
+async def test_the_draft_prompt_states_the_date():
+    llm = await _run(passes=4)
+    assert "DATE: Friday, 21 August 2026" in llm.draft_prompt
+
+
+async def test_the_draft_is_told_that_the_past_is_past():
+    llm = await _run(passes=4)
+    assert "already happened" in llm.draft_prompt
+
+
+async def test_the_critique_checks_against_the_date():
+    llm = await _run(passes=4)
+    critique = _prompt(llm, "Review this draft script critically")
+    assert "DATE: Friday, 21 August 2026" in critique
+    assert "STALE" in critique
+
+
+async def test_the_revision_knows_the_date():
+    llm = await _run(passes=4)
+    assert "DATE: Friday, 21 August 2026" in _prompt(llm, "Apply these fixes")
+
+
+async def test_every_pass_spells_the_date_the_same_way():
+    """One helper, not four `strftime` calls: `%A` follows the host's
+    locale, and the passes must agree with each other and with the guard."""
+    llm = await _run(passes=4)
+    lines = {
+        line
+        for prompt in llm.prompts
+        for line in prompt.splitlines()
+        if line.startswith("DATE:")
+    }
+    assert lines == {"DATE: Friday, 21 August 2026"}

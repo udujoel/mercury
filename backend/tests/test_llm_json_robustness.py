@@ -368,6 +368,7 @@ async def test_critique_parse_failure_retries_before_degrading():
     budget = sum(len(t.text.split()) for t in draft_turns)
 
     result = await _run_critique_and_revise(
+        date="Friday, 21 August 2026",
         llm=llm, draft_turns=draft_turns, source_data="source", budget=budget,
     )
     assert llm.critique_calls == 2, "critique should have been retried"

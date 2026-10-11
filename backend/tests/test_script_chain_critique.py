@@ -273,6 +273,7 @@ async def test_critique_parse_failure_falls_back_to_draft():
         revise_response="[]",  # never reached
     )
     result = await _run_critique_and_revise(
+        date="Friday, 21 August 2026",
         llm=llm, draft_turns=draft, source_data="irrelevant", budget=budget,
     )
     assert result == draft
@@ -294,6 +295,7 @@ async def test_revise_parse_failure_falls_back_to_draft():
         revise_response="also not JSON",
     )
     result = await _run_critique_and_revise(
+        date="Friday, 21 August 2026",
         llm=llm, draft_turns=draft, source_data="irrelevant", budget=budget,
     )
     assert result == draft
@@ -319,6 +321,7 @@ async def test_revise_missing_segment_falls_back_to_draft():
         revise_response=json.dumps(incomplete),
     )
     result = await _run_critique_and_revise(
+        date="Friday, 21 August 2026",
         llm=llm, draft_turns=draft, source_data="irrelevant", budget=budget,
     )
     assert result == draft
@@ -332,6 +335,7 @@ async def test_revise_empty_array_falls_back_to_draft():
         revise_response="[]",
     )
     result = await _run_critique_and_revise(
+        date="Friday, 21 August 2026",
         llm=llm, draft_turns=draft, source_data="irrelevant", budget=budget,
     )
     assert result == draft
@@ -353,6 +357,7 @@ async def test_revise_outside_word_budget_falls_back_to_draft():
         revise_response=json.dumps(bloated),
     )
     result = await _run_critique_and_revise(
+        date="Friday, 21 August 2026",
         llm=llm, draft_turns=draft, source_data="irrelevant", budget=budget,
     )
     assert result == draft
@@ -379,6 +384,7 @@ async def test_revise_that_scores_worse_than_draft_falls_back_to_draft():
         revise_response=json.dumps(worse),
     )
     result = await _run_critique_and_revise(
+        date="Friday, 21 August 2026",
         llm=llm, draft_turns=draft, source_data=source_text, budget=budget,
     )
     assert result == draft, "a revision that scores worse must be rejected"
@@ -408,6 +414,7 @@ async def test_revise_that_improves_on_draft_is_accepted():
         revise_response=json.dumps(fixed),
     )
     result = await _run_critique_and_revise(
+        date="Friday, 21 August 2026",
         llm=llm, draft_turns=draft, source_data=source_text, budget=budget,
     )
     result_texts = [t.text for t in result]

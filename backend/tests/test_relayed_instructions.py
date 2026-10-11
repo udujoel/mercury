@@ -174,6 +174,7 @@ async def _revise_to(monkeypatch, draft: list[Turn], revised: list[Turn],
     # one-segment fixture is rejected before the comparison and the test
     # would assert nothing.
     return await script_chain._run_critique_and_revise(
+        date="Friday, 21 August 2026",
         llm=_LLM(), draft_turns=draft, source_data="source", budget=budget,
         segments=segments or [Segment.INBOX],
     )

@@ -1112,7 +1112,7 @@ Most of it is backend behaviour visible only in production logs.
       in the Swift 6 language mode. `ShowNotesView` still uses the colour
       tokens ADR-012 deprecated, and three tests mutate a captured var
       from concurrent code.
-- [ ] 55. **The cold open frames yesterday as today.** The same briefing
+- [~] 55. **The cold open frames yesterday as today.** HALF DONE: the draft is told that anything dated before today has already happened, and the critique flags it as STALE. Not yet shown to work: only a real cold open can, so check the first scheduled briefings after this lands. What was found: The same briefing
       says "your calendar already shows a busy start to the day, with a
       confirmed bus journey ... that departed yesterday". A trip that's
       over isn't today's agenda. This is content selection, so add it to
@@ -1121,7 +1121,7 @@ Most of it is backend behaviour visible only in production logs.
       Google, and the phone now says so (task 22's notice works). The
       quota isn't coming back by itself; it's an owner call (ADR-006).
 
-- [ ] 57. **Give every script pass the date.** Only the outline pass is told
+- [x] 57. **Give every script pass the date.** DONE: the draft, critique and revise prompts carry `DATE:` from one locale-free helper (`quality.spoken_date`), the outline uses it too, and the critique has a STALE category. What was found: Only the outline pass is told
       "DATE: Sunday, 11 October 2026"; the draft and both critique passes
       rewrite the cold open without it. #75's guard holds the weekday in
       code, but no regex catches "tomorrow is Tuesday" or a past event
@@ -1147,6 +1147,16 @@ Most of it is backend behaviour visible only in production logs.
       `#if compiler(>=6.2)`. Either pin a newer Xcode on the runner, or keep
       guarding every new-SDK call at compile time and accept that CI never
       compiles those paths. Decide before more iOS 26 APIs land.
+
+- [ ] 61. **Build the regression set CLAUDE.md assumes exists.** CLAUDE.md
+      says to keep five saved input snapshots (heavy meeting day, empty
+      calendar, high newsletter volume, breaking news, quiet weekend) and to
+      regenerate all five after any prompt change. None exist in the repo:
+      `backend/tests/fixtures` has per-source fixtures but no day-shaped
+      snapshots, so the prompt change for task 57 could only be pinned by
+      wiring tests and checked against the next production run. Capture five
+      real mornings (bodies stripped per rule 5) and a script that replays
+      them with `generate_briefing(now=...)`.
 
 Still open from earlier sections, in the order they now rank: **21** (word
 timings that survive the cache, plus `BriefingManifest.schema_version`),
