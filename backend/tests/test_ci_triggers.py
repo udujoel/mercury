@@ -222,6 +222,29 @@ def test_ios_ci_does_not_pin_a_simulator_model():
     assert "steps.sim.outputs.udid" in test_step["run"]
 
 
+def test_a_hung_macos_job_cannot_spend_the_month():
+    """GitHub's default job timeout is 360 minutes, and macOS bills at 10x,
+    so one hang would cost about 3,600 billed minutes: more than the private
+    repo's 2,000 a month, out of which the briefing is also generated. iOS
+    runs take under three minutes. Thirty is the ceiling because past it a
+    single hang spends more than 15% of the month."""
+    jobs = [
+        (path.name, name, job)
+        for path in sorted(WORKFLOWS.glob("*.yml"))
+        for name, job in _spec(path.name)["jobs"].items()
+        if str(job.get("runs-on", "")).startswith("macos")
+    ]
+
+    assert jobs, "no macOS job found; ios.yml's was expected to be one"
+    for workflow, name, job in jobs:
+        timeout = job.get("timeout-minutes")
+        assert timeout is not None, f"{workflow}: job `{name}` has no timeout"
+        assert timeout <= 30, (
+            f"{workflow}: job `{name}` may run {timeout} minutes, which bills "
+            f"{timeout * 10} at the macOS rate"
+        )
+
+
 def test_backend_ci_keeps_the_code_formatted():
     """ROADMAP task 43. CLAUDE.md says "format on save", and by 2026-10-11
     88 of 124 backend files had drifted from it. The whole backend was

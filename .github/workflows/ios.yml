@@ -7,12 +7,16 @@ name: ios
 # nothing runs at all — had no line in the roadmap until task 23.
 #
 # COST, stated plainly because it is not free. macOS runners bill at 10x the
-# Linux rate, and a private repo gets 2000 minutes a month. A ~5 minute run
-# is therefore ~50 charged minutes, against a budget the briefing cron
-# already spends ~60 of. The path filter below is what keeps that
-# affordable: this runs only when iOS or this file changes, not on every
+# Linux rate, and a private repo gets 2,000 minutes a month. Every successful
+# run from September to October 2026 took 1.4-2.9 minutes, and GitHub rounds
+# each job up to a whole minute before multiplying, so a run bills 20-30
+# minutes. The same budget pays for generation, which since #81 is two
+# briefing runs a day at about 7 billed minutes each, roughly 430 a month and
+# about 500 with the watchdog (docs/DEPLOYMENT.md, Cost). That leaves about
+# 1,500 for all CI. The path filter below is what keeps this suite
+# affordable: it runs only when iOS or this file changes, not on every
 # backend commit. If the budget becomes a problem, narrow it further or move
-# to a self-hosted runner — do not silently delete it and go back to hoping
+# to a self-hosted runner. Do not silently delete it and go back to hoping
 # someone remembers.
 on:
   push:
@@ -41,6 +45,13 @@ concurrency:
 jobs:
   test:
     runs-on: macos-15
+    # Without this a hung job runs for GitHub's default of 360 minutes, which
+    # at the 10x rate bills about 3,600, more than the whole month. Runs take
+    # under three minutes, so fifteen is five times the slowest one seen and
+    # caps a hang at about 150 billed minutes. Raise it if the suite grows
+    # into it, but not past thirty, where one hang spends 15% of the month.
+    # See backend/tests/test_ci_triggers.py.
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: ios/Mercury

@@ -1903,6 +1903,26 @@ in place a day costs an estimated 25-30 minutes and produces nothing. Healthy, t
 cadence is about 16 a day. Roughly 140 minutes were left for 26-31 October,
 so the month only lasts if the cap is raised.
 
+## 2026-11-01 - a timeout for the macOS job, and its cost comment corrected
+
+After #81, `ios.yml` was the last test suite with no job timeout, so a hang
+would run GitHub's default of 360 minutes and bill about 3,600 at the 10x
+macOS rate. It was left alone in October because the edit runs the macOS
+suite itself, 20-30 billed minutes, when about 140 were left for the last
+six days and generation needed them. It waited for the 1 November reset.
+
+The "~5 minute run" its cost comment priced had never been measured. All 36
+successful runs, from the first on 13 September to the last on 11 October,
+took 1.4-2.9 minutes of wall time, and the four since #77 moved CI to Xcode
+26 took 1.7-2.6, about two of which is the `Test` step. So the timeout is 15
+rather than the 20-30 the task first suggested: five times the slowest run
+is room for a cold simulator or a slower image, and every extra minute of
+timeout is ten billed ones on the day it hangs. `test_ci_triggers.py` now
+fails if any macOS job has no timeout or one above 30.
+
+`worker.yml` still has none. It runs on Linux, so a hang costs 360 minutes
+rather than 3,600, which is still 18% of the month.
+
 ## Standing facts worth not rediscovering
 
 - **The Worker has no CI deploy.** Merging is not shipping. A route on `main`
