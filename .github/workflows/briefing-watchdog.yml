@@ -33,8 +33,9 @@ on:
     # the last generation dispatch, and still an hour before the 07:00 wake.
     - cron: "52 5 * * *"
     - cron: "56 6 * * *"
-    # NOT extended to the other three generation slots, though task 31
-    # asks for it and an earlier cut of this change did exactly that.
+    # NOT extended to the other generation slots, though task 31 asks for
+    # it and an earlier cut of this change did exactly that. (Since
+    # 2026-10-25 there is one other: GitHub's 12:12 entry in briefing.yml.)
     #
     # Two reasons, both measured. The entries would not have RUN: the
     # stand-down guard below fires outside 03:00-12:00 local, and 13:42,
@@ -46,9 +47,10 @@ on:
     # stops too". Buying evening coverage by risking the alarm AND
     # generation is the worst trade available.
     #
-    # Same-day detection of an evening failure needs either the cadence
-    # cut of task 28 or a deliberate decision to spend the minutes. Both
-    # are the owner's call, not a thing to slip into a robustness fix.
+    # Same-day detection of an evening failure is still a deliberate
+    # decision to spend minutes, and the owner's call. Task 28's cadence
+    # cut made it cheaper (one evening run to watch, not three); it did
+    # not make it free.
   workflow_dispatch:
     inputs:
       briefing_id:
@@ -238,10 +240,20 @@ jobs:
         # failures have different remedies and the operator should see
         # both.
         #
-        # 8 hours: healthy is 5.7h at 05:52 and 6.7h at 06:56 (the 00:12
-        # run), so there is over an hour of margin; the 2026-09-20 stall
-        # is 9.8h and fires; a dropped 00:12 with an on-time 18:12 is
-        # 11.7h and fires.
+        # 16 hours, sized for two runs a day. It was 8, sized for the
+        # 00:12 run, which no longer exists. The newest briefing a healthy
+        # morning can count on is now the Worker's punctual 03:40 run,
+        # because the 12:12 run is on GitHub's scheduler and may not have
+        # happened yet. And these backstops are late themselves: 3.9-7.1
+        # hours late every day from 14 to 25 October, 9.2 on 12 October.
+        # At 12:31 the morning run is already 8.7 hours old, so 8 hours
+        # would have cried wolf on most days. At the 12 hours of lateness
+        # this repo has seen, 06:56 lands at 18:56, 15.3h after 03:40.
+        #
+        # Still not useless: a dropped morning after an on-time 12:12 is
+        # 17.7h at 05:52 and fires, and a stall that loses the evening and
+        # the next morning is past 26h. A morning that is simply missing
+        # is `check`'s to catch, in the step above, at the same checkpoint.
         id: freshness
         if: always() && steps.check.outputs.status != '2'
         env:
@@ -253,7 +265,7 @@ jobs:
           STORAGE_BACKEND: r2
         run: |
           set +e
-          python -m app.cli freshness --max-age-hours 8
+          python -m app.cli freshness --max-age-hours 16
           status=$?
           set -e
           echo "status=$status" >> "$GITHUB_OUTPUT"

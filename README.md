@@ -28,7 +28,9 @@ references persist.
 ## Status
 
 **Running in production.** Phases 0–2 are complete and a briefing is generated
-four times a day (06:12, 12:12, 18:12 and 00:12 UTC).
+twice a day: in the morning by the Cloudflare Worker (03:40 UTC, with retries),
+and again from a GitHub schedule entry at 12:12 UTC, which GitHub usually runs
+a few hours late.
 
 - Generation runs on GitHub Actions; audio and manifests live in Cloudflare R2
   behind a Worker (ADR-008)

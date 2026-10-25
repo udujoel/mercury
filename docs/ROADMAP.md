@@ -704,7 +704,7 @@ produced, ranked by what they buy per hour spent.
       subject line, a digest mentions someone else's breach in paragraph
       three.
 
-- [ ] 28. **Two briefings a day, and count what they cost.** Four a day put
+- [~] 28. **Two briefings a day, and count what they cost.** HALF DONE (2026-10-25, owner's call): the Worker's 03:40 morning and GitHub's `12:12`, nothing else; the push-trigger guard landed in #73; `briefing.yml`'s cost comment is corrected and the watchdog's freshness floor resized to 16h for the new cadence. Still to do: sum `len(turn.text)` per run and log it, and correct `ios.yml`'s cost comment, which was left alone because any edit to that file runs the macOS suite at 10x. Four a day put
       Google TTS at ~88% of its million free characters and Actions at ~82%
       heading to the 2,000 cap, quadrupled publisher blocking, and multiplied
       the repetition — with the digest carrying 209 stories and the audio
@@ -775,7 +775,7 @@ produced, ranked by what they buy per hour spent.
       field is missing from that whitelist; it catches `music_set`
       retroactively too.
 
-- [~] 31. **A freshness floor, and a watchdog for all four slots.** BOTH FLOORS DONE (#59, #68); the watchdog for the other slots stays blocked on task 28. The
+- [~] 31. **A freshness floor, and a watchdog for all four slots.** BOTH FLOORS DONE (#59, #68); the watchdog for the other slots was blocked on task 28, which has now cut them to one (the `12:12` evening run), so it is a smaller ask but still minutes to spend. The
       `00:12` cron generates a briefing named for the NEW day, so all five of
       the Worker's morning checkpoints see "this date has a playable
       briefing" and stand down, the 05:40 alarm included. Masked today only
@@ -990,8 +990,9 @@ fixture written to contain duplicates.
 **Owner decisions.** Two PR threads ended in a question only the owner can
 answer. Neither blocks a merge:
 
-- **Task 28: two briefings a day, or four? This is now urgent (task 45).**
-  It's a cost and cadence call.
+- **Task 28: two briefings a day, or four?** DECIDED 2026-10-25: two, after
+  the account passed 90% of its minutes on the 24th. It's a cost and cadence
+  call.
   The answer also settles #68's thread about the `00:12` cron (moving it
   makes the morning floor unnecessary) and unblocks task 31's watchdog half.
 - **Should a replay rank against its snapshot's time?** #69 made it
@@ -1002,7 +1003,7 @@ answer. Neither blocks a merge:
 
 ### Tasks
 
-- [~] 45. **The Actions minutes run out around 25 October.** HALF DONE: #73 merged (CI runs once per change). The rest is the owner's call below. First, because
+- [x] 45. **The Actions minutes run out around 25 October.** DONE 2026-10-25: #73 merged (CI runs once per change), and the owner chose two briefings a day (task 28). The account was at 1,815 of 2,000 on the 24th, all of it this repository; see docs/LOG.md for the count. First, because
       it stops the product. No briefing ran from 23 to 30 September: the
       private repo's 2,000 Free-plan minutes were spent on the 22nd, and
       every run failed with "The job was not started because ... your

@@ -1,11 +1,15 @@
 name: daily briefing
 
 # ADR-008: generation is a scheduled batch job, not a hosted service. It runs
-# for ~2 minutes a day and is idle the rest of the time, so a cron runner plus
-# object storage replaces a backend entirely.
+# for a few minutes at a time and is idle the rest of the time, so a cron
+# runner plus object storage replaces a backend entirely.
 #
-# A private repo gets 2000 Actions minutes a month; a 2-minute daily job uses
-# about 60 of them.
+# COST. A private repo gets 2,000 Actions minutes a month, shared with CI and
+# the watchdog, and each run here is billed about 7 of them: a minute of setup
+# and four to five minutes of Generate (median 6.2 minutes of wall time over
+# 121 runs in October 2026, not the 71 seconds the Phase 1 gate measured).
+# Two runs a day is about 430 minutes a month. Five a day was about 1,100,
+# and together with October's CI it spent the month by the 24th.
 
 on:
   schedule:
@@ -31,37 +35,44 @@ on:
     # are sized against that, and winter simply gets an extra hour of margin.
     # The briefing is NAMED in the user's timezone by app.cli, which is what
     # actually matters; see the five date bugs this project has already had.
-    # EVERY SIX HOURS, not once a night.
     #
-    # A briefing made at 04:00 describes an inbox that has moved on by
-    # lunchtime, and the news it clustered is half a day old by the evening.
-    # Four runs a day means what you open is never more than six hours
-    # behind — which is the point of the product rather than a nicety.
+    # TWICE A DAY: the Worker's morning run, and this one entry.
     #
-    # This is only affordable because runs no longer OVERWRITE each other:
-    # ids carry a `-HHMM` time, so the day accumulates briefings and you can
-    # still hear the one from this morning. Before that change, four runs a
-    # day would have meant three thrown away.
+    # Until 2026-10-25 there were four entries (06:12, 12:12, 18:12 and
+    # 00:12), every six hours. With the Worker's morning that was five runs a
+    # day, about 1,100 of the month's 2,000 minutes before any CI ran, and on
+    # 24 October the account passed 90% with eight days to go (ROADMAP tasks
+    # 28 and 45). Running out stops the watchdog as well as generation.
+    #
+    # Why 12:12 is the entry that stays. From 14 to 25 October GitHub created
+    # every one of these runs hours late:
+    #
+    # - 00:12 ran at 04:19-04:47, just behind the Worker's 03:40 run, so it
+    #   made a second copy of the briefing the Worker had just made.
+    # - 06:12 ran at 10:34-13:00, a few hours after the morning: little new.
+    # - 18:12 ran as late as 22:17.
+    # - 12:12 ran at 15:31-18:42, so in practice it is the evening update. In
+    #   Lisbon it stays on the same local day even ten hours late, summer and
+    #   winter.
+    #
+    # The 00:12 and 18:12 entries shared a worse problem. A run that lands
+    # between local midnight and 03:00 stamps a briefing that the Worker's
+    # morning checkpoints count as the morning, and they stand down (task
+    # 31). On 13 October a run was created at 00:33 UTC and the Worker did
+    # not dispatch that morning at all.
+    #
+    # Ids carry a `-HHMM` time, so the evening briefing sits next to the
+    # morning one rather than replacing it.
     #
     # Off the hour for the reason above: the top of the hour is the single
-    # worst minute to ask GitHub's scheduler for anything.
+    # worst minute to ask GitHub's scheduler for anything. And never inside
+    # the Worker's 03:40-05:40 UTC window: a run there makes a second morning
+    # briefing, distinct now that ids carry a time.
     #
-    # The morning slot is 06:12, NOT 04:12, and that is to stay out of the
-    # Worker's way. ADR-010 moved the punctual morning trigger to Cloudflare
-    # precisely because GitHub's scheduler runs late, and its checkpoints
-    # cover 03:40 to 05:40 UTC. A GitHub run at 04:12 would land in the
-    # middle of that and generate a SECOND briefing — distinct now that ids
-    # carry a time, where before it would have been a no-op. Five runs a day
-    # and five briefings, when the ask was four.
-    #
-    # At 06:12 the Cloudflare window has closed, so this is the first of the
-    # four six-hourly runs rather than a duplicate of a morning that already
-    # happened. The Worker still backstops the morning; these keep the rest
-    # of the day fresh.
-    - cron: "12 6 * * *"
+    # Adding an entry back costs about 220 minutes a month; price it against
+    # CI first (docs/DEPLOYMENT.md, Cost). The watchdog's freshness floor is
+    # sized against this cadence too, in test_watchdog_schedule.py.
     - cron: "12 12 * * *"
-    - cron: "12 18 * * *"
-    - cron: "12 0 * * *"
   workflow_dispatch:
     inputs:
       length:
@@ -108,6 +119,14 @@ jobs:
         # Required for AAC export. Without it the pipeline falls back to WAV,
         # which is ~17MB instead of ~4MB — a real difference for a phone
         # downloading it over cellular every morning.
+        #
+        # Five minutes, where a normal install takes about 33 seconds. On 22
+        # and 23 October apt hung on the mirror and this step ran until the
+        # job's 20-minute timeout, so 40 minutes went on runs that never
+        # reached Generate. A hang now costs five. In the morning the
+        # Worker's next checkpoint retries; in the evening the run is lost
+        # either way, and it is cheaper to lose it quickly.
+        timeout-minutes: 5
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
 
       - run: pip install -r requirements.txt

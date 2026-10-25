@@ -3,16 +3,17 @@
 Mercury runs with **no hosted backend**. See ADR-008 for why.
 
 ```
-  03:40 UTC  Cloudflare Cron Trigger ─┐
-  04:12 UTC  GitHub schedule (backstop)├─► generate (~2 min) ─► Cloudflare R2
-  04:41 UTC  GitHub schedule (backstop)┘                             │
-                                                                     │
-  05:08 UTC  watchdog ─► briefing missing? ─► red run + email        │
-                                                                     │
-  iPhone ◄──────────────── manifest + audio ───────────────────────┘
+  03:40 UTC        Cloudflare Cron Trigger ─┐
+  04:20-05:08 UTC  Worker retries, if missing ├─► generate (~6 min) ─► Cloudflare R2
+  12:12 UTC        GitHub schedule (evening) ─┘                             │
+                                                                            │
+  05:40 UTC        watchdog ─► briefing missing? ─► red run + email         │
+                                                                            │
+  iPhone ◄──────────────────── manifest + audio ──────────────────────────┘
 ```
 
-Nothing runs on a laptop. Nothing sleeps. Nothing costs money.
+Nothing runs on a laptop. Nothing sleeps. Nothing costs money, as long as the
+Actions minutes last (see Cost).
 
 **Why two schedulers.** GitHub's `schedule` event is best-effort by
 documentation — "some queued jobs may be dropped" — and on seven consecutive
@@ -24,7 +25,7 @@ moved there and GitHub's schedule became the backstop. See ADR-010.
 
 | Piece | Role | Free tier | Why this one |
 |---|---|---|---|
-| GitHub Actions | Runs generation four times a day, plus CI and the watchdog | 2000 min/mo private, **and it runs out**: about 81 billed min/day in October 2026, ~2,500 a month (see Cost) | Already where the code lives; `apt install ffmpeg` works |
+| GitHub Actions | Runs generation twice a day, plus CI and the watchdog | 2000 min/mo private, **and it runs out**: five runs a day plus October 2026's CI spent 90% of it by the 24th (see Cost) | Already where the code lives; `apt install ffmpeg` works |
 | Cloudflare R2 | Stores audio + manifests | 10 GB, **zero egress** | The phone downloads ~4 MB every morning; egress is what makes other object stores expensive |
 | iPhone | Plays | — | ADR-001: the server generates, the phone plays |
 
@@ -246,11 +247,17 @@ the evidence and the trade-offs; this is what an operator has to do.
 | When (UTC) | What | Where |
 |---|---|---|
 | 03:40 | Generate, if today's briefing is missing | Cloudflare Cron Trigger |
-| 04:12, 04:41 | Generate, if still missing | GitHub `schedule` (backstop) |
 | 04:20, 04:50 | Retry, if still missing | Cloudflare Cron Trigger |
 | 05:08 | Generate anyway — deadline blown | Cloudflare Cron Trigger |
 | 05:40 | Raise the alarm, **if still missing** | Cloudflare Cron Trigger |
 | 05:52, 06:56 | Alarm backstop, if the Worker itself is dead | GitHub `schedule` |
+| 12:12 | The evening briefing (GitHub ran it at 15:31-18:42 in October 2026) | GitHub `schedule` |
+
+**There is no GitHub generation backstop for the morning.** Until 2026-10-25
+the `00:12` entry acted as one, because GitHub ran it at about 04:30. It went
+in the cut to two runs a day (see Cost). If the Worker is down, the 05:52 and
+06:56 backstops still raise the alarm, and the first briefing of the day is the
+12:12 one unless someone runs the workflow by hand.
 
 **The alarm is conditional, and it is not raised in the same tick as a
 generation dispatch.** 05:40 dispatches the watchdog only when R2 still has no
@@ -305,8 +312,8 @@ a repo slug and a branch name are not secrets.
 **If this token expires or is revoked**, the Worker logs
 `dispatch of briefing.yml failed: HTTP 401` (Workers → mercury-briefings →
 Logs). Both dispatches use this token, so the 05:40 checkpoint cannot raise the
-alarm either. What is left is GitHub's own `schedule` — the 04:12/04:41
-generation backstops and the 05:52/06:56 watchdog backstops — which is the
+alarm either. What is left is GitHub's own `schedule` — the 12:12 evening
+run and the 05:52/06:56 watchdog backstops — which is the
 best-effort scheduler this ADR exists to stop relying on, and may be delayed or
 dropped. **You lose punctuality AND timely alarming**, and the Worker's
 `/status` endpoint is then the only reliable way to ask whether the briefing is
@@ -377,9 +384,29 @@ the PRD budgets 3-8 USD a month for TTS once the 1M free characters are used.
 **Except the Actions minutes, which are the binding limit.** The free plan's
 2,000 private-repo minutes ran out on 2026-09-22 and no briefing was made
 until the month reset, because generation, CI and the watchdog all spend the
-same minutes. 1-11 October 2026 used 857 billed minutes: briefings 371, iOS
-CI 240 (macOS bills at 10x), backend CI 207, everything else 39. #73 stopped
-CI running twice per PR push. Lasting the month needs two briefings a day
-instead of four (ROADMAP task 28), a spending limit above zero, or a public
-repository. The billing API needs a token with the `user` scope; without one,
-sum job durations from the jobs API, rounding each job up to a minute.
+same minutes.
+
+It nearly happened again in October 2026. Measured from the run list (each
+run's wall time rounded up to a minute, macOS at 10x), 1-25 October used about
+1,875 minutes. GitHub reported 1,815 on the evening of the 24th, so this
+repository is all of the account's usage. Generation was 938 of it (121 runs,
+median 6.2 minutes each), iOS CI 480, backend CI 380, the watchdog 52 and
+everything else about 25. #73 stopped CI running twice per PR push, and from
+the 12th to the 25th nothing ran except generation and the watchdog, at 28-56
+minutes a day.
+
+So the schedule was the problem. Five runs a day (the Worker's morning plus
+four GitHub entries) cost about 1,100 minutes a month before any CI ran. Since
+2026-10-25 there are two (ROADMAP task 28), about 16 minutes a day with the
+watchdog, so roughly 500 a month, which leaves about 1,500 for CI. October's
+CI was about 880.
+
+**A day when every run fails costs more than a healthy one.** A failed run
+still spends two or three minutes, the Worker dispatches up to four of them on
+a morning with no briefing, and the watchdog's re-checks add about five more.
+When Gemini's monthly spend cap is hit (2026-09-20, and again 2026-10-25), the
+briefings stop and the minutes go faster, so raise the cap rather than waiting
+for the month to turn.
+
+The billing API needs a token with the `user` scope; without one, sum job
+durations from the jobs API, rounding each job up to a minute.
