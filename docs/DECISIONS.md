@@ -376,6 +376,14 @@ Weighing it:
   argues against the design. The mitigation is layer 2: if the token dies, the
   GitHub backstop still generates and the watchdog still alarms, so the failure
   degrades to "punctuality lost" rather than "briefing lost".
+  **Amended 2026-10-25 (#81): this mitigation is gone.** To stop the Actions
+  minutes running out, `briefing.yml` was cut to one GitHub entry at 10:12
+  UTC, the day's second briefing. Nothing on GitHub generates in the
+  morning any more, so a dead token now means "morning briefing lost until
+  the afternoon run", and the watchdog's backstops are what still alarm. A
+  scheduled morning entry gated on `app.cli check` (about a minute a day
+  when the morning exists) would bring the mitigation back; it is an owner
+  decision on minutes.
 
 **Rejected:**
 

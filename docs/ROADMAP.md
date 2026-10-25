@@ -704,7 +704,7 @@ produced, ranked by what they buy per hour spent.
       subject line, a digest mentions someone else's breach in paragraph
       three.
 
-- [ ] 28. **Two briefings a day, and count what they cost.** Four a day put
+- [~] 28. **Two briefings a day, and count what they cost.** HALF DONE (2026-10-25, owner's call): the Worker's 03:40 morning and GitHub's `10:12`, nothing else; the push-trigger guard landed in #73; `briefing.yml`'s cost comment is corrected and the watchdog's freshness floor resized to 16h for the new cadence. Still to do: sum `len(turn.text)` per run and log it, and correct `ios.yml`'s cost comment, which was left alone because any edit to that file runs the macOS suite at 10x. Four a day put
       Google TTS at ~88% of its million free characters and Actions at ~82%
       heading to the 2,000 cap, quadrupled publisher blocking, and multiplied
       the repetition — with the digest carrying 209 stories and the audio
@@ -775,7 +775,7 @@ produced, ranked by what they buy per hour spent.
       field is missing from that whitelist; it catches `music_set`
       retroactively too.
 
-- [~] 31. **A freshness floor, and a watchdog for all four slots.** BOTH FLOORS DONE (#59, #68); the watchdog for the other slots stays blocked on task 28. The
+- [~] 31. **A freshness floor, and a watchdog for all four slots.** BOTH FLOORS DONE (#59, #68); the watchdog for the other slots was blocked on task 28, which has now cut them to one (the `10:12` afternoon run), so it is a smaller ask but still minutes to spend. Since #81 the freshness floor is `--max-age-hours 16`, not the 8 below, sized for two runs a day and for backstops GitHub runs hours late; the `00:12` entry described below no longer exists. The
       `00:12` cron generates a briefing named for the NEW day, so all five of
       the Worker's morning checkpoints see "this date has a playable
       briefing" and stand down, the 05:40 alarm included. Masked today only
@@ -990,8 +990,9 @@ fixture written to contain duplicates.
 **Owner decisions.** Two PR threads ended in a question only the owner can
 answer. Neither blocks a merge:
 
-- **Task 28: two briefings a day, or four? This is now urgent (task 45).**
-  It's a cost and cadence call.
+- **Task 28: two briefings a day, or four?** DECIDED 2026-10-25: two, after
+  the account passed 90% of its minutes on the 24th. It's a cost and cadence
+  call.
   The answer also settles #68's thread about the `00:12` cron (moving it
   makes the morning floor unnecessary) and unblocks task 31's watchdog half.
 - **Should a replay rank against its snapshot's time?** #69 made it
@@ -1002,7 +1003,7 @@ answer. Neither blocks a merge:
 
 ### Tasks
 
-- [~] 45. **The Actions minutes run out around 25 October.** HALF DONE: #73 merged (CI runs once per change). The rest is the owner's call below. First, because
+- [~] 45. **The Actions minutes run out around 25 October.** MOSTLY DONE 2026-10-25: #73 merged (CI runs once per change), and the owner chose two briefings a day (task 28, #81). The account was at 1,815 of 2,000 on the 24th, all of it this repository; see docs/LOG.md for the count. NOT DONE: this month can still run out. About 140 minutes were left for 26-31 October; a healthy day now costs about 16, but Gemini's spend cap was hit on the 25th, and a capped day costs an estimated 25-30 while producing nothing. Raising the cap is the owner's call. Close this on 1 November if the month lasted. First, because
       it stops the product. No briefing ran from 23 to 30 September: the
       private repo's 2,000 Free-plan minutes were spent on the 22nd, and
       every run failed with "The job was not started because ... your
@@ -1010,8 +1011,9 @@ answer. Neither blocks a merge:
       minutes over 10.6 days (briefing 371, iOS on macOS at 10x 240, backend
       207, watchdog/Dependabot/Worker/graph 39), about 81 a day. #73 stops CI running twice per PR push, which brings the
       pace to about 60 a day, but that still runs out around the 30th. The
-      rest needs an owner call: task 28 (two a day, about 43 a day in total,
+      rest needed an owner call: task 28 (two a day, about 43 a day in total,
       which lasts the month), a spending limit above zero, or a public repo.
+      The owner chose task 28 on 2026-10-25.
 - [ ] 46. **An alarm that doesn't run on Actions.** Running out of minutes
       silenced the briefing AND its watchdog, so eight mornings passed with
       nothing reporting it. The Worker's scheduled checkpoints already run
@@ -1036,7 +1038,13 @@ answer. Neither blocks a merge:
       and does nothing until `wrangler deploy` runs. Task 31 records why the
       date matters: the `00:12` run's false "morning covered" is masked
       today only by GitHub running that cron about four hours late, and
-      "the 25 October DST change unmasks it"
+      "the 25 October DST change unmasks it".
+      UPDATE 2026-10-25: #81 removed the `00:12` entry, so that trigger is
+      gone and the date no longer matters. The floor still does: any run
+      that lands between local midnight and 03:00 sets it off, whether a
+      manual dispatch or a GitHub entry delayed past midnight. The `10:12`
+      entry is tested to stay on its own day even twelve hours late, but
+      that is a bound on GitHub's lateness, not a guarantee.
 - [ ] 40. **Watch the watchdog's first scheduled run after #71.** Its
       morning window now computes the local hour through `app.core.tz` in a
       one-line `python -c` instead of `TZ="$USER_TIMEZONE" date`. That line

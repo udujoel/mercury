@@ -26,7 +26,9 @@ green. A test that stubs the function under test is testing its own stub.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -85,33 +87,62 @@ def _run(max_age_hours: float) -> int:
     return cli.main(["freshness", "--max-age-hours", str(max_age_hours)])
 
 
+def _production_floor() -> int:
+    """The floor the watchdog actually passes, read from the workflow.
+
+    The scenario tests below used a hardcoded 8 that matched production
+    until 2026-10-25. When the floor moved to 16 they would have gone on
+    certifying "the 2026-09-20 stall is caught" while production no longer
+    caught it, so they read the real number now.
+    """
+    workflow = (
+        Path(__file__).resolve().parents[2]
+        / ".github"
+        / "workflows"
+        / "briefing-watchdog.yml"
+    ).read_text()
+    match = re.search(r"--max-age-hours (\d+)", workflow)
+    assert match, "the watchdog no longer passes a freshness floor"
+    return int(match.group(1))
+
+
 # ──────────────────────────────────────────────────────────────
-# The incident this exists for.
+# The incidents this exists for, at the floor production uses. The
+# schedule arithmetic behind each age is in test_watchdog_schedule.py.
 # ──────────────────────────────────────────────────────────────
 
 
-def test_the_2026_09_20_stall_is_caught(storage, capsys):
-    """Last good briefing 20:05, every run after it failed on a Gemini
-    spend cap. At the 05:52 check the next morning that is 9.8 hours, and
-    there is no briefing for the new day at all — which is precisely why
-    a day-scoped check could not see it."""
-    storage({"2026-09-20-2106": _manifest("2026-09-20-2106", 9.8)})
-    assert _run(8) == 5
+def test_a_stall_after_the_morning_run_is_caught(storage, capsys):
+    """2026-10-25: the morning run succeeded, Gemini's spend cap was hit
+    before the next one, and every later run failed with 429. On two runs
+    a day the newest briefing at the next morning's 05:52 check is the
+    previous 03:40 one, 26.2 hours back.
+
+    The 2026-09-20 version (last good 20:05, 9.8h at 05:52) was the
+    original test here. At the 16h floor freshness no longer catches it
+    by itself; `check` does, because there is no briefing for the new day.
+    """
+    storage({"2026-10-24-0340": _manifest("2026-10-24-0340", 26.2)})
+    assert _run(_production_floor()) == 5
     out = capsys.readouterr().out
     assert "newest briefing anywhere" in out
     assert "gh run list" in out
 
 
 def test_a_healthy_morning_does_not_fire(storage):
-    """5.7h is the 00:12 run seen from the 05:52 check."""
-    storage({"2026-09-21-0012": _manifest("2026-09-21-0012", 5.7)})
-    assert _run(8) == 0
+    """The Worker's 03:40 briefing seen from the 06:56 backstop arriving
+    twelve hours late, at 18:56: 15.3h. On a healthy day the 10:12 run
+    may well have landed by then, but this is the case where it has not."""
+    storage({"2026-10-26-0340": _manifest("2026-10-26-0340", 15.3)})
+    assert _run(_production_floor()) == 0
 
 
-def test_a_dropped_overnight_slot_is_caught(storage):
-    """00:12 never ran; the newest is yesterday's 18:12, 11.7h back."""
-    storage({"2026-09-20-1812": _manifest("2026-09-20-1812", 11.7)})
-    assert _run(8) == 5
+def test_a_dead_worker_is_caught_once_check_stands_down(storage):
+    """No morning briefing, and the backstop lands at 11:00 UTC, noon in
+    Lisbon in summer, so `check` stands down. The newest briefing is
+    yesterday's 10:12 run, which landed 6.8 hours late at 17:00: 18.0h."""
+    storage({"2026-07-14-1700": _manifest("2026-07-14-1700", 18.0)})
+    assert _run(_production_floor()) == 5
 
 
 def test_the_newest_is_what_counts_not_the_first(storage):

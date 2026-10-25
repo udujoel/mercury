@@ -1825,6 +1825,84 @@ This change is pinned by prompt-wiring tests, and whether it actually
 changes what the hosts say is a question for the next scheduled runs, not
 for the suite. Task 61 builds the set.
 
+## 2026-10-25 - two briefings a day, because the minutes nearly ran out again
+
+GitHub emailed on the evening of the 24th: 1,815 of the 2,000 minutes used,
+eight days before the reset. Counting from the run list (wall time rounded up
+per run, macOS at 10x) gives about 1,875 for 1-25 October, so this repository
+is the whole of the account's usage and nothing else is drawing on it.
+Generation was 938 (121 runs), iOS CI 480, backend CI 380, watchdog 52. After
+#73 no CI ran at all from the 12th to the 25th, and the account still spent
+28-56 minutes a day, every one of them on generation and the watchdog. The
+schedule was the problem, not CI.
+
+**A run costs about 7 minutes, not 2.** Setup is a minute (ffmpeg 33s, pip
+27s); Generate is four to five. The "~2 minutes" in the docs dates from the
+71-second Phase 1 gate, before the critique passes, the judge and the news
+desk. Every cost estimate built on it was low by three times.
+
+**Every GitHub entry ran hours late, every day.** From 14 to 25 October:
+00:12 at 04:19-04:47, 06:12 at 10:34-13:00, 12:12 at 15:31-18:42, 18:12 at
+20:30-22:17. The watchdog's 05:52 and 06:56 backstops ran at 09:44-14:03. So
+the 00:12 entry was in practice a second morning briefing made 50 minutes
+after the Worker's. On 13 October a run created at 00:33 UTC (which entry it
+was is not knowable from the run list; the day had five) stamped the day's
+briefing before 03:00 local, and the Worker made no morning dispatch at all.
+That is task 31's masking bug in production, not hypothetical.
+
+**Kept: the Worker's 03:40 and one GitHub entry, at 10:12.** The first cut
+kept 12:12, and its own review (#81) found that 12:12 was the wrong side of
+two margins. Twelve hours late it lands after local midnight all year, the
+task 31 hazard the cut was meant to remove. And on a dead-Worker morning
+where both backstops land after noon, freshness only notices if the
+previous afternoon run landed under 6.8 hours late, against 6.5 observed.
+At 10:12 those become "before midnight even twelve hours late" and "under
+8.8 hours late". Both are pinned by tests that fail at 12:12.
+
+Worth repeating: there is now no GitHub generation backstop for the
+morning. If the Worker dies, the watchdog backstops still alarm, but the
+first briefing is the afternoon one.
+
+**No single freshness floor is safe in both directions at twelve hours of
+lateness.** Not crying wolf needs floor > 3.3h + the backstop's lateness.
+Catching a dead Worker after `check` stands down needs, with the run at
+10:12 and Lisbon in summer, floor < 24.8h minus the afternoon run's
+lateness. At twelve hours on both sides that is 15.3 < floor < 12.8,
+which is empty, so the tests use twelve hours for false alarms and
+October's observed 6.8 for detection, and say which is which. A floor
+measured against the generation that was due, rather than one global
+number, would remove the tension; that is a follow-up, not this change.
+
+**The freshness floor went from 8h to 16h, and that trades something
+away.** 8h was sized for the 00:12 run. With only the 03:40 run behind it, a
+backstop arriving at 12:31 (22 October) sees an 8.7h-old briefing and would
+report "Generation has stopped" on a healthy day. 16h covers a backstop 12
+hours late. What it gives up: the 2026-09-20 incident exactly as it happened
+(last good 20:05, check at 05:52, 9.8h) no longer trips freshness on its own.
+It still trips `check`, which finds no briefing for the new day at the same
+checkpoint; `cli._freshness`'s docstring records that `check` returned 1 on
+that morning.
+`test_a_late_backstop_does_not_cry_wolf` pins the new reasoning.
+
+**Two apt hangs.** On 22 and 23 October the 12:12 run sat in `Install
+ffmpeg` until the 20-minute job timeout and never reached Generate: 40
+minutes for nothing. The step now times out at five and the run carries on
+without it, because `stitch._export` falls back to WAV; the first cut
+failed the job instead, which review pointed out threw away a briefing
+rule 7 says should ship. `backend.yml` had no job timeout at all (GitHub's
+default is 360 minutes) and now has 20, plus five on its own apt step.
+`ios.yml` has none either, which at 10x means one hang could cost more than
+a whole month. It is not fixed here because any edit to `ios.yml` runs the
+macOS suite, and this month cannot afford that run.
+
+**Gemini's spend cap was hit again on the 25th.** The 04:34 run succeeded;
+the 11:17 and 16:13 runs failed with `429 ResourceExhausted`. Failed runs
+are not free: about three minutes each, and on a morning with no briefing
+the Worker dispatches four of them plus a five-minute watchdog. With the cap
+in place a day costs an estimated 25-30 minutes and produces nothing. Healthy, the new
+cadence is about 16 a day. Roughly 140 minutes were left for 26-31 October,
+so the month only lasts if the cap is raised.
+
 ## Standing facts worth not rediscovering
 
 - **The Worker has no CI deploy.** Merging is not shipping. A route on `main`
@@ -1849,8 +1927,8 @@ for the suite. Task 61 builds the set.
   monthly spending cap`, and every briefing run fails outright — there is
   no degrading around the model that writes the script. Only the owner can
   raise it, at https://ai.studio/spend. Generating a briefing to verify a
-  change costs real quota on top of the four scheduled runs a day, so
-  prefer ONE live verification run.
+  change costs real quota on top of the two scheduled runs a day, so
+  prefer ONE live verification run. It was hit again on 2026-10-25.
 - **The iOS and Worker suites run in CI, but only on their own paths.**
   `ios.yml` (macos-15, `xcodebuild build` and `test`) and `worker.yml` arrived
   in #44 and are path-filtered to `ios/**` and `worker/**`. A backend-only PR
