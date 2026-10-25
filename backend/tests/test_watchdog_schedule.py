@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import re
 import tomllib
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -47,8 +47,15 @@ WRANGLER = ROOT / "worker" / "wrangler.toml"
 # How late GitHub has CREATED a scheduled run on this repo: 12 hours, for
 # the old 04:00 generation cron (ADR-010). The watchdog's own backstops ran
 # 3.9-7.1 hours late every day from 14 to 25 October 2026, and 9.2 on the
-# 12th.
+# 12th. The tests that must not raise a false alarm, or name a briefing for
+# the wrong day, assume this.
 MAX_SCHEDULE_DELAY_H = 12
+
+# How late GitHub actually ran the GENERATION entries from 14 to 25 October
+# 2026: 2.3 to 6.8 hours (the 06:12 entry at 13:00). Used only where a test
+# needs a briefing to have happened, and says so, because no single floor
+# can assume twelve hours in both directions at once.
+OBSERVED_GENERATION_DELAY_H = 6.8
 
 # The zones a scheduled run can actually resolve to. `USER_TIMEZONE` is
 # documented as not optional, with UTC as the fallback the code logs about
@@ -187,21 +194,64 @@ def test_a_late_backstop_does_not_cry_wolf():
         )
 
 
-def test_the_floor_is_below_a_single_dropped_slot():
-    """Loose is not the same as useless. One missed generation slot must
-    still be visible, or the floor only catches catastrophes."""
+@pytest.mark.parametrize("zone", ZONES)
+@pytest.mark.parametrize("date", DATES)
+def test_a_dead_worker_is_caught_once_check_stands_down(zone, date):
+    """Loose is not the same as useless. The Worker is down, so there is no
+    morning briefing, and both backstops land after local noon, as on 12 and
+    13 October, so `check` stands down at both. Freshness is then the only
+    thing that can notice, and the newest briefing it can see is yesterday's
+    GitHub run, which itself landed late.
+
+    This uses the lateness the generation entries actually showed, not the
+    twelve hours the false-alarm tests assume, and the difference is the
+    point: no single floor survives a twelve-hour-late backstop on a healthy
+    morning AND catches this after a twelve-hour-late afternoon run. Past
+    the margin this leaves, a dead Worker on such a day goes unreported by
+    freshness, and `briefing.yml` says so. With the entry at 12:12 this
+    fails in summer (16.0h against a 16h floor), which is why it is 10:12.
+    """
+    _, noon = _guard_window()
     floor = _floor()
-    gen = _generation_hours()
-    earliest_check = min(_hours(c) for c in _crons(WATCHDOG))
-    # The newest slot at or before the check, and the one before THAT —
-    # which is what the check sees when the nearest slot is dropped.
-    before = [g for g in gen if g <= earliest_check]
-    prior = before[-2] if len(before) >= 2 else max(gen) - 24
-    dropped_age = earliest_check - prior
-    assert dropped_age > floor, (
-        f"a single dropped slot leaves the newest briefing "
-        f"{dropped_age:.1f}h old at the {earliest_check:.2f} check, inside "
-        f"the {floor}h floor — one missed run would be invisible"
+    stand_down = datetime(*date, noon, 0, tzinfo=ZoneInfo(zone)).astimezone(
+        ZoneInfo("UTC")
+    )
+    stand_down_h = stand_down.hour + stand_down.minute / 60
+    for cron in _crons(BRIEFING):
+        landed = _hours(cron) + OBSERVED_GENERATION_DELAY_H
+        age = stand_down_h + 24 - landed
+        assert age > floor, (
+            f"yesterday's '{cron}' run landing at {landed:.1f}h UTC is "
+            f"{age:.1f}h old when `check` first stands down in {zone}, "
+            f"inside the {floor}h floor: a dead Worker goes unreported"
+        )
+
+
+@pytest.mark.parametrize("cron", _crons(BRIEFING))
+@pytest.mark.parametrize("zone", ZONES)
+@pytest.mark.parametrize("date", DATES)
+def test_no_generation_entry_lands_after_local_midnight(cron, zone, date):
+    """A GitHub run that lands between local midnight and 03:00 names its
+    briefing for the next day, and the Worker's morning checkpoints count
+    that as the morning and stand down (task 31). On 13 October a run
+    created at 00:33 UTC did exactly that. So each entry must start after
+    03:00 local and stay on its own local day even at the worst lateness
+    recorded here. `12 12 * * *` failed this all year in Lisbon, landing
+    at 00:12 local in winter and 01:12 in summer.
+    """
+    hour, minute = _utc_hour_minute(cron)
+    nominal = datetime(*date, hour, minute, tzinfo=ZoneInfo("UTC")).astimezone(
+        ZoneInfo(zone)
+    )
+    latest = nominal + timedelta(hours=MAX_SCHEDULE_DELAY_H)
+    assert nominal.hour >= 3, (
+        f"'{cron}' is scheduled at {nominal:%H:%M} in {zone}, inside the "
+        "00:00-03:00 window the Worker's morning checkpoints read as morning"
+    )
+    assert latest.date() == nominal.date(), (
+        f"'{cron}' run {MAX_SCHEDULE_DELAY_H}h late lands at "
+        f"{latest:%Y-%m-%d %H:%M} in {zone}, the next local day: its "
+        "briefing is named for a morning it did not make"
     )
 
 

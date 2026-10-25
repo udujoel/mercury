@@ -12,12 +12,31 @@ on:
     # a direct push of an unreadable track reaching the default branch
     # without this suite ever running — the exact gap the filter was added
     # to close, closed on one side only.
-    paths: ["backend/**", "assets/**", ".github/workflows/backend.yml"]
+    #
+    # And every other file this suite reads from outside `backend/`. The
+    # tests pin couplings in the workflows (test_ci_triggers.py,
+    # test_watchdog_schedule.py), the Worker's crons and SETTINGS_FIELDS
+    # (wrangler.toml, index.js) and the spike scripts. Without these paths,
+    # a PR that moved the briefing cron or the Worker's 03:40 checkpoint
+    # merged without the test written to catch it ever running.
+    paths:
+      - "backend/**"
+      - "assets/**"
+      - "scripts/**"
+      - ".github/workflows/**"
+      - "worker/wrangler.toml"
+      - "worker/src/index.js"
   pull_request:
     # `assets/**` too: the music tests decode real files from there, so a
     # change to an asset must run this suite. Without it, replacing a track
     # with something unreadable would be reported by nothing.
-    paths: ["backend/**", "assets/**", ".github/workflows/backend.yml"]
+    paths:
+      - "backend/**"
+      - "assets/**"
+      - "scripts/**"
+      - ".github/workflows/**"
+      - "worker/wrangler.toml"
+      - "worker/src/index.js"
 
 # A newer push to the same PR supersedes the run in progress. Runs on `main`
 # are keyed by commit, not branch: GitHub keeps one running and one PENDING
@@ -55,7 +74,11 @@ jobs:
       # `briefing.yml` installs it for the same reason: without ffmpeg the
       # production run ships a briefing with no music and a warning nobody
       # reads.
+      # Five minutes for what normally takes about 30 seconds, as in
+      # briefing.yml. Here a timeout SHOULD fail the job: without ffmpeg
+      # the music tests cannot run, for the reason above.
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+        timeout-minutes: 5
       - run: pip install -r requirements.txt
       - run: ruff check .
       # The whole backend was formatted once on 2026-10-11 (88 of 124 files

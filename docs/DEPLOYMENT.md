@@ -3,13 +3,13 @@
 Mercury runs with **no hosted backend**. See ADR-008 for why.
 
 ```
-  03:40 UTC        Cloudflare Cron Trigger ─┐
-  04:20-05:08 UTC  Worker retries, if missing ├─► generate (~6 min) ─► Cloudflare R2
-  12:12 UTC        GitHub schedule (evening) ─┘                             │
-                                                                            │
-  05:40 UTC        watchdog ─► briefing missing? ─► red run + email         │
-                                                                            │
-  iPhone ◄──────────────────── manifest + audio ──────────────────────────┘
+  03:40 UTC        Cloudflare Cron Trigger ────┐
+  04:20-05:08 UTC  Worker retries, if missing ─┼─► generate (~6 min) ─► Cloudflare R2
+  10:12 UTC        GitHub schedule (afternoon) ┘                                   │
+                                                                                   │
+  05:40 UTC        watchdog ─► briefing missing? ─► red run + email                │
+                                                                                   │
+  iPhone ◄──────────────────── manifest + audio ───────────────────────────────────┘
 ```
 
 Nothing runs on a laptop. Nothing sleeps. Nothing costs money, as long as the
@@ -251,13 +251,13 @@ the evidence and the trade-offs; this is what an operator has to do.
 | 05:08 | Generate anyway — deadline blown | Cloudflare Cron Trigger |
 | 05:40 | Raise the alarm, **if still missing** | Cloudflare Cron Trigger |
 | 05:52, 06:56 | Alarm backstop, if the Worker itself is dead | GitHub `schedule` |
-| 12:12 | The evening briefing (GitHub ran it at 15:31-18:42 in October 2026) | GitHub `schedule` |
+| 10:12 | The afternoon briefing (GitHub ran its entries 2.3-6.8 hours late in October 2026) | GitHub `schedule` |
 
 **There is no GitHub generation backstop for the morning.** Until 2026-10-25
 the `00:12` entry acted as one, because GitHub ran it at about 04:30. It went
 in the cut to two runs a day (see Cost). If the Worker is down, the 05:52 and
 06:56 backstops still raise the alarm, and the first briefing of the day is the
-12:12 one unless someone runs the workflow by hand.
+10:12 one unless someone runs the workflow by hand.
 
 **The alarm is conditional, and it is not raised in the same tick as a
 generation dispatch.** 05:40 dispatches the watchdog only when R2 still has no
@@ -312,7 +312,7 @@ a repo slug and a branch name are not secrets.
 **If this token expires or is revoked**, the Worker logs
 `dispatch of briefing.yml failed: HTTP 401` (Workers → mercury-briefings →
 Logs). Both dispatches use this token, so the 05:40 checkpoint cannot raise the
-alarm either. What is left is GitHub's own `schedule` — the 12:12 evening
+alarm either. What is left is GitHub's own `schedule` — the 10:12 afternoon
 run and the 05:52/06:56 watchdog backstops — which is the
 best-effort scheduler this ADR exists to stop relying on, and may be delayed or
 dropped. **You lose punctuality AND timely alarming**, and the Worker's

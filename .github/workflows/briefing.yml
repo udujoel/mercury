@@ -13,8 +13,11 @@ name: daily briefing
 
 on:
   schedule:
-    # BACKSTOP ONLY. The punctual trigger is a Cloudflare Cron Trigger that
-    # calls workflow_dispatch — see ADR-010 and worker/src/index.js.
+    # NOT the morning trigger, and since 2026-10-25 not a backstop for it
+    # either. The morning run is a Cloudflare Cron Trigger that calls
+    # workflow_dispatch (ADR-010, worker/src/index.js); the one entry below
+    # is the day's second briefing. If the Worker is down, the watchdog's
+    # backstops raise the alarm and the first briefing is this one.
     #
     # Seven consecutive days of `cron: "0 4 * * *"` were created 32 minutes to
     # 12 hours late (createdAt == startedAt every time, so this was the
@@ -24,17 +27,11 @@ on:
     # of every hour", and "If the load is sufficiently high enough, some queued
     # jobs may be dropped." 04:00 was the single worst minute available.
     #
-    # So these entries are off the hour, and they sit AFTER the Worker's 03:40
-    # trigger rather than before it. That ordering is deliberate: generation is
-    # idempotent, so the earliest trigger to succeed is the one that decides
-    # how fresh the briefing is. An earlier backstop would win the race on a
-    # healthy day and hand the user a staler inbox for no benefit.
-    #
-    # Cron is UTC-only and has no DST. Europe/Lisbon is UTC+1 in summer, so the
-    # tight deadline is the summer one: 06:00 Lisbon == 05:00 UTC. Both entries
-    # are sized against that, and winter simply gets an extra hour of margin.
-    # The briefing is NAMED in the user's timezone by app.cli, which is what
-    # actually matters; see the five date bugs this project has already had.
+    # Cron is UTC-only and has no DST. The briefing is NAMED in the user's
+    # timezone by app.cli, which is what actually matters; see the five date
+    # bugs this project has already had. A run that GitHub delays past local
+    # midnight is named for the next day, so the entry below is tested
+    # against twelve hours of lateness in summer and winter.
     #
     # TWICE A DAY: the Worker's morning run, and this one entry.
     #
@@ -44,16 +41,14 @@ on:
     # 24 October the account passed 90% with eight days to go (ROADMAP tasks
     # 28 and 45). Running out stops the watchdog as well as generation.
     #
-    # Why 12:12 is the entry that stays. From 14 to 25 October GitHub created
-    # every one of these runs hours late:
+    # From 14 to 25 October GitHub created every one of the old entries
+    # hours late, 2.3 to 6.8 hours:
     #
     # - 00:12 ran at 04:19-04:47, just behind the Worker's 03:40 run, so it
     #   made a second copy of the briefing the Worker had just made.
     # - 06:12 ran at 10:34-13:00, a few hours after the morning: little new.
+    # - 12:12 ran at 15:31-18:42, the afternoon update.
     # - 18:12 ran as late as 22:17.
-    # - 12:12 ran at 15:31-18:42, so in practice it is the evening update. In
-    #   Lisbon it stays on the same local day even ten hours late, summer and
-    #   winter.
     #
     # The 00:12 and 18:12 entries shared a worse problem. A run that lands
     # between local midnight and 03:00 stamps a briefing that the Worker's
@@ -61,7 +56,22 @@ on:
     # 31). On 13 October a run was created at 00:33 UTC and the Worker did
     # not dispatch that morning at all.
     #
-    # Ids carry a `-HHMM` time, so the evening briefing sits next to the
+    # The entry kept is 12:12 moved two hours earlier, to 10:12. On
+    # October's lateness it lands mid-afternoon, and the two hours buy two
+    # margins this cadence needs:
+    #
+    # - Twelve hours late it still lands before local midnight in Lisbon,
+    #   summer and winter. 12:12 did not: twelve hours late it lands at
+    #   00:12 local in winter and 01:12 in summer.
+    # - If the Worker dies, the next morning has no briefing, and when both
+    #   watchdog backstops land after local noon `check` stands down and
+    #   only the freshness floor can notice. It does as long as this run
+    #   landed under 8.8 hours late. For 12:12 that margin was 6.8 hours,
+    #   against an observed 6.5.
+    #
+    # Both are pinned in test_watchdog_schedule.py.
+    #
+    # Ids carry a `-HHMM` time, so the afternoon briefing sits next to the
     # morning one rather than replacing it.
     #
     # Off the hour for the reason above: the top of the hour is the single
@@ -72,7 +82,7 @@ on:
     # Adding an entry back costs about 220 minutes a month; price it against
     # CI first (docs/DEPLOYMENT.md, Cost). The watchdog's freshness floor is
     # sized against this cadence too, in test_watchdog_schedule.py.
-    - cron: "12 12 * * *"
+    - cron: "12 10 * * *"
   workflow_dispatch:
     inputs:
       length:
@@ -123,10 +133,15 @@ jobs:
         # Five minutes, where a normal install takes about 33 seconds. On 22
         # and 23 October apt hung on the mirror and this step ran until the
         # job's 20-minute timeout, so 40 minutes went on runs that never
-        # reached Generate. A hang now costs five. In the morning the
-        # Worker's next checkpoint retries; in the evening the run is lost
-        # either way, and it is cheaper to lose it quickly.
+        # reached Generate. A hang now costs five.
+        #
+        # And the run carries on without it. `stitch._export` falls back to
+        # WAV when ffmpeg is missing or broken, and music needs ffmpeg to
+        # decode, so the briefing ships larger and without its bed rather
+        # than not at all (CLAUDE.md rule 7). The step shows as failed in the
+        # run, which is where to look if a briefing arrives as WAV.
         timeout-minutes: 5
+        continue-on-error: true
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
 
       - run: pip install -r requirements.txt

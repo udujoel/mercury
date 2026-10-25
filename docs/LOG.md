@@ -1850,10 +1850,28 @@ was is not knowable from the run list; the day had five) stamped the day's
 briefing before 03:00 local, and the Worker made no morning dispatch at all.
 That is task 31's masking bug in production, not hypothetical.
 
-**Kept: the Worker's 03:40 and GitHub's 12:12.** Reasons are in the
-`briefing.yml` comment. The one worth repeating: there is now no GitHub
-generation backstop for the morning. If the Worker dies, the watchdog
-backstops still alarm, but the first briefing is the evening one.
+**Kept: the Worker's 03:40 and one GitHub entry, at 10:12.** The first cut
+kept 12:12, and its own review (#81) found that 12:12 was the wrong side of
+two margins. Twelve hours late it lands after local midnight all year, the
+task 31 hazard the cut was meant to remove. And on a dead-Worker morning
+where both backstops land after noon, freshness only notices if the
+previous afternoon run landed under 6.8 hours late, against 6.5 observed.
+At 10:12 those become "before midnight even twelve hours late" and "under
+8.8 hours late". Both are pinned by tests that fail at 12:12.
+
+Worth repeating: there is now no GitHub generation backstop for the
+morning. If the Worker dies, the watchdog backstops still alarm, but the
+first briefing is the afternoon one.
+
+**No single freshness floor is safe in both directions at twelve hours of
+lateness.** Not crying wolf needs floor > 3.3h + the backstop's lateness.
+Catching a dead Worker after `check` stands down needs, with the run at
+10:12 and Lisbon in summer, floor < 24.8h minus the afternoon run's
+lateness. At twelve hours on both sides that is 15.3 < floor < 12.8,
+which is empty, so the tests use twelve hours for false alarms and
+October's observed 6.8 for detection, and say which is which. A floor
+measured against the generation that was due, rather than one global
+number, would remove the tension; that is a follow-up, not this change.
 
 **The freshness floor went from 8h to 16h, and that trades something
 away.** 8h was sized for the 00:12 run. With only the 03:40 run behind it, a
@@ -1868,8 +1886,11 @@ that morning.
 
 **Two apt hangs.** On 22 and 23 October the 12:12 run sat in `Install
 ffmpeg` until the 20-minute job timeout and never reached Generate: 40
-minutes for nothing. The step now times out at five. `backend.yml` had no
-job timeout at all (GitHub's default is 360 minutes) and now has 20.
+minutes for nothing. The step now times out at five and the run carries on
+without it, because `stitch._export` falls back to WAV; the first cut
+failed the job instead, which review pointed out threw away a briefing
+rule 7 says should ship. `backend.yml` had no job timeout at all (GitHub's
+default is 360 minutes) and now has 20, plus five on its own apt step.
 `ios.yml` has none either, which at 10x means one hang could cost more than
 a whole month. It is not fixed here because any edit to `ios.yml` runs the
 macOS suite, and this month cannot afford that run.

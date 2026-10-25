@@ -704,7 +704,7 @@ produced, ranked by what they buy per hour spent.
       subject line, a digest mentions someone else's breach in paragraph
       three.
 
-- [~] 28. **Two briefings a day, and count what they cost.** HALF DONE (2026-10-25, owner's call): the Worker's 03:40 morning and GitHub's `12:12`, nothing else; the push-trigger guard landed in #73; `briefing.yml`'s cost comment is corrected and the watchdog's freshness floor resized to 16h for the new cadence. Still to do: sum `len(turn.text)` per run and log it, and correct `ios.yml`'s cost comment, which was left alone because any edit to that file runs the macOS suite at 10x. Four a day put
+- [~] 28. **Two briefings a day, and count what they cost.** HALF DONE (2026-10-25, owner's call): the Worker's 03:40 morning and GitHub's `10:12`, nothing else; the push-trigger guard landed in #73; `briefing.yml`'s cost comment is corrected and the watchdog's freshness floor resized to 16h for the new cadence. Still to do: sum `len(turn.text)` per run and log it, and correct `ios.yml`'s cost comment, which was left alone because any edit to that file runs the macOS suite at 10x. Four a day put
       Google TTS at ~88% of its million free characters and Actions at ~82%
       heading to the 2,000 cap, quadrupled publisher blocking, and multiplied
       the repetition — with the digest carrying 209 stories and the audio
@@ -775,7 +775,7 @@ produced, ranked by what they buy per hour spent.
       field is missing from that whitelist; it catches `music_set`
       retroactively too.
 
-- [~] 31. **A freshness floor, and a watchdog for all four slots.** BOTH FLOORS DONE (#59, #68); the watchdog for the other slots was blocked on task 28, which has now cut them to one (the `12:12` evening run), so it is a smaller ask but still minutes to spend. The
+- [~] 31. **A freshness floor, and a watchdog for all four slots.** BOTH FLOORS DONE (#59, #68); the watchdog for the other slots was blocked on task 28, which has now cut them to one (the `10:12` afternoon run), so it is a smaller ask but still minutes to spend. The
       `00:12` cron generates a briefing named for the NEW day, so all five of
       the Worker's morning checkpoints see "this date has a playable
       briefing" and stand down, the 05:40 alarm included. Masked today only
@@ -1003,7 +1003,7 @@ answer. Neither blocks a merge:
 
 ### Tasks
 
-- [x] 45. **The Actions minutes run out around 25 October.** DONE 2026-10-25: #73 merged (CI runs once per change), and the owner chose two briefings a day (task 28). The account was at 1,815 of 2,000 on the 24th, all of it this repository; see docs/LOG.md for the count. First, because
+- [~] 45. **The Actions minutes run out around 25 October.** MOSTLY DONE 2026-10-25: #73 merged (CI runs once per change), and the owner chose two briefings a day (task 28, #81). The account was at 1,815 of 2,000 on the 24th, all of it this repository; see docs/LOG.md for the count. NOT DONE: this month can still run out. About 140 minutes were left for 26-31 October; a healthy day now costs about 16, but Gemini's spend cap was hit on the 25th, and a capped day costs an estimated 25-30 while producing nothing. Raising the cap is the owner's call. Close this on 1 November if the month lasted. First, because
       it stops the product. No briefing ran from 23 to 30 September: the
       private repo's 2,000 Free-plan minutes were spent on the 22nd, and
       every run failed with "The job was not started because ... your
@@ -1037,7 +1037,13 @@ answer. Neither blocks a merge:
       and does nothing until `wrangler deploy` runs. Task 31 records why the
       date matters: the `00:12` run's false "morning covered" is masked
       today only by GitHub running that cron about four hours late, and
-      "the 25 October DST change unmasks it"
+      "the 25 October DST change unmasks it".
+      UPDATE 2026-10-25: #81 removed the `00:12` entry, so that trigger is
+      gone and the date no longer matters. The floor still does: any run
+      that lands between local midnight and 03:00 sets it off, whether a
+      manual dispatch or a GitHub entry delayed past midnight. The `10:12`
+      entry is tested to stay on its own day even twelve hours late, but
+      that is a bound on GitHub's lateness, not a guarantee.
 - [ ] 40. **Watch the watchdog's first scheduled run after #71.** Its
       morning window now computes the local hour through `app.core.tz` in a
       one-line `python -c` instead of `TZ="$USER_TIMEZONE" date`. That line
