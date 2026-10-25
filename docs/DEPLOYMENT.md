@@ -255,9 +255,17 @@ the evidence and the trade-offs; this is what an operator has to do.
 
 **There is no GitHub generation backstop for the morning.** Until 2026-10-25
 the `00:12` entry acted as one, because GitHub ran it at about 04:30. It went
-in the cut to two runs a day (see Cost). If the Worker is down, the 05:52 and
-06:56 backstops still raise the alarm, and the first briefing of the day is the
-10:12 one unless someone runs the workflow by hand.
+in the cut to two runs a day (see Cost). If the Worker is down, the first
+briefing of the day is the 10:12 one unless someone runs the workflow by hand.
+
+**And the alarm for that case is conditional.** A backstop that GitHub runs
+before local noon runs `check`, which finds no morning briefing and goes red.
+One that runs at or after noon stands down (a run delayed past local midnight
+would otherwise ask about the wrong day), and only the freshness floor is left.
+It fires as long as the previous 10:12 run landed under 8.8 hours late; in
+October 2026 the worst was 6.8. On 12 and 13 October both backstops ran after
+noon. Beyond that margin a dead Worker goes unreported until the stall passes
+the floor, so `/status` (below) is the way to be sure.
 
 **The alarm is conditional, and it is not raised in the same tick as a
 generation dispatch.** 05:40 dispatches the watchdog only when R2 still has no

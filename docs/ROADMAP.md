@@ -775,7 +775,7 @@ produced, ranked by what they buy per hour spent.
       field is missing from that whitelist; it catches `music_set`
       retroactively too.
 
-- [~] 31. **A freshness floor, and a watchdog for all four slots.** BOTH FLOORS DONE (#59, #68); the watchdog for the other slots was blocked on task 28, which has now cut them to one (the `10:12` afternoon run), so it is a smaller ask but still minutes to spend. The
+- [~] 31. **A freshness floor, and a watchdog for all four slots.** BOTH FLOORS DONE (#59, #68); the watchdog for the other slots was blocked on task 28, which has now cut them to one (the `10:12` afternoon run), so it is a smaller ask but still minutes to spend. Since #81 the freshness floor is `--max-age-hours 16`, not the 8 below, sized for two runs a day and for backstops GitHub runs hours late; the `00:12` entry described below no longer exists. The
       `00:12` cron generates a briefing named for the NEW day, so all five of
       the Worker's morning checkpoints see "this date has a playable
       briefing" and stand down, the 05:40 alarm included. Masked today only
@@ -1011,8 +1011,9 @@ answer. Neither blocks a merge:
       minutes over 10.6 days (briefing 371, iOS on macOS at 10x 240, backend
       207, watchdog/Dependabot/Worker/graph 39), about 81 a day. #73 stops CI running twice per PR push, which brings the
       pace to about 60 a day, but that still runs out around the 30th. The
-      rest needs an owner call: task 28 (two a day, about 43 a day in total,
+      rest needed an owner call: task 28 (two a day, about 43 a day in total,
       which lasts the month), a spending limit above zero, or a public repo.
+      The owner chose task 28 on 2026-10-25.
 - [ ] 46. **An alarm that doesn't run on Actions.** Running out of minutes
       silenced the briefing AND its watchdog, so eight mornings passed with
       nothing reporting it. The Worker's scheduled checkpoints already run
