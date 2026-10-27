@@ -1920,16 +1920,18 @@ the deletion pass that normally comes first had nothing to delete.
 **What could not be confirmed, and the workaround.** Whether
 `if #available` type-checks inside a `ToolbarContentBuilder` on the 26 SDK.
 Rather than find out in a macOS CI run this month cannot afford, the gate
-sits at a `ViewModifier` boundary, which certainly does.
+sits at a `ViewModifier` boundary, the shape `hardTopScrollEdge` already
+uses and CI already builds.
 
 **What review caught.** Three parallel reviewers read the diff before it
 was committed. The real defect: the bar was a `.plain` button, and `.plain`
 dims its label while pressed, so the glass inside the label went below full
 opacity on every tap, which stops it refracting at exactly the moment its
-press response should show. Fixed with `MercuryGlassButtonStyle`. The
-second: the bar kept the old fixed 56pt height with the progress line laid
-over the row, so at accessibility text sizes the line would have crossed
-the title. Also found, and not this change's doing: nothing animates the
+press response should show. `MercuryGlassCapsuleButtonStyle` now draws the
+glass and never dims it on iOS 26, so a glass label and a dimming style
+cannot be paired by mistake. The second: an earlier draft pinned the
+capsule at 56pt and overlaid the progress line on the row, so at
+accessibility text sizes the line would have crossed the title. Also found, and not this change's doing: nothing animates the
 bar's insertion, so its `.transition` has never run.
 
 **Not verified on a screen.** Written on Linux with no Xcode: nothing here

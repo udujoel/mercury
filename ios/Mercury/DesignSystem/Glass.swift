@@ -17,7 +17,7 @@ import SwiftUI
 ///
 /// The accent buttons are deliberately not glass. Their contrast is pinned:
 /// `inkOnAccent` is measured against the solid accent in `ContrastTests`.
-/// Tinted glass over off-white paper renders lighter than that fill, so
+/// Tinted glass over off-white paper would render lighter than that fill, so
 /// swapping it in would quietly move a measured ground to an unmeasured one.
 private struct MercuryGlassSurface<S: InsettableShape>: ViewModifier {
     let shape: S
@@ -35,12 +35,18 @@ private struct MercuryGlassSurface<S: InsettableShape>: ViewModifier {
             // No shadow or rim of ours on this branch, because the system
             // draws the edge and adapts it for Reduce Transparency and Increase
             // Contrast, which a hand-drawn stroke would not.
-            content.glassEffect(.regular.interactive(isInteractive), in: shape)
+            content
+                .glassEffect(.regular.interactive(isInteractive), in: shape)
+                .contentShape(shape)
         } else {
-            content.modifier(LegacyGlass(shape: shape))
+            content
+                .modifier(LegacyGlass(shape: shape))
+                .contentShape(shape)
         }
         #else
-        content.modifier(LegacyGlass(shape: shape))
+        content
+            .modifier(LegacyGlass(shape: shape))
+            .contentShape(shape)
         #endif
     }
 }
@@ -69,36 +75,52 @@ extension View {
     /// Apply it after padding and frames, so the glass is sized from the
     /// finished layout. Pass `interactive` only when the surface itself
     /// responds to a touch. It adds press feedback, and on a surface that
-    /// does nothing that feedback invites taps that go nowhere. Restate the
-    /// hit area with `contentShape` afterwards: glass draws the shape, it
-    /// does not make the shape tappable.
+    /// does nothing that feedback invites taps that go nowhere. The whole
+    /// shape is made the hit area, as `mercuryCard` does, because glass draws
+    /// the shape without making it tappable.
     func mercuryGlass<S: InsettableShape>(in shape: S, interactive: Bool = false) -> some View {
         modifier(MercuryGlassSurface(shape: shape, isInteractive: interactive))
     }
 }
 
-/// For a button whose label carries `mercuryGlass`.
+/// A button drawn as a floating glass capsule.
 ///
-/// `.plain` dims its label while pressed, and partial opacity on glass, or on
-/// anything containing it, stops it refracting, so a plain-styled glass button
-/// went flat every time it was touched. On iOS 26 the label is left at full
-/// opacity and the interactive glass gives the press feedback. Below it there
-/// is no glass to protect and no interactive response, so the label dims the
-/// way `.plain` did and a press still shows.
-struct MercuryGlassButtonStyle: ButtonStyle {
+/// The style applies the glass itself rather than leaving it to the label,
+/// so the two cannot be mismatched. `.plain` dims its label while pressed,
+/// and partial opacity on glass, or on anything containing it, stops it
+/// refracting, so a plain-styled button with glass in its label would go
+/// flat every time it was touched. On iOS 26 nothing is dimmed and the
+/// interactive glass gives the press feedback. Below it there is no glass to
+/// protect and no interactive response, so the button dims the way `.plain`
+/// did and a press still shows.
+///
+/// Give the label its padding and frames; the capsule is sized from them.
+struct MercuryGlassCapsuleButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .mercuryGlass(in: Capsule(), interactive: true)
+            .modifier(LegacyPressDim(isPressed: configuration.isPressed))
+    }
+}
+
+private struct LegacyPressDim: ViewModifier {
+    let isPressed: Bool
+
+    func body(content: Content) -> some View {
         #if compiler(>=6.2)
         if #available(iOS 26.0, *) {
-            configuration.label
+            content
         } else {
-            configuration.label.opacity(configuration.isPressed ? 0.7 : 1)
+            content.opacity(isPressed ? 0.7 : 1)
         }
         #else
-        configuration.label.opacity(configuration.isPressed ? 0.7 : 1)
+        content.opacity(isPressed ? 0.7 : 1)
         #endif
     }
 }
 
-extension ButtonStyle where Self == MercuryGlassButtonStyle {
-    static var mercuryGlass: MercuryGlassButtonStyle { MercuryGlassButtonStyle() }
+extension ButtonStyle where Self == MercuryGlassCapsuleButtonStyle {
+    static var mercuryGlassCapsule: MercuryGlassCapsuleButtonStyle {
+        MercuryGlassCapsuleButtonStyle()
+    }
 }

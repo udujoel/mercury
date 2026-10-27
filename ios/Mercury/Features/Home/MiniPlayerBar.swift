@@ -34,8 +34,8 @@ struct MiniPlayerBar: View {
     }
 
     /// The bar's height at default text sizes. A minimum, not a fixed
-    /// height: the title scales with Dynamic Type, and a fixed 56pt let it
-    /// spill out of the capsule at the accessibility sizes.
+    /// height: the title scales with Dynamic Type, and a fixed 56pt would
+    /// let it spill out of the capsule at the accessibility sizes.
     private static let height: CGFloat = 56
 
     var body: some View {
@@ -61,9 +61,9 @@ struct MiniPlayerBar: View {
                 .frame(minHeight: 44)
 
                 // Under the row rather than overlaid on it, so a larger title
-                // pushes the line down instead of being drawn through. The
-                // extra inset keeps it on the straight run of the capsule's
-                // edge, clear of the curve.
+                // pushes the line down instead of being drawn through. At the
+                // default height the extra inset equals the capsule's radius,
+                // which keeps the line on the straight run of the edge.
                 progressLine
                     .padding(.horizontal, MercurySpace.snug)
             }
@@ -71,18 +71,13 @@ struct MiniPlayerBar: View {
             .padding(.vertical, MercurySpace.tight)
             .frame(maxWidth: .infinity)
             .frame(minHeight: Self.height)
-            // A floating capsule over the page, where it used to be an opaque
-            // strip ruled off from it. The page scrolls on underneath, which
-            // is what glass is for: you can see there is more below without
-            // the bar giving up its place. Interactive, because the whole
-            // capsule is the button.
-            .mercuryGlass(in: Capsule(), interactive: true)
-            .contentShape(Capsule())
         }
-        // Not `.plain`: it dims the label while pressed, and the glass is in
-        // the label, so every tap would drop it below full opacity, which is
-        // exactly when it should be showing its own press response.
-        .buttonStyle(.mercuryGlass)
+        // A floating glass capsule over the page, where it used to be an
+        // opaque strip ruled off from it. The page scrolls on underneath,
+        // which is what glass is for: you can see there is more below without
+        // the bar giving up its place. The style draws the glass, so the
+        // whole capsule is the button.
+        .buttonStyle(.mercuryGlassCapsule)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(title), \(PlayerTransport.spoken(ms: playback.positionMs)) played")
         .accessibilityHint("Opens the player")

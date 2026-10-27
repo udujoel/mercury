@@ -368,15 +368,6 @@ struct HomeView: View {
         }
     }
 
-    /// Toggles when there is audio loaded, fetches when there is not.
-    ///
-    /// It used to call `playBriefing()` either way, so the pause affordance
-    /// on a playing card restarted the briefing from zero — a full manifest
-    /// fetch and audio download to undo the thing the user asked for.
-    ///
-    /// Navigation is left to the `isPlaying` observer below: resuming opens
-    /// the player, pausing stays on Home, and the notification path gets the
-    /// same treatment without a second rule.
     /// Built here rather than inline in `body`, whose modifier chain is
     /// already long enough to strain the type checker.
     private var settingsButton: some View {
@@ -389,6 +380,15 @@ struct HomeView: View {
         .accessibilityLabel("Settings")
     }
 
+    /// Toggles when there is audio loaded, fetches when there is not.
+    ///
+    /// It used to call `playBriefing()` either way, so the pause affordance
+    /// on a playing card restarted the briefing from zero — a full manifest
+    /// fetch and audio download to undo the thing the user asked for.
+    ///
+    /// Navigation is left to the `isPlaying` observer below: resuming opens
+    /// the player, pausing stays on Home, and the notification path gets the
+    /// same treatment without a second rule.
     private func play() {
         // Seen. Not on appear, and not on a timer: the highlight says "this
         // is not the briefing you already heard", and the moment that stops
@@ -769,10 +769,12 @@ enum HomeErrorPresentation: Equatable {
 /// background to split, and the two items render exactly as they always
 /// have.
 ///
-/// A modifier rather than an `if #available` inside the `.toolbar` builder:
-/// gating at a `ViewModifier` boundary is certain to type-check on every SDK
-/// this project builds with, and only one branch is ever live on a device,
-/// so the regenerate button's `@State` has one home.
+/// A modifier rather than an `if #available` inside the `.toolbar` builder.
+/// A gate at a view-builder boundary is the shape `hardTopScrollEdge` in
+/// StoryDetailView already uses and CI already builds, whereas limited
+/// availability inside a `ToolbarContentBuilder` is unconfirmed. Only one
+/// branch is ever live on a device, so the regenerate button's `@State` has
+/// one home.
 private struct TrailingToolbar<Rebuild: View, Settings: View>: ViewModifier {
     let rebuild: Rebuild
     let settings: Settings
