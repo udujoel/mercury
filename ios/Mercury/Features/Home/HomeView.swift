@@ -278,32 +278,21 @@ struct HomeView: View {
             .navigationDestination(isPresented: $showPlayer) {
                 PlayerView()
             }
-            .toolbar {
-                // Beside the gear rather than at the foot of the page.
-                //
-                // It lived below the desk, which meant scrolling past a
-                // dozen stories to reach the control for "this is stale" —
-                // the exact moment you are least willing to scroll. Two
-                // items, and the destructive one is not the one your thumb
-                // lands on by default.
-                ToolbarItem(placement: .topBarTrailing) {
-                    RegenerateButton(
-                        isRunning: appState.isRegenerating,
-                        remaining: appState.regeneration?.remaining,
-                        style: .toolbar,
-                        onConfirm: requestRebuild
-                    )
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { showSettings = true } label: {
-                        Image(systemName: "gearshape")
-                            .foregroundStyle(MercuryColor.inkMuted.color)
-                            .frame(width: 44, height: 44)
-                            .contentShape(Rectangle())
-                    }
-                    .accessibilityLabel("Settings")
-                }
-            }
+            // Beside the gear rather than at the foot of the page.
+            //
+            // It lived below the desk, which meant scrolling past a dozen
+            // stories to reach the control for "this is stale" — the exact
+            // moment you are least willing to scroll. Two items, and the
+            // destructive one is not the one your thumb lands on by default.
+            .modifier(TrailingToolbar(
+                rebuild: RegenerateButton(
+                    isRunning: appState.isRegenerating,
+                    remaining: appState.regeneration?.remaining,
+                    style: .toolbar,
+                    onConfirm: requestRebuild
+                ),
+                settings: settingsButton
+            ))
             .navigationDestination(isPresented: $showSettings) {
                 SettingsView()
             }
@@ -388,6 +377,18 @@ struct HomeView: View {
     /// Navigation is left to the `isPlaying` observer below: resuming opens
     /// the player, pausing stays on Home, and the notification path gets the
     /// same treatment without a second rule.
+    /// Built here rather than inline in `body`, whose modifier chain is
+    /// already long enough to strain the type checker.
+    private var settingsButton: some View {
+        Button { showSettings = true } label: {
+            Image(systemName: "gearshape")
+                .foregroundStyle(MercuryColor.inkMuted.color)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .accessibilityLabel("Settings")
+    }
+
     private func play() {
         // Seen. Not on appear, and not on a timer: the highlight says "this
         // is not the briefing you already heard", and the moment that stops
@@ -754,6 +755,49 @@ enum HomeErrorPresentation: Equatable {
     var sentence: String {
         guard let detail else { return headline }
         return "\(headline)\n\(detail)"
+    }
+}
+
+/// Home's two trailing toolbar items, kept apart on iOS 26.
+///
+/// The glass toolbar groups neighbouring items into one shared capsule, so
+/// built against the iOS 26 SDK Rebuild and Settings would share a single
+/// pill, with the control that spends a full generation sitting flush
+/// against the one that opens preferences. A fixed spacer splits them into
+/// two pieces of glass, which says with the material what the comment at the
+/// call site already says in words. Below iOS 26 there is no shared
+/// background to split, and the two items render exactly as they always
+/// have.
+///
+/// A modifier rather than an `if #available` inside the `.toolbar` builder:
+/// gating at a `ViewModifier` boundary is certain to type-check on every SDK
+/// this project builds with, and only one branch is ever live on a device,
+/// so the regenerate button's `@State` has one home.
+private struct TrailingToolbar<Rebuild: View, Settings: View>: ViewModifier {
+    let rebuild: Rebuild
+    let settings: Settings
+
+    func body(content: Content) -> some View {
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *) {
+            content.toolbar {
+                ToolbarItem(placement: .topBarTrailing) { rebuild }
+                ToolbarSpacer(.fixed, placement: .topBarTrailing)
+                ToolbarItem(placement: .topBarTrailing) { settings }
+            }
+        } else {
+            plain(content)
+        }
+        #else
+        plain(content)
+        #endif
+    }
+
+    private func plain(_ content: Content) -> some View {
+        content.toolbar {
+            ToolbarItem(placement: .topBarTrailing) { rebuild }
+            ToolbarItem(placement: .topBarTrailing) { settings }
+        }
     }
 }
 

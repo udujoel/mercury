@@ -88,6 +88,7 @@
 		BB03DE519B00000000000000 /* Spacing.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA03DE519F00000000000000 /* Spacing.swift */; };
 		BB04DE519B00000000000000 /* Motion.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA04DE519F00000000000000 /* Motion.swift */; };
 		BB05DE519B00000000000000 /* Surfaces.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA05DE519F00000000000000 /* Surfaces.swift */; };
+		BB09DE519B00000000000000 /* Glass.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA09DE519F00000000000000 /* Glass.swift */; };
 		BB06DE519B00000000000000 /* DawnPaletteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA06DE519F00000000000000 /* DawnPaletteTests.swift */; };
 		BB07DE519B00000000000000 /* ContrastTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA07DE519F00000000000000 /* ContrastTests.swift */; };
 		BB08DE519B00000000000000 /* DesignTokenTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA08DE519F00000000000000 /* DesignTokenTests.swift */; };
@@ -190,6 +191,7 @@
 		AA03DE519F00000000000000 /* Spacing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Spacing.swift; sourceTree = "<group>"; };
 		AA04DE519F00000000000000 /* Motion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Motion.swift; sourceTree = "<group>"; };
 		AA05DE519F00000000000000 /* Surfaces.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Surfaces.swift; sourceTree = "<group>"; };
+		AA09DE519F00000000000000 /* Glass.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Glass.swift; sourceTree = "<group>"; };
 		AA06DE519F00000000000000 /* DawnPaletteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DawnPaletteTests.swift; sourceTree = "<group>"; };
 		AA07DE519F00000000000000 /* ContrastTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContrastTests.swift; sourceTree = "<group>"; };
 		AA08DE519F00000000000000 /* DesignTokenTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignTokenTests.swift; sourceTree = "<group>"; };
@@ -348,6 +350,7 @@
 			isa = PBXGroup;
 			children = (
 				AA05DE519F00000000000000 /* Surfaces.swift */,
+				AA09DE519F00000000000000 /* Glass.swift */,
 				AA04DE519F00000000000000 /* Motion.swift */,
 				AA03DE519F00000000000000 /* Spacing.swift */,
 				AA02DE519F00000000000000 /* DawnPalette.swift */,
@@ -570,6 +573,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				BB05DE519B00000000000000 /* Surfaces.swift in Sources */,
+				BB09DE519B00000000000000 /* Glass.swift in Sources */,
 				BB04DE519B00000000000000 /* Motion.swift in Sources */,
 				BB03DE519B00000000000000 /* Spacing.swift in Sources */,
 				BB02DE519B00000000000000 /* DawnPalette.swift in Sources */,

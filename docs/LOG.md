@@ -1903,6 +1903,50 @@ in place a day costs an estimated 25-30 minutes and produces nothing. Healthy, t
 cadence is about 16 a day. Roughly 140 minutes were left for 26-31 October,
 so the month only lasts if the cap is raised.
 
+## 2026-10-27 - Liquid Glass, and why most of the app does not get it
+
+Asked to put the UI in Liquid Glass without changing what it does. Glass went
+on the mini player only, plus a toolbar spacer on Home. Where it goes and
+why the accent buttons are excluded is in `DesignSystem/Glass.swift`; why
+the toolbar items are split is on `TrailingToolbar` in `HomeView.swift`.
+
+**What was searched for and not there.** The overrides that usually stop
+system chrome adopting glass: opaque `toolbarBackground`,
+`UINavigationBar`/`UITabBar` appearance proxies, `presentationBackground`
+on sheets, scrims under bars, `UIDesignRequiresCompatibility`. None exist,
+so the bars and toolbar buttons pick up glass from the iOS 26 SDK alone and
+the deletion pass that normally comes first had nothing to delete.
+
+**What could not be confirmed, and the workaround.** Whether
+`if #available` type-checks inside a `ToolbarContentBuilder` on the 26 SDK.
+Rather than find out in a macOS CI run this month cannot afford, the gate
+sits at a `ViewModifier` boundary, which certainly does.
+
+**What review caught.** Three parallel reviewers read the diff before it
+was committed. The real defect: the bar was a `.plain` button, and `.plain`
+dims its label while pressed, so the glass inside the label went below full
+opacity on every tap, which stops it refracting at exactly the moment its
+press response should show. Fixed with `MercuryGlassButtonStyle`. The
+second: the bar kept the old fixed 56pt height with the progress line laid
+over the row, so at accessibility text sizes the line would have crossed
+the title. Also found, and not this change's doing: nothing animates the
+bar's insertion, so its `.transition` has never run.
+
+**Not verified on a screen.** Written on Linux with no Xcode: nothing here
+was compiled locally or seen running, and the simulator renders glass
+differently from hardware in both directions, so it is not acceptance
+either. On an iOS 26 device, check Home in light and dark, with Reduce
+Transparency and Increase Contrast on, and:
+
+- the bar over a card, over bare paper, and over a dark photo card in light
+  mode, since small glass can flip dark under dark content while the
+  `MercuryColor` text tokens follow only the system appearance;
+- the title at the largest accessibility size;
+- the Rebuild and Settings pills, whose explicit 44pt frames may make them
+  larger than the system's own toolbar glass;
+- the bottom gap on a Home-button iPhone, where there is no home indicator
+  and the bar sits 4pt above the screen edge.
+
 ## Standing facts worth not rediscovering
 
 - **The Worker has no CI deploy.** Merging is not shipping. A route on `main`
