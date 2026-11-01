@@ -1920,8 +1920,19 @@ is room for a cold simulator or a slower image, and every extra minute of
 timeout is ten billed ones on the day it hangs. `test_ci_triggers.py` now
 fails if any macOS job has no timeout or one above 30.
 
-`worker.yml` still has none. It runs on Linux, so a hang costs 360 minutes
-rather than 3,600, which is still 18% of the month.
+Review of #82 added two things. `worker.yml` had no timeout either, and
+even on Linux a hang at the default spends 18% of the month; all 22 of
+its runs took 9-13 seconds, so it stops at 5, and the test now requires a
+timeout on every job in every workflow, with the ceiling of 30 for
+macOS. And a job that reaches its timeout is cancelled, which skips an
+`if: failure()` step, so the xcresult upload would have been lost on the
+very run that hung. The `Test` step now has its own 12-minute limit,
+because a step that times out fails rather than being cancelled.
+
+Review also claimed an iOS run bills about 40 minutes, from October's 480
+over the "12 iOS runs" in `test_ci_triggers.py`'s docstring. That 12 was
+a partial count taken for #73. October had 23 iOS runs, and rounding each
+up to a minute at 10x gives exactly 480, about 21 a run.
 
 ## Standing facts worth not rediscovering
 

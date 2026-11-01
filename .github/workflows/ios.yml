@@ -134,7 +134,13 @@ jobs:
       # fallback to a bare run, which would have executed the ENTIRE suite a
       # second time on any machine where xcbeautify was missing — paying
       # twice, at the 10x rate, to pretty-print nothing.
+      #
+      # Twelve minutes, under the job's fifteen. A job that reaches its
+      # timeout is cancelled, and `failure()` is false for a cancelled job, so
+      # the upload below would be skipped on the one run that most needs it.
+      # A step that reaches its own timeout fails instead, and the upload runs.
       - name: Test
+        timeout-minutes: 12
         run: |
           xcodebuild test \
             -project Mercury.xcodeproj \
