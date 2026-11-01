@@ -47,16 +47,22 @@ struct MiniPlayerBar: View {
                         .foregroundStyle(MercuryColor.accent.color)
                         .frame(width: 24)
 
+                    // Hierarchical styles, not the ink tokens. The tokens
+                    // follow the system appearance only, and glass changes its
+                    // own lightness with what scrolls under it: over a dark
+                    // photo card in light mode it darkens while `ink` stays
+                    // near-black. `.primary` and `.secondary` get the
+                    // vibrancy pass on glass and on the material fallback.
                     Text(title)
                         .font(MercuryType.cardBody)
-                        .foregroundStyle(MercuryColor.ink.color)
+                        .foregroundStyle(.primary)
                         .lineLimit(1)
 
                     Spacer(minLength: MercurySpace.snug)
 
                     Text(PlayerTransport.timecode(ms: playback.positionMs))
                         .font(MercuryType.timecode)
-                        .foregroundStyle(MercuryColor.inkMuted.color)
+                        .foregroundStyle(.secondary)
                 }
                 .frame(minHeight: 44)
 
@@ -85,7 +91,9 @@ struct MiniPlayerBar: View {
         // Outside the button, so a tap in the margin is a tap on the page.
         // The page gutter, so the capsule lines up with the cards above it.
         .mercuryGutter()
-        .padding(.bottom, MercurySpace.tight)
+        // `snug` rather than `tight`: on a Home-button iPhone there is no
+        // bottom safe area, and 4pt left the capsule nearly on the bezel.
+        .padding(.bottom, MercurySpace.snug)
         // A slide with no fade, if the insertion is ever animated: nothing
         // at the call site wraps it in an animation today, so the bar
         // appears without one. Glass under partial opacity stops refracting,
@@ -94,12 +102,13 @@ struct MiniPlayerBar: View {
         .animation(motion.resolve(MercuryMotion.present), value: manifest.briefingId)
     }
 
-    /// A hairline, not a bar. The played portion is the day's accent; the
-    /// rest is the page's rule colour.
+    /// A hairline, not a bar. The played portion is the day's accent. The
+    /// track is a hierarchical fill rather than the `hairline` token, which is
+    /// tuned to separate rows on opaque paper and all but vanishes on glass.
     private var progressLine: some View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
-                Rectangle().fill(MercuryColor.hairline.color)
+                Rectangle().fill(.quaternary)
                 Rectangle()
                     .fill(MercuryColor.accent.color)
                     .frame(width: proxy.size.width * progress)

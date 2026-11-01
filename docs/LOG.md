@@ -1941,13 +1941,14 @@ either. On an iOS 26 device, check Home in light and dark, with Reduce
 Transparency and Increase Contrast on, and:
 
 - the bar over a card, over bare paper, and over a dark photo card in light
-  mode, since small glass can flip dark under dark content while the
-  `MercuryColor` text tokens follow only the system appearance;
+  mode, since small glass can flip dark under dark content. Its text now
+  uses `.primary`/`.secondary` so vibrancy should follow the glass; check
+  that it does;
 - the title at the largest accessibility size;
 - the Rebuild and Settings pills, whose explicit 44pt frames may make them
   larger than the system's own toolbar glass;
 - the bottom gap on a Home-button iPhone, where there is no home indicator
-  and the bar sits 4pt above the screen edge.
+  and the bar sits 8pt above the screen edge.
 
 ## Standing facts worth not rediscovering
 

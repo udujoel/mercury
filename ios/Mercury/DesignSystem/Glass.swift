@@ -28,26 +28,26 @@ private struct MercuryGlassSurface<S: InsettableShape>: ViewModifier {
     /// built against, so this keeps building on a pre-26 toolchain, per
     /// ios.yml's note on `#if compiler`. Swift 6.2 is Xcode 26's.
     func body(content: Content) -> some View {
-        #if compiler(>=6.2)
-        if #available(iOS 26.0, *) {
-            // `.regular`, never `.clear`: `.clear` is for small controls over
-            // photographs and video, and it does not keep its own text legible.
-            // No shadow or rim of ours on this branch, because the system
-            // draws the edge and adapts it for Reduce Transparency and Increase
-            // Contrast, which a hand-drawn stroke would not.
-            content
-                .glassEffect(.regular.interactive(isInteractive), in: shape)
-                .contentShape(shape)
-        } else {
-            content
-                .modifier(LegacyGlass(shape: shape))
-                .contentShape(shape)
+        Group {
+            #if compiler(>=6.2)
+            if #available(iOS 26.0, *) {
+                // `.regular`, never `.clear`: `.clear` is for small controls
+                // over photographs and video, and it does not keep its own
+                // text legible. No shadow or rim of ours on this branch,
+                // because the system draws the edge and adapts it for Reduce
+                // Transparency and Increase Contrast, which a hand-drawn
+                // stroke would not.
+                content.glassEffect(.regular.interactive(isInteractive), in: shape)
+            } else {
+                content.modifier(LegacyGlass(shape: shape))
+            }
+            #else
+            content.modifier(LegacyGlass(shape: shape))
+            #endif
         }
-        #else
-        content
-            .modifier(LegacyGlass(shape: shape))
-            .contentShape(shape)
-        #endif
+        // Once, outside every branch, so no future branch can leave the
+        // glass untappable outside its label.
+        .contentShape(shape)
     }
 }
 
@@ -106,16 +106,25 @@ struct MercuryGlassCapsuleButtonStyle: ButtonStyle {
 private struct LegacyPressDim: ViewModifier {
     let isPressed: Bool
 
+    /// A plain value rather than a second `#available` branch, so the floor
+    /// lives in `MercuryGlass.isAvailable` alone and this cannot disagree
+    /// with the surface about which side of it the device is on.
     func body(content: Content) -> some View {
+        content.opacity(isPressed && !MercuryGlass.isAvailable ? 0.7 : 1)
+    }
+}
+
+/// Whether this device draws real glass.
+///
+/// For decisions that only need to know, not to call a glass API. Anything
+/// that calls one still needs its own `#available`, because the compiler
+/// checks availability by scope, not by the value of a Bool.
+enum MercuryGlass {
+    static var isAvailable: Bool {
         #if compiler(>=6.2)
-        if #available(iOS 26.0, *) {
-            content
-        } else {
-            content.opacity(isPressed ? 0.7 : 1)
-        }
-        #else
-        content.opacity(isPressed ? 0.7 : 1)
+        if #available(iOS 26.0, *) { return true }
         #endif
+        return false
     }
 }
 
