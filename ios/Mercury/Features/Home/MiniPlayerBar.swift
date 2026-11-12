@@ -33,54 +33,82 @@ struct MiniPlayerBar: View {
             ?? "Today's briefing"
     }
 
+    /// The bar's height at default text sizes. A minimum, not a fixed
+    /// height: the title scales with Dynamic Type, and a fixed 56pt would
+    /// let it spill out of the capsule at the accessibility sizes.
+    private static let height: CGFloat = 56
+
     var body: some View {
         Button(action: onOpen) {
-            VStack(spacing: 0) {
-                Rectangle()
-                    .fill(MercuryColor.hairline.color)
-                    .frame(height: 1)
-
+            VStack(spacing: MercurySpace.hair) {
                 HStack(spacing: MercurySpace.base) {
                     Image(systemName: playback.isPlaying ? "waveform" : "play.fill")
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(MercuryColor.accent.color)
                         .frame(width: 24)
 
+                    // Hierarchical styles, not the ink tokens. The tokens
+                    // follow the system appearance only, and glass changes its
+                    // own lightness with what scrolls under it: over a dark
+                    // photo card in light mode it darkens while `ink` stays
+                    // near-black. `.primary` and `.secondary` get the
+                    // vibrancy pass on glass and on the material fallback.
                     Text(title)
                         .font(MercuryType.cardBody)
-                        .foregroundStyle(MercuryColor.ink.color)
+                        .foregroundStyle(.primary)
                         .lineLimit(1)
 
                     Spacer(minLength: MercurySpace.snug)
 
                     Text(PlayerTransport.timecode(ms: playback.positionMs))
                         .font(MercuryType.timecode)
-                        .foregroundStyle(MercuryColor.inkMuted.color)
+                        .foregroundStyle(.secondary)
                 }
-                .padding(.horizontal, MercurySpace.gutter)
-                .frame(height: 55)   // + the 1pt rule = the 56pt bar
+                .frame(minHeight: 44)
 
+                // Under the row rather than overlaid on it, so a larger title
+                // pushes the line down instead of being drawn through. At the
+                // default height the extra inset equals the capsule's radius,
+                // which keeps the line on the straight run of the edge.
                 progressLine
+                    .padding(.horizontal, MercurySpace.snug)
             }
+            .padding(.horizontal, MercurySpace.gutter)
+            .padding(.vertical, MercurySpace.tight)
             .frame(maxWidth: .infinity)
-            .background(MercuryColor.surfaceRaised.color)
-            .contentShape(Rectangle())
+            .frame(minHeight: Self.height)
         }
-        .buttonStyle(.plain)
+        // A floating glass capsule over the page, where it used to be an
+        // opaque strip ruled off from it. The page scrolls on underneath,
+        // which is what glass is for: you can see there is more below without
+        // the bar giving up its place. The style draws the glass, so the
+        // whole capsule is the button.
+        .buttonStyle(.mercuryGlassCapsule)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(title), \(PlayerTransport.spoken(ms: playback.positionMs)) played")
         .accessibilityHint("Opens the player")
         .accessibilityAddTraits(.isButton)
-        .transition(.move(edge: .bottom).combined(with: .opacity))
+        // Outside the button, so a tap in the margin is a tap on the page.
+        // The page gutter, so the capsule lines up with the cards above it.
+        .mercuryGutter()
+        // `snug` rather than `tight`: on a Home-button iPhone there is no
+        // bottom safe area, and 4pt left the capsule nearly on the bezel.
+        .padding(.bottom, MercurySpace.snug)
+        // A slide with no fade, if the insertion is ever animated: nothing
+        // at the call site wraps it in an animation today, so the bar
+        // appears without one. Glass under partial opacity stops refracting,
+        // so a fading bar would spend its entrance as a flat grey shape.
+        .transition(.move(edge: .bottom))
         .animation(motion.resolve(MercuryMotion.present), value: manifest.briefingId)
     }
 
-    /// A hairline, not a bar. The played portion is the day's accent; the
-    /// rest is the same rule that separates the rows above it.
+    /// A hairline, not a bar. The played portion is the day's accent. The
+    /// track is a hierarchical fill rather than the `hairline` token, which is
+    /// tuned to separate rows on opaque paper and all but vanishes on glass.
     private var progressLine: some View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
-                Rectangle().fill(MercuryColor.hairline.color)
+                Rectangle().fill(.quaternary)
                 Rectangle()
                     .fill(MercuryColor.accent.color)
                     .frame(width: proxy.size.width * progress)
