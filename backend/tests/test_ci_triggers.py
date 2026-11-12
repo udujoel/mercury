@@ -222,6 +222,65 @@ def test_ios_ci_does_not_pin_a_simulator_model():
     assert "steps.sim.outputs.udid" in test_step["run"]
 
 
+def _jobs() -> list[tuple[str, str, dict]]:
+    """Every job in every workflow file, `.yaml` included."""
+    paths = sorted([*WORKFLOWS.glob("*.yml"), *WORKFLOWS.glob("*.yaml")])
+    return [
+        (path.name, name, job)
+        for path in paths
+        for name, job in _spec(path.name)["jobs"].items()
+    ]
+
+
+def _on_macos(job: dict) -> bool:
+    # GitHub matches runner labels case-insensitively, and `runs-on` may be a
+    # list of them.
+    labels = job.get("runs-on", "")
+    labels = labels if isinstance(labels, list) else [labels]
+    return any(str(label).lower().startswith("macos") for label in labels)
+
+
+def test_no_job_can_hang_for_six_hours():
+    """GitHub's default job timeout is 360 minutes, and every workflow here
+    spends the private repo's 2,000 a month, out of which the briefing is
+    also generated. Even on Linux a hang at the default spends 18% of it."""
+    for workflow, name, job in _jobs():
+        timeout = job.get("timeout-minutes")
+        assert isinstance(timeout, int) and not isinstance(timeout, bool), (
+            f"{workflow}: job `{name}` needs a whole number of timeout-minutes, "
+            f"not {timeout!r}"
+        )
+
+
+def test_a_hung_macos_job_cannot_spend_the_month():
+    """macOS bills at 10x, so a hang at the default would cost about 3,600
+    billed minutes, more than the whole month. iOS runs take under three
+    minutes. Thirty is the ceiling because past it a single hang spends more
+    than 15% of the month."""
+    jobs = [(workflow, name, job) for workflow, name, job in _jobs() if _on_macos(job)]
+
+    assert jobs, "no macOS job found; ios.yml's was expected to be one"
+    for workflow, name, job in jobs:
+        timeout = job.get("timeout-minutes")
+        assert isinstance(timeout, int) and timeout <= 30, (
+            f"{workflow}: job `{name}` may run {timeout!r} minutes; past 30 one "
+            "hang bills more than 300 at the macOS rate"
+        )
+
+
+def test_a_hung_ios_test_step_still_keeps_its_result_bundle():
+    """A job that reaches its timeout is CANCELLED, and `failure()` is false
+    for a cancelled job, so the xcresult upload would be skipped on exactly
+    the run that hung. A step that reaches its own timeout FAILS instead, so
+    the Test step's limit sits below the job's, with time left to upload."""
+    job_timeout = _spec("ios.yml")["jobs"]["test"]["timeout-minutes"]
+    test_step = next(s for s in _ios_steps() if s.get("name") == "Test")
+    upload = _step("Keep the result bundle")
+
+    assert job_timeout - test_step.get("timeout-minutes", job_timeout) >= 2
+    assert upload["if"] == "failure()"
+
+
 def test_backend_ci_keeps_the_code_formatted():
     """ROADMAP task 43. CLAUDE.md says "format on save", and by 2026-10-11
     88 of 124 backend files had drifted from it. The whole backend was

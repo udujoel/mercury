@@ -1950,6 +1950,37 @@ Transparency and Increase Contrast on, and:
 - the bottom gap on a Home-button iPhone, where there is no home indicator
   and the bar sits 8pt above the screen edge.
 
+## 2026-11-01 - a timeout for the macOS job, and its cost comment corrected
+
+After #81, `ios.yml` was the last test suite with no job timeout, so a hang
+would run GitHub's default of 360 minutes and bill about 3,600 at the 10x
+macOS rate. It was left alone in October because the edit runs the macOS
+suite itself, 20-30 billed minutes, when about 140 were left for the last
+six days and generation needed them. It waited for the 1 November reset.
+
+The "~5 minute run" its cost comment priced had never been measured. All 36
+successful runs, from the first on 13 September to the last on 11 October,
+took 1.4-2.9 minutes of wall time, and the four since #77 moved CI to Xcode
+26 took 1.7-2.6, about two of which is the `Test` step. So the timeout is 15
+rather than the 20-30 the task first suggested: five times the slowest run
+is room for a cold simulator or a slower image, and every extra minute of
+timeout is ten billed ones on the day it hangs. `test_ci_triggers.py` now
+fails if any macOS job has no timeout or one above 30.
+
+Review of #82 added two things. `worker.yml` had no timeout either, and
+even on Linux a hang at the default spends 18% of the month; all 22 of
+its runs took 9-13 seconds, so it stops at 5, and the test now requires a
+timeout on every job in every workflow, with the ceiling of 30 for
+macOS. And a job that reaches its timeout is cancelled, which skips an
+`if: failure()` step, so the xcresult upload would have been lost on the
+very run that hung. The `Test` step now has its own 12-minute limit,
+because a step that times out fails rather than being cancelled.
+
+Review also claimed an iOS run bills about 40 minutes, from October's 480
+over the "12 iOS runs" in `test_ci_triggers.py`'s docstring. That 12 was
+a partial count taken for #73. October had 23 iOS runs, and rounding each
+up to a minute at 10x gives exactly 480, about 21 a run.
+
 ## Standing facts worth not rediscovering
 
 - **The Worker has no CI deploy.** Merging is not shipping. A route on `main`
