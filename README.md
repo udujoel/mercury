@@ -1,5 +1,7 @@
 # Mercury
 
+![Mercury: your inbox, calendar and the news, as one narrated briefing every morning](docs/hero.webp)
+
 Everything that matters. One briefing. Every morning.
 
 Mercury reads your email, calendar and news overnight and gives you a single
