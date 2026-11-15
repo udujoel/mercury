@@ -1950,6 +1950,29 @@ Transparency and Increase Contrast on, and:
 - the bottom gap on a Home-button iPhone, where there is no home indicator
   and the bar sits 8pt above the screen edge.
 
+## 2026-11-15 - screenshots, and what they show against the glass checklist
+
+Four screenshots from an iPhone in dark mode are now in `docs/screenshots/`
+and in the README. They are the first look at the app on a device since the
+2026-10-27 glass change, so they answer part of that entry's checklist.
+
+**What they show.**
+
+- The Rebuild and Settings controls render as one glass capsule at the top
+  right of Home. At the top of the screen it covers the weekday letters for
+  Saturday and Sunday on the calendar strip, and the end of the gold rule
+  above them. Scrolled, it sits over the top right of the briefing card.
+  That fits the open question about the explicit 44pt frames making the
+  pills larger than the system's own toolbar glass. Worth checking against
+  `TrailingToolbar`.
+- The backup voice note shows on both today's and Friday's briefing card,
+  so `narratorFallback` reaches the phone and reads as intended.
+- The story page's "Hear the hosts on this" pill sits under the byline as
+  designed, and the player's chapter pills and transcript render.
+
+**Not covered.** Light mode, Reduce Transparency, Increase Contrast, the
+largest text size and a Home-button iPhone are still unchecked.
+
 ## Standing facts worth not rediscovering
 
 - **The Worker has no CI deploy.** Merging is not shipping. A route on `main`
