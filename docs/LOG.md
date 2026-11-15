@@ -1973,6 +1973,11 @@ and in the README. They are the first look at the app on a device since the
 **Not covered.** Light mode, Reduce Transparency, Increase Contrast, the
 largest text size and a Home-button iPhone are still unchecked.
 
+**Later the same day.** The home screenshot was swapped for one taken at
+12:34 that shows Thursday's briefing and desk, because the first one showed
+private inbox items. The backup voice note is on Thursday's card in the new
+shot, so the note above still holds.
+
 ## Standing facts worth not rediscovering
 
 - **The Worker has no CI deploy.** Merging is not shipping. A route on `main`
