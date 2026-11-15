@@ -1965,7 +1965,7 @@ and in the README. They are the first look at the app on a device since the
   That fits the open question about the explicit 44pt frames making the
   pills larger than the system's own toolbar glass. Worth checking against
   `TrailingToolbar`.
-- The backup voice note shows on both today's and Friday's briefing card,
+- The backup voice note shows on both Thursday's and Friday's briefing card,
   so `narratorFallback` reaches the phone and reads as intended.
 - The story page's "Hear the hosts on this" pill sits under the byline as
   designed, and the player's chapter pills and transcript render.

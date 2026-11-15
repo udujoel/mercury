@@ -32,13 +32,13 @@ From an iPhone on 15 November 2026, in dark mode. Select one to see it full size
 <table>
   <tr>
     <td width="25%"><a href="docs/screenshots/2026-11-15-home-past-briefing.webp"><img src="docs/screenshots/2026-11-15-home-past-briefing.webp" alt="Home screen with Friday picked on the calendar strip, showing Friday's briefing and desk"></a></td>
-    <td width="25%"><a href="docs/screenshots/2026-11-15-home-today.webp"><img src="docs/screenshots/2026-11-15-home-today.webp" alt="Home screen with today's briefing, the backup voice note and today's desk"></a></td>
+    <td width="25%"><a href="docs/screenshots/2026-11-15-home-thursday.webp"><img src="docs/screenshots/2026-11-15-home-thursday.webp" alt="Home screen with Thursday's briefing, the backup voice note and Thursday's desk"></a></td>
     <td width="25%"><a href="docs/screenshots/2026-11-15-story.webp"><img src="docs/screenshots/2026-11-15-story.webp" alt="Story page with the outlets that covered it and the Hear the hosts on this button"></a></td>
     <td width="25%"><a href="docs/screenshots/2026-11-15-player.webp"><img src="docs/screenshots/2026-11-15-player.webp" alt="Player with the live transcript of both hosts and chapter pills"></a></td>
   </tr>
   <tr>
     <td valign="top"><sub>The calendar strip opens earlier mornings. Friday is picked here.</sub></td>
-    <td valign="top"><sub>Today's briefing and desk. The note says the backup voice read it.</sub></td>
+    <td valign="top"><sub>Thursday's briefing and desk. The note says the backup voice read it.</sub></td>
     <td valign="top"><sub>A story covered by six outlets, shown once with all of them credited.</sub></td>
     <td valign="top"><sub>The player follows the two hosts with a live transcript and chapters.</sub></td>
   </tr>
