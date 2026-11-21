@@ -13,7 +13,8 @@ out in the segment the hosts introduce as needing attention.
 Everything here that can go through `message_to_item` does, for the reason
 `test_transactional_mail.py` records: a test that hand-builds
 `raw={"is_noise": True}` stays green when ingestion stops writing the flag.
-ROADMAP task 62.
+Private mail (banks, money apps, personal accounts) is filtered the same
+way, at the owner's request the same afternoon. ROADMAP task 62.
 """
 
 from __future__ import annotations
@@ -25,9 +26,13 @@ import pytest
 
 from app.core.providers import EmailJudgment
 from app.core.schemas import BriefingLength, Priority
-from app.ingestion.gmail import detect_automated_noise, message_to_item
+from app.ingestion.gmail import (
+    detect_automated_noise,
+    detect_private,
+    message_to_item,
+)
 from app.pipeline.generate import (
-    _drop_automated_noise,
+    _drop_filtered_mail,
     _newsletters_for_extraction,
     generate_briefing,
 )
@@ -36,7 +41,7 @@ from app.providers.fake_embeddings import FakeEmbeddingProvider
 from app.providers.fake_tts import FakeTTSProvider
 from app.synthesis.storage import LocalFilesystemStorage
 
-USER = "udujoel@example.test"
+USER = "owner@example.test"
 
 
 def _item(
@@ -140,6 +145,31 @@ THE_NOISE = [
         {"Auto-Submitted": "auto-replied"},
         id="out-of-office",
     ),
+    # Review of #87: explicit automation markers beat an urgency phrase
+    # quoted in the subject, which `detect_urgent` reads as fresh text.
+    pytest.param(
+        "A Colleague <colleague@example.test>",
+        "Out of office: Action required: approve Q4 budget",
+        "I am away until Monday.",
+        {"Auto-Submitted": "auto-replied"},
+        id="out-of-office-quoting-an-urgent-subject",
+    ),
+    pytest.param(
+        "GitLab <gitlab@ci.example.test>",
+        "Action required: rotate the deploy key (issue #12)",
+        "New issue.",
+        {"X-GitLab-Project": "mercury"},
+        id="non-bulk-repo-notification-with-urgent-words",
+    ),
+    # Review of #87: "action required" is not an account alert, so it no
+    # longer exempts a dev-tool sender.
+    pytest.param(
+        "Vercel <notifications@vercel.com>",
+        "Action required: Deployment failed for mercury-web",
+        "Build error.",
+        {"List-Unsubscribe": "<https://x.test/u>"},
+        id="vercel-action-required-deploy",
+    ),
 ]
 
 
@@ -187,21 +217,37 @@ THE_KEEPERS = [
         {"List-Unsubscribe": "<https://x.test/u>"},
         id="newsletter-with-ci-words",
     ),
+    # Review of #87: `noreply@` means bulk, not CI, so a publication using
+    # it keeps a headline about a failed deploy.
     pytest.param(
-        # Account security from a code host is about the owner, not a repo,
-        # and detect_urgent has already decided it is worth saying out loud.
-        "GitHub <noreply@github.com>",
-        "[GitHub] Unusual sign-in activity on your account",
-        "We noticed a sign-in from a new location.",
+        "Medium Daily <noreply@medium.com>",
+        "Why the CrowdStrike deploy failed",
+        "A deep dive.",
+        {"List-Unsubscribe": "<https://x.test/u>"},
+        id="noreply-newsletter-about-a-failed-deploy",
+    ),
+    # Review of #87: "ci@" was a substring match and fired on marci@.
+    pytest.param(
+        "Marci <marci@example.test>",
+        "Build failed on main",
+        "Can you help me look at this?",
         {},
-        id="code-host-account-security",
+        id="a-person-whose-name-ends-in-ci",
+    ),
+    # Private mail must not swallow journalism about money or security.
+    pytest.param(
+        "Fintech Brainfood <hi@fintechbf.test>",
+        "Why payment failed rates matter",
+        "This week in payments.",
+        {"List-Unsubscribe": "<https://x.test/u>"},
+        id="newsletter-about-payments",
     ),
     pytest.param(
-        "GTBank <gens@gtbank.com>",
-        "Your account has been restricted",
-        "Call us.",
-        {"List-Unsubscribe": "<https://x.test/u>", "Auto-Submitted": "auto-generated"},
-        id="bank-alert-auto-generated",
+        "Risky Biz <newsletter@risky.biz>",
+        "Roundup",
+        "Cloudflare users saw unusual sign-in alerts this week.",
+        {"List-Unsubscribe": "<https://x.test/u>"},
+        id="newsletter-reporting-someone-elses-breach",
     ),
 ]
 
@@ -212,23 +258,108 @@ def test_what_the_owner_wants_survives(sender, subject, body, extra):
     assert not item.raw[
         "is_noise"
     ], f"{sender} / {subject!r} was dropped by {item.raw['noise_signal']}"
+    assert not item.raw[
+        "is_private"
+    ], f"{sender} / {subject!r} was dropped by {item.raw['private_signal']}"
 
 
-def test_urgent_and_financial_exemptions_are_honoured_directly():
+# The owner's second rule: "also filter out private emails, like from banks
+# or money apps, finance or other personal stuff." Urgency does not save
+# these. That reverses task 27, which lifted a bank warning into the
+# needs-attention segment, and it is deliberate.
+THE_PRIVATE = [
+    pytest.param(
+        "GTBank <gens@gtbank.com>",
+        "Your account has been restricted",
+        "Call us.",
+        {"List-Unsubscribe": "<https://x.test/u>", "Auto-Submitted": "auto-generated"},
+        id="urgent-bank-alert",
+    ),
+    pytest.param(
+        "Trading212 <no-reply@info.trading212.com>",
+        "Deposit successful",
+        "Your deposit has arrived.",
+        {"List-Unsubscribe": "<https://x.test/u>"},
+        id="money-app-receipt",
+    ),
+    pytest.param(
+        "Kuda <help@kuda.com>",
+        "Hello from Kuda",
+        "Some body text.",
+        {},
+        id="bank-sender-any-subject",
+    ),
+    pytest.param(
+        "Some Shop <orders@shop.example.test>",
+        "Your receipt from Some Shop",
+        "Thanks for your order.",
+        {},
+        id="receipt-from-anyone",
+    ),
+    pytest.param(
+        "Google <no-reply@accounts.google.com>",
+        "Security alert for owner@example.test",
+        "A new sign-in.",
+        {},
+        id="personal-account-security",
+    ),
+    pytest.param(
+        # Account security from a code host is about the owner, not a repo.
+        "GitHub <noreply@github.com>",
+        "[GitHub] Unusual sign-in activity on your account",
+        "We noticed a sign-in from a new location.",
+        {},
+        id="code-host-account-security",
+    ),
+    pytest.param(
+        "Some Service <security@service.example.test>",
+        "Please check this",
+        "We noticed unusual sign-in activity on your account.",
+        {},
+        id="account-alert-in-a-non-bulk-body",
+    ),
+]
+
+
+@pytest.mark.parametrize(("sender", "subject", "body", "extra"), THE_PRIVATE)
+def test_private_mail_is_flagged(sender, subject, body, extra):
+    item = _item(sender, subject, body, extra=extra)
+    assert item.raw["is_private"], f"{sender} / {subject!r} reaches the briefing"
+    assert item.raw["private_signal"]
+    # Private mail is never journalism either, so it stays off the desk.
+    assert item.raw["is_transactional"]
+    assert _newsletters_for_extraction([item]) == []
+    assert _drop_filtered_mail([item]) == []
+
+
+def test_private_detection_directly():
+    assert detect_private({"From": "x <a@monzo.com>"}, "Hi")[0]
+    assert not detect_private({"From": "x <a@example.test>"}, "Lunch Friday?")[0]
+
+
+def test_exemptions_are_honoured_directly():
     headers = {"From": "GitHub <noreply@github.com>", "X-GitHub-Reason": "security"}
     assert detect_automated_noise(headers, "x")[0]
-    assert not detect_automated_noise(headers, "x", is_urgent=True)[0]
+    # A repository header beats urgency (review of #87); financial wins.
+    assert detect_automated_noise(headers, "x", is_urgent=True)[0]
     assert not detect_automated_noise(headers, "x", is_financial=True)[0]
+    # Urgency still exempts mail whose only evidence is the sender.
+    sender_only = {"From": "GitHub <noreply@github.com>"}
+    assert detect_automated_noise(sender_only, "x")[0]
+    assert not detect_automated_noise(sender_only, "x", is_urgent=True)[0]
 
 
-def test_dropping_logs_what_it_removed(caplog):
+def test_dropping_logs_what_it_removed_without_naming_private_senders(caplog):
     noise = _item(*[p.values for p in THE_NOISE][0])
+    private = _item(*[p.values for p in THE_PRIVATE][0])
     keeper = _item(*[p.values for p in THE_KEEPERS][0])
     with caplog.at_level(logging.INFO):
-        kept = _drop_automated_noise([noise, keeper])
+        kept = _drop_filtered_mail([noise, private, keeper])
     assert kept == [keeper]
-    assert "dropped 1 of 2 emails as automated noise" in caplog.text
+    assert "filtered 2 of 3 emails out of the briefing" in caplog.text
     assert "X-GitHub-Reason" in caplog.text
+    assert "private sender x1" in caplog.text
+    assert "gtbank" not in caplog.text.lower()
 
 
 class _RecordingJudge:
@@ -262,6 +393,7 @@ async def test_noise_never_reaches_triage_or_the_script(tmp_path):
     failure (n_stories=0, music_set, the newsletter segment)."""
     review = _item(*[p.values for p in THE_NOISE][0])
     run_failed = _item(*[p.values for p in THE_NOISE][2])
+    bank = _item(*[p.values for p in THE_PRIVATE][0])
     ask = _item(*[p.values for p in THE_KEEPERS][0])
     judge = _RecordingJudge()
 
@@ -283,7 +415,7 @@ async def test_noise_never_reaches_triage_or_the_script(tmp_path):
         tts=FakeTTSProvider(),
         embeddings=FakeEmbeddingProvider(),
         storage=LocalFilesystemStorage(base_dir=tmp_path),
-        fetch_emails=lambda **_: _async([review, run_failed, ask]),
+        fetch_emails=lambda **_: _async([review, run_failed, bank, ask]),
         fetch_events=lambda **_: _async([]),
         fetch_weather=lambda **_: _async(None),
         fetch_articles=lambda **_: _async([]),
@@ -292,7 +424,11 @@ async def test_noise_never_reaches_triage_or_the_script(tmp_path):
     )
 
     assert judge.subjects == ["Budget sign-off"], judge.subjects
+    # Rule 5 (review of #87): a dropped message stays in `all_emails` for
+    # the desk, so its body has to be scrubbed there too.
+    assert review.body == run_failed.body == bank.body == ""
     prompts = "\n".join(llm.prompts)
     assert "Budget sign-off" in prompts
     assert "PR #87" not in prompts
     assert "Run failed" not in prompts
+    assert "restricted" not in prompts

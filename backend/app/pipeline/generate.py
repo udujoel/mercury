@@ -263,13 +263,15 @@ async def generate_briefing(
                 len(wanted),
             )
 
-    # Automated developer noise (GitHub, CI, deploys, auto-replies) leaves
-    # the spoken path here, BEFORE clustering and triage, so Jev never
-    # spends judgment budget on it and a review request can never be read
-    # out as "someone is waiting on you". `all_emails` keeps it for the
-    # same reason muting does; the desk refuses it on its own because
-    # every noise message is also marked transactional. ROADMAP task 62.
-    emails = _drop_automated_noise(emails)
+    # Automated developer noise (GitHub, CI, deploys, auto-replies) and
+    # private mail (banks, money apps, personal accounts) leave the spoken
+    # path here, BEFORE clustering and triage. So Jev never spends judgment
+    # budget on noise, a review request can never be read out as "someone
+    # is waiting on you", and a bank alert's body never reaches Jev or the
+    # script model at all. `all_emails` keeps them for the same reason
+    # muting does; the desk refuses them on its own because both kinds are
+    # also marked transactional. ROADMAP task 62.
+    emails = _drop_filtered_mail(emails)
 
     # Newsletters and articles cluster TOGETHER, in one call, which is the
     # whole reason every source normalises into `Item` before anything else
@@ -478,6 +480,11 @@ async def generate_briefing(
         _scrub_email_bodies(emails)
         _scrub_email_bodies(scored_emails)
         _scrub_email_bodies(selection.get("emails", []))
+        # And everything that arrived, which is not the same list. Muted and
+        # noise mail leave `emails` before the script is written but stay in
+        # `all_emails` for the desk, so without this their bodies outlived
+        # the run's last read. Review of #87.
+        _scrub_email_bodies(all_emails)
 
         # Concurrent with synthesis, not before it. TTS is the long pole — a live
         # run is 71 seconds against the PRD's 90-second budget — and an
@@ -721,24 +728,32 @@ def _is_newsletter(item: Item) -> bool:
     return item.source_type is SourceType.EMAIL and bool(item.raw.get("is_newsletter"))
 
 
-def _drop_automated_noise(emails: list[Item]) -> list[Item]:
-    """The emails `detect_automated_noise` did not flag.
+def _drop_filtered_mail(emails: list[Item]) -> list[Item]:
+    """The emails neither `detect_automated_noise` nor `detect_private`
+    flagged.
 
     Logged with a count per signal, because a filter that removes mail
     silently is indistinguishable from an inbox that was empty, and this
-    project has shipped that failure more than once.
+    project has shipped that failure more than once. Private mail is logged
+    by rule only, never by sender or subject: the Actions log is not a
+    private place.
     """
     kept: list[Item] = []
     signals: dict[str, int] = {}
     for item in emails:
-        if item.raw.get("is_noise"):
-            signal = item.raw.get("noise_signal") or "unknown"
-            signals[signal] = signals.get(signal, 0) + 1
+        if item.raw.get("is_private"):
+            # The rule's kind only ("sender", "subject"), never which bank.
+            rule = (item.raw.get("private_signal") or "unknown").split(" (")[0]
+            signal = f"private {rule}"
+        elif item.raw.get("is_noise"):
+            signal = f"noise {item.raw.get('noise_signal') or 'unknown'}"
         else:
             kept.append(item)
+            continue
+        signals[signal] = signals.get(signal, 0) + 1
     if signals:
         log.info(
-            "dropped %d of %d emails as automated noise: %s",
+            "filtered %d of %d emails out of the briefing: %s",
             len(emails) - len(kept),
             len(emails),
             ", ".join(f"{k} x{v}" for k, v in sorted(signals.items())),

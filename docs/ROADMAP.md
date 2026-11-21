@@ -1166,7 +1166,7 @@ Most of it is backend behaviour visible only in production logs.
       real mornings (bodies stripped per rule 5) and a script that replays
       them with `generate_briefing(now=...)`.
 
-- [x] 62. **Keep GitHub, CI and auto-reply mail out of the briefing.** Owner's
+- [x] 62. **Keep GitHub, CI, auto-reply and private mail out of the briefing.** Owner's
       rule, 2026-11-21: "GitHub issues, PR and build noise ain't important. I
       want mainly newsletters and emails needing my attention." A GitHub
       notification was a "newsletter" (List-Unsubscribe) and so LOW, but Jev
@@ -1180,7 +1180,11 @@ Most of it is backend behaviour visible only in production logs.
       exempt. Jev's consequence and awaiting-reply questions were tightened to
       say that software notifications cost nothing. Still to confirm on a
       live run: how many messages the filter drops on a real morning (the
-      `dropped N of M emails as automated noise` log line). Related: task 16's
+      `filtered N of M emails out of the briefing` log line). The same PR
+      added `detect_private` at the owner's request: bank and money-app
+      senders, receipts, statements, one-time codes and account alerts are
+      dropped before triage too, urgent or not, which reverses task 27's
+      lift of bank warnings into the needs-attention segment. Related: task 16's
       fourth bucket, "noise", is now real for this class of mail.
 
 Still open from earlier sections, in the order they now rank: **21** (word

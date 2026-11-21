@@ -1997,13 +1997,33 @@ means the desk and the newsletter extractor needed no change.
 **One exemption that is easy to get wrong.** A code host's own account
 alert ("Unusual sign-in activity on your account" from `noreply@github.com`)
 is a newsletter by the `noreply@` rule, and newsletters are never urgent, so
-`is_urgent` alone did not protect it. The sender-domain rule therefore
-checks the subject against `URGENT_PATTERNS` itself. The header and List-Id
-rules do not, because a pull request titled "action required: ..." is still
-a pull request.
+`is_urgent` alone did not protect it. The sender-domain rule checks the
+subject against an account-only subset of `URGENT_PATTERNS`, not the whole
+list: review of #87 found "Action required: Deployment failed" from Vercel
+kept by the generic phrase. Explicit automation markers (repository
+headers, code-host List-Id, `Auto-Submitted: auto-replied`) run before the
+urgency exemption, because `detect_urgent` reads an out-of-office's quoted
+subject as fresh text.
+
+**Review of #87 also caught** `noreply@` counted as CI evidence (it means
+bulk, so a Medium headline about a failed deploy was dropped), a substring
+`ci@` matching marci@, and dropped bodies outliving the scrub in
+`all_emails`. That last one covered muted mail too, which had the same leak
+before this PR.
+
+**Private mail reverses task 27.** The same afternoon the owner added:
+"also filter out private emails, like from banks or money apps, finance or
+other personal stuff." Task 27 had done the opposite, lifting a bank's
+account warning into the needs-attention segment. `detect_private` drops
+bank and money-app senders, receipt/statement/OTP subjects, and account
+alerts, urgent or not, before triage, so none of it reaches Jev, Gemini or
+the audio. The filter log names the rule kind only, never the sender,
+because the Actions log is not private. `FINANCIAL_SENDER_DOMAINS` and
+`detect_urgent` are untouched; nothing they flag is spoken any more, but
+the flags still feed the desk gate.
 
 **Not yet measured.** No live run has gone through this. The first
-production log line `dropped N of M emails as automated noise` is the
+production log line `filtered N of M emails out of the briefing` is the
 evidence; a count of zero on a weekday would mean the headers are not
 arriving as expected.
 
