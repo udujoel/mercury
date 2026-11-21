@@ -263,6 +263,14 @@ async def generate_briefing(
                 len(wanted),
             )
 
+    # Automated developer noise (GitHub, CI, deploys, auto-replies) leaves
+    # the spoken path here, BEFORE clustering and triage, so Jev never
+    # spends judgment budget on it and a review request can never be read
+    # out as "someone is waiting on you". `all_emails` keeps it for the
+    # same reason muting does; the desk refuses it on its own because
+    # every noise message is also marked transactional. ROADMAP task 62.
+    emails = _drop_automated_noise(emails)
+
     # Newsletters and articles cluster TOGETHER, in one call, which is the
     # whole reason every source normalises into `Item` before anything else
     # happens (CLAUDE.md, "The pipeline"). Clustering the news in isolation
@@ -711,6 +719,31 @@ def _is_newsletter(item: Item) -> bool:
     either; they both wrote to the user.
     """
     return item.source_type is SourceType.EMAIL and bool(item.raw.get("is_newsletter"))
+
+
+def _drop_automated_noise(emails: list[Item]) -> list[Item]:
+    """The emails `detect_automated_noise` did not flag.
+
+    Logged with a count per signal, because a filter that removes mail
+    silently is indistinguishable from an inbox that was empty, and this
+    project has shipped that failure more than once.
+    """
+    kept: list[Item] = []
+    signals: dict[str, int] = {}
+    for item in emails:
+        if item.raw.get("is_noise"):
+            signal = item.raw.get("noise_signal") or "unknown"
+            signals[signal] = signals.get(signal, 0) + 1
+        else:
+            kept.append(item)
+    if signals:
+        log.info(
+            "dropped %d of %d emails as automated noise: %s",
+            len(emails) - len(kept),
+            len(emails),
+            ", ".join(f"{k} x{v}" for k, v in sorted(signals.items())),
+        )
+    return kept
 
 
 def _newsletters_for_extraction(emails: list[Item]) -> list[Item]:

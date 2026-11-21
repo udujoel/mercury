@@ -1166,6 +1166,23 @@ Most of it is backend behaviour visible only in production logs.
       real mornings (bodies stripped per rule 5) and a script that replays
       them with `generate_briefing(now=...)`.
 
+- [x] 62. **Keep GitHub, CI and auto-reply mail out of the briefing.** Owner's
+      rule, 2026-11-21: "GitHub issues, PR and build noise ain't important. I
+      want mainly newsletters and emails needing my attention." A GitHub
+      notification was a "newsletter" (List-Unsubscribe) and so LOW, but Jev
+      triage overwrote that, and a review request reads literally as a person
+      waiting on a reply. `detect_automated_noise` in `ingestion/gmail.py`
+      now flags code-host and CI mail from headers (`X-GitHub-Reason`,
+      `X-GitLab-*`, a `*.github.com` List-Id), sender domains, CI-result
+      subjects from machine senders, and RFC 3834 auto-replies.
+      `generate_briefing` drops flagged mail before clustering and triage, so
+      it also stops spending the judgment budget. Urgent and financial mail is
+      exempt. Jev's consequence and awaiting-reply questions were tightened to
+      say that software notifications cost nothing. Still to confirm on a
+      live run: how many messages the filter drops on a real morning (the
+      `dropped N of M emails as automated noise` log line). Related: task 16's
+      fourth bucket, "noise", is now real for this class of mail.
+
 Still open from earlier sections, in the order they now rank: **21** (word
 timings that survive the cache, plus `BriefingManifest.schema_version`),
 **34** (continuity between briefings), and **28 / 31**, which wait on the

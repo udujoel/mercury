@@ -1978,6 +1978,35 @@ largest text size and a Home-button iPhone are still unchecked.
 private inbox items. The backup voice note is on Thursday's card in the new
 shot, so the note above still holds.
 
+## 2026-11-21 — GitHub and CI mail leaves the briefing (task 62)
+
+**Why a header gate and not a prompt line.** The leak was triage, not
+ingestion. Ingestion already pinned GitHub mail LOW because it carries
+`List-Unsubscribe`, but `triage_emails` overwrites that verdict, and a review
+request ("could you take another look before Friday?") is a near-perfect
+match for Jev's `awaiting_reply` question. Telling the model "not GitHub"
+would still spend one judgment per notification, from the same budget the
+semantic quality gates starved on until #74, to rediscover what the
+`X-GitHub-Reason` header states outright.
+
+**Noise implies transactional, not the reverse.** Transactional costs mail
+its desk slot; noise costs it the whole briefing. A bank receipt is the
+first and not the second. Setting `is_transactional` on every noise message
+means the desk and the newsletter extractor needed no change.
+
+**One exemption that is easy to get wrong.** A code host's own account
+alert ("Unusual sign-in activity on your account" from `noreply@github.com`)
+is a newsletter by the `noreply@` rule, and newsletters are never urgent, so
+`is_urgent` alone did not protect it. The sender-domain rule therefore
+checks the subject against `URGENT_PATTERNS` itself. The header and List-Id
+rules do not, because a pull request titled "action required: ..." is still
+a pull request.
+
+**Not yet measured.** No live run has gone through this. The first
+production log line `dropped N of M emails as automated noise` is the
+evidence; a count of zero on a weekday would mean the headers are not
+arriving as expected.
+
 ## Standing facts worth not rediscovering
 
 - **The Worker has no CI deploy.** Merging is not shipping. A route on `main`

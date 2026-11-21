@@ -369,6 +369,152 @@ def is_financial_sender(headers: dict[str, str]) -> bool:
 
 
 # ──────────────────────────────────────────────────────────────
+# Automated developer noise (ROADMAP task 62)
+# ──────────────────────────────────────────────────────────────
+
+# The owner's rule, 2026-11-21: GitHub issues, pull requests and build
+# results are not briefing material. What belongs in the email segment is
+# newsletters and mail that needs the owner's attention.
+#
+# Why a deterministic gate rather than another line in the Jev prompt. A
+# GitHub review request is, read literally, "a specific person is waiting
+# for the recipient", which is exactly what `awaiting_reply` is asked to
+# find, and a failed deploy reads as a consequence. Both kept reaching the
+# spoken inbox through triage. These senders announce themselves in their
+# headers, so asking a model to rediscover that on every run spends the
+# judgment budget the semantic quality gates need (task 47) to learn
+# something the headers already say for free.
+#
+# Noise is NOT the same thing as transactional. Transactional costs a
+# message its place on the browse desk; noise costs it its place in the
+# briefing entirely. Every noise message is also marked transactional (it
+# is certainly not journalism), but not the other way round: a bank receipt
+# is transactional and still gets spoken if triage thinks it matters.
+
+# Header names that only a code host or CI system sets. Their presence is
+# the strongest signal there is, stronger than the sender, because GitHub
+# also sends from addresses that look personal when a reply comes in by mail.
+DEV_NOISE_HEADERS: list[str] = [
+    "X-GitHub-Reason",
+    "X-GitHub-Sender",
+    "X-GitLab-Project",
+    "X-GitLab-NotificationReason",
+    "X-GitLab-Pipeline-Id",
+]
+
+# `List-Id` values a code host uses for its per-repository lists, e.g.
+# "udujoel/mercury <mercury.udujoel.github.com>".
+DEV_NOISE_LIST_IDS: list[str] = [
+    ".github.com>",
+    ".gitlab.com>",
+]
+
+# Sender domains whose mail is about repositories, builds and deploys.
+# Matched against the whole From header like `FINANCIAL_SENDER_DOMAINS`, so
+# "@github.com" covers notifications@, noreply@ and the per-thread reply
+# addresses alike.
+DEV_NOISE_SENDER_DOMAINS: list[str] = [
+    "@github.com",
+    "@gitlab.com",
+    "@bitbucket.org",
+    "@circleci.com",
+    "@travis-ci.com",
+    "@buildkite.com",
+    "@vercel.com",
+    "@netlify.com",
+    "@codecov.io",
+]
+
+# A build or deploy result. Only counted when the sender is ALSO a machine
+# (see `_MACHINE_SENDER_SIGNALS`), because "Why our build failed" is a
+# perfectly good newsletter headline and the guard against journalism being
+# gated by a news word is a lesson #55 already paid for.
+_CI_SUBJECT_RE = re.compile(
+    r"\b(?:build|pipeline|workflow|deploy(?:ment)?|run|job|check)s?\b"
+    r"[^\n]{0,40}?\b(?:failed|failing|passed|succeeded|successful|fixed|"
+    r"broken|cancell?ed|errored|recovered)\b",
+    re.I,
+)
+
+_MACHINE_SENDER_SIGNALS: list[str] = [
+    "noreply",
+    "no-reply",
+    "builds@",
+    "build@",
+    "ci@",
+    "jenkins@",
+    "deploy@",
+    *TRANSACTIONAL_SENDER_SIGNALS,
+]
+
+
+def _header(headers: dict[str, str], name: str) -> str:
+    """Case-insensitive header lookup. Gmail returns names as the sender
+    wrote them, and "X-Github-Reason" and "X-GitHub-Reason" are both seen."""
+    wanted = name.lower()
+    for key, value in headers.items():
+        if key.lower() == wanted:
+            return value
+    return ""
+
+
+def detect_automated_noise(
+    headers: dict[str, str],
+    subject: str,
+    *,
+    is_urgent: bool = False,
+    is_financial: bool = False,
+) -> tuple[bool, str | None]:
+    """Is this a code-host, CI or auto-reply message nobody needs to hear?
+
+    Returns `(is_noise, signal)`, the signal naming which rule fired, the
+    same debuggability contract as `detect_newsletter`.
+
+    **Urgent and financial mail is never noise.** "Unusual sign-in to your
+    account" from a code host is about the owner's account, not a
+    repository, and `detect_urgent` has already decided it is worth saying
+    out loud. Dropping it here would undo that decision silently.
+    """
+    if is_urgent or is_financial:
+        return False, None
+
+    for name in DEV_NOISE_HEADERS:
+        if _header(headers, name):
+            return True, f"header ({name})"
+
+    list_id = _header(headers, "List-Id").lower()
+    for marker in DEV_NOISE_LIST_IDS:
+        if marker in list_id:
+            return True, f"list-id ({marker})"
+
+    # Past this point nothing says the message is about a REPOSITORY, only
+    # that a dev tool sent it. So an account-security subject wins here even
+    # when `detect_urgent` refused it: "noreply@" makes a code host's
+    # "Unusual sign-in activity on your account" a newsletter, and
+    # newsletters are never urgent. Subject only, as `detect_urgent` does for
+    # bulk mail, and not applied above, because a pull request titled
+    # "action required: ..." is still a pull request.
+    sender = _header(headers, "From").lower()
+    for domain in DEV_NOISE_SENDER_DOMAINS:
+        if domain in sender:
+            if _URGENT_RE.search(subject or ""):
+                return False, None
+            return True, f"sender ({domain})"
+
+    # Out-of-office and other auto-replies (RFC 3834). Only `auto-replied`:
+    # `auto-generated` is also what a bank's alert system sets.
+    if _header(headers, "Auto-Submitted").lower().startswith("auto-replied"):
+        return True, "auto-reply (Auto-Submitted)"
+
+    if any(s in sender for s in _MACHINE_SENDER_SIGNALS):
+        match = _CI_SUBJECT_RE.search(subject or "")
+        if match:
+            return True, f"ci subject ({match.group(0).lower()})"
+
+    return False, None
+
+
+# ──────────────────────────────────────────────────────────────
 # requires_response / priority (PRD F-05)
 # ──────────────────────────────────────────────────────────────
 
@@ -588,6 +734,19 @@ def message_to_item(raw: dict[str, Any], user_email: str) -> Item:
         to_addresses=to_addresses,
         user_email=user_email,
     )
+    is_noise, noise_signal = detect_automated_noise(
+        headers,
+        subject,
+        is_urgent=is_urgent,
+        is_financial=is_financial_sender(headers),
+    )
+    if is_noise:
+        # LOW and no reply owed, so anything that reads priority before the
+        # pipeline drops the message still ranks it last. And transactional,
+        # so the desk and the newsletter extractor refuse it as well.
+        priority, requires_response = Priority.LOW, False
+        if not is_transactional:
+            is_transactional, transactional_signal = True, f"noise ({noise_signal})"
 
     date_str = headers.get("Date")
     timestamp = _parse_date(date_str, raw.get("internalDate"))
@@ -610,6 +769,8 @@ def message_to_item(raw: dict[str, Any], user_email: str) -> Item:
             "transactional_signal": transactional_signal,
             "is_urgent": is_urgent,
             "urgent_signal": urgent_signal,
+            "is_noise": is_noise,
+            "noise_signal": noise_signal,
             "to": to_addresses,
         },
     )
