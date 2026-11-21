@@ -2023,6 +2023,22 @@ because the Actions log is not private. `FINANCIAL_SENDER_DOMAINS` and
 mail that is neither private nor automated stays eligible for triage and
 can still be spoken. Both flags still feed the desk gate.
 
+**What "private" has to mean, after seven review rounds.** The hard part is
+not catching bank mail but not catching work mail that uses the same words.
+Three rules came out of it. An account-alert phrase only counts when the
+text says it is the reader's own ("your account", "your card"); a
+colleague's "Payment failed in the staging environment" is engineering.
+Bare "overdue" never counts, only payment-shaped phrases, because "approve
+the overdue Q4 budget" is exactly the mail the owner wants. And "bulk" is
+two different things: a real mailing list (List-Unsubscribe, List-Id,
+Precedence: bulk) gets the strict rule that protects headlines like "How to
+verify your identity online", while mail that is bulk only because it comes
+from noreply@ is a service writing about the reader's account and gets the
+ordinary rule. Senders are matched on the host parsed with `parseaddr`, at a
+dot boundary, and every header is read case-insensitively, because review
+found a lowercase `from` and an RFC 5322 trailing comment each silently
+defeating the sender check.
+
 **Not yet measured.** No live run has gone through this. The first
 production log line `filtered N of M emails out of the briefing` is the
 evidence; a count of zero on a weekday would mean the headers are not
