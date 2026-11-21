@@ -623,3 +623,14 @@ def test_account_verification_with_list_headers_is_still_private():
         extra={"List-Unsubscribe": "<https://service.example.test/u>"},
     )
     assert item.raw["is_private"] is True
+
+
+def test_a_tagged_card_decline_with_list_headers_is_private():
+    """Review of #87: "[Acme] Your card was declined" was the code comment's
+    own example, and the leading "Your" kept the anchored match from firing."""
+    item = _item(
+        "Acme <noreply@acme.example.test>",
+        "[Acme] Your card was declined",
+        extra={"List-Unsubscribe": "<https://acme.example.test/u>"},
+    )
+    assert item.raw["is_private"] is True

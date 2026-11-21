@@ -684,9 +684,9 @@ _OWNERSHIP_RE = re.compile(
 )
 
 
-# A leading "[Brand]" tag or "Re:"/"Fwd:" prefix, stripped before asking
-# whether a subject opens with an account alert.
-_SUBJECT_TAG_RE = re.compile(r"^\s*(?:(?:\[[^\]]*\]|re:|fwd?:)\s*)*", re.I)
+# A leading "[Brand]" tag, "Re:"/"Fwd:" prefix and a possessive "Your",
+# stripped before asking whether a subject opens with an account alert.
+_SUBJECT_TAG_RE = re.compile(r"^\s*(?:(?:\[[^\]]*\]|re:|fwd?:)\s*)*(?:your\s+)?", re.I)
 
 
 def _header(headers: dict[str, str], name: str) -> str:
