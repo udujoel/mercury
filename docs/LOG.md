@@ -2009,6 +2009,72 @@ largest text size and a Home-button iPhone are still unchecked.
 private inbox items. The backup voice note is on Thursday's card in the new
 shot, so the note above still holds.
 
+## 2026-11-21 — GitHub and CI mail leaves the briefing (task 62)
+
+**Why a header gate and not a prompt line.** The leak was triage, not
+ingestion. Ingestion already pinned GitHub mail LOW because it carries
+`List-Unsubscribe`, but `triage_emails` overwrites that verdict, and a review
+request ("could you take another look before Friday?") is a near-perfect
+match for Jev's `awaiting_reply` question. Telling the model "not GitHub"
+would still spend one judgment per notification, from the same budget the
+semantic quality gates starved on until #74, to rediscover what the
+`X-GitHub-Reason` header states outright.
+
+**Noise implies transactional, not the reverse.** Transactional costs mail
+its desk slot; noise costs it the whole briefing. A bank receipt is the
+first and not the second. Setting `is_transactional` on every noise message
+means the desk and the newsletter extractor needed no change.
+
+**One exemption that is easy to get wrong.** A code host's own account
+alert ("Unusual sign-in activity on your account" from `noreply@github.com`)
+is a newsletter by the `noreply@` rule, and newsletters are never urgent, so
+`is_urgent` alone did not protect it. The sender-domain rule checks the
+subject against an account-only subset of `URGENT_PATTERNS`, not the whole
+list: review of #87 found "Action required: Deployment failed" from Vercel
+kept by the generic phrase. Explicit automation markers (repository
+headers, code-host List-Id, `Auto-Submitted: auto-replied`) run before the
+urgency exemption, because `detect_urgent` reads an out-of-office's quoted
+subject as fresh text.
+
+**Review of #87 also caught** `noreply@` counted as CI evidence (it means
+bulk, so a Medium headline about a failed deploy was dropped), a substring
+`ci@` matching marci@, and dropped bodies outliving the scrub in
+`all_emails`. That last one covered muted mail too, which had the same leak
+before this PR.
+
+**Private mail reverses task 27.** The same afternoon the owner added:
+"also filter out private emails, like from banks or money apps, finance or
+other personal stuff." Task 27 had done the opposite, lifting a bank's
+account warning into the needs-attention segment. `detect_private` drops
+bank and money-app senders, receipt/statement/OTP subjects, and account
+alerts, urgent or not, before triage, so none of it reaches Jev, Gemini or
+the audio. The filter log names the rule kind only, never the sender,
+because the Actions log is not private. `FINANCIAL_SENDER_DOMAINS` and
+`detect_urgent` are untouched. Private mail they flag is not spoken; urgent
+mail that is neither private nor automated stays eligible for triage and
+can still be spoken. Both flags still feed the desk gate.
+
+**What "private" has to mean, after seven review rounds.** The hard part is
+not catching bank mail but not catching work mail that uses the same words.
+Three rules came out of it. An account-alert phrase only counts when the
+text says it is the reader's own ("your account", "your card"); a
+colleague's "Payment failed in the staging environment" is engineering.
+Bare "overdue" never counts, only payment-shaped phrases, because "approve
+the overdue Q4 budget" is exactly the mail the owner wants. And "bulk" is
+two different things: a real mailing list (List-Unsubscribe, List-Id,
+Precedence: bulk) gets the strict rule that protects headlines like "How to
+verify your identity online", while mail that is bulk only because it comes
+from noreply@ is a service writing about the reader's account and gets the
+ordinary rule. Senders are matched on the host parsed with `parseaddr`, at a
+dot boundary, and every header is read case-insensitively, because review
+found a lowercase `from` and an RFC 5322 trailing comment each silently
+defeating the sender check.
+
+**Not yet measured.** No live run has gone through this. The first
+production log line `filtered N of M emails out of the briefing` is the
+evidence; a count of zero on a weekday would mean the headers are not
+arriving as expected.
+
 ## 2026-11-21 - the macOS timeout met its first real hang, and kept nothing
 
 On 12 November the `ios` run for #82's merge of `main` stalled. The build
