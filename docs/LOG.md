@@ -2019,8 +2019,9 @@ bank and money-app senders, receipt/statement/OTP subjects, and account
 alerts, urgent or not, before triage, so none of it reaches Jev, Gemini or
 the audio. The filter log names the rule kind only, never the sender,
 because the Actions log is not private. `FINANCIAL_SENDER_DOMAINS` and
-`detect_urgent` are untouched; nothing they flag is spoken any more, but
-the flags still feed the desk gate.
+`detect_urgent` are untouched. Private mail they flag is not spoken; urgent
+mail that is neither private nor automated stays eligible for triage and
+can still be spoken. Both flags still feed the desk gate.
 
 **Not yet measured.** No live run has gone through this. The first
 production log line `filtered N of M emails out of the briefing` is the

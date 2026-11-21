@@ -249,6 +249,22 @@ THE_KEEPERS = [
         {"List-Unsubscribe": "<https://x.test/u>"},
         id="newsletter-reporting-someone-elses-breach",
     ),
+    # Review of #87: "overdue" without payment context is a person's ask.
+    pytest.param(
+        "A Colleague <colleague@example.test>",
+        "Q4 budget",
+        "Can you approve the overdue Q4 budget by Thursday?",
+        {},
+        id="overdue-budget-ask",
+    ),
+    pytest.param(
+        # A look-alike host must not match a private domain.
+        "Someone <hi@notgtbank.com>",
+        "Coffee next week?",
+        "Free on Tuesday?",
+        {},
+        id="look-alike-domain",
+    ),
 ]
 
 
@@ -317,6 +333,30 @@ THE_PRIVATE = [
         "We noticed unusual sign-in activity on your account.",
         {},
         id="account-alert-in-a-non-bulk-body",
+    ),
+    # Review of #87: a subdomain of a private domain, with a subject no
+    # private signal covers.
+    pytest.param(
+        "Trading212 <no-reply@info.trading212.com>",
+        "Portfolio update",
+        "Your weekly summary.",
+        {"List-Unsubscribe": "<https://x.test/u>"},
+        id="private-subdomain-sender",
+    ),
+    # Review of #87: account verification from a bulk dev-tool sender.
+    pytest.param(
+        "GitHub <noreply@github.com>",
+        "[GitHub] Verify your email",
+        "Click to verify.",
+        {"List-Unsubscribe": "<https://x.test/u>"},
+        id="bulk-dev-tool-account-verification",
+    ),
+    pytest.param(
+        "Billing <billing@service.example.test>",
+        "Overdue payment on your account",
+        "Please pay.",
+        {},
+        id="overdue-payment",
     ),
 ]
 

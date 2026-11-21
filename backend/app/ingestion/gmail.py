@@ -432,6 +432,15 @@ PRIVATE_SUBJECT_SIGNALS: list[str] = [
     "your salary",
     "your tax return",
     "your balance",
+    # "Overdue" alone is not here and not in `_ACCOUNT_ALERT_RE`: a
+    # colleague asking about "the overdue Q4 budget" is exactly the mail the
+    # owner wants (review of #87). Only the payment-shaped phrases.
+    "overdue payment",
+    "payment overdue",
+    "payment is overdue",
+    "payment is past due",
+    "past due balance",
+    "past due payment",
     "password reset",
     "reset your password",
     "verification code",
@@ -458,9 +467,15 @@ def detect_private(
     like `detect_urgent`, but never for bulk mail, where those words are
     reporting someone else's breach.
     """
-    sender = _header(headers, "From").lower()
+    # Matched on the parsed HOST, the domain or any subdomain of it at a dot
+    # boundary. A substring match on "@trading212.com" missed
+    # no-reply@info.trading212.com (review of #87), and a bare suffix match
+    # would let "notgtbank.com" through.
+    _, address = parse_sender(_header(headers, "From"))
+    host = address.lower().rpartition("@")[2] if "@" in address else ""
     for domain in PRIVATE_SENDER_DOMAINS:
-        if domain in sender:
+        bare = domain.lstrip("@")
+        if host == bare or host.endswith("." + bare):
             return True, f"sender ({domain})"
     haystack = (subject or "").lower()
     for signal in PRIVATE_SUBJECT_SIGNALS:
@@ -471,12 +486,19 @@ def detect_private(
     if not is_bulk:
         text = f"{text}\n{(body or '')[:URGENT_BODY_CHARS]}"
     match = _ACCOUNT_ALERT_RE.search(text)
-    # Bulk mail needs the subject to say "your account" as well. A code
-    # host's "Unusual sign-in activity on your account" comes from noreply@
-    # and so counts as bulk; "Why payment failed rates matter" is a
-    # newsletter headline that matches the alert pattern and is not about
-    # anyone's account.
-    if match and is_bulk and "your account" not in text.lower():
+    # Bulk mail needs more than the pattern: either the subject says "your
+    # account", or the sender is a service the reader holds an account with
+    # (a dev-tool domain). A code host's "[GitHub] Verify your email" from
+    # noreply@ counts as bulk and is still the reader's own account (review
+    # of #87); "Why payment failed rates matter" is a newsletter headline
+    # that matches the pattern and is about nobody's account.
+    sender = _header(headers, "From").lower()
+    if (
+        match
+        and is_bulk
+        and "your account" not in text.lower()
+        and not any(d in sender for d in DEV_NOISE_SENDER_DOMAINS)
+    ):
         match = None
     if match:
         return True, f"account alert ({match.group(0).lower()})"
@@ -599,7 +621,6 @@ _ACCOUNT_ALERT_RE = re.compile(
             r"(?:un)?authoriz?ed (?:access|transaction|login)",
             r"payment (?:has )?(?:failed|declined)",
             r"(?:card|transaction) (?:was )?declined",
-            r"(?:past due|overdue)",
             r"verify your (?:account|identity|email)",
             r"confirm your identity",
             r"security alert (?:for|on) your",
