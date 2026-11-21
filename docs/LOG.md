@@ -2025,15 +2025,19 @@ it at 22:59:11, so the one run worth diagnosing left nothing. #82 sized
 the gap between the two limits at three minutes and its test asked for
 two, on the assumption that the steps before `Test` took seconds. That
 day they took 50, the timed-out step took 8 more to give way, and the
-upload had run for 83 seconds without finishing. The job limit is now 20,
-eight above the step's, and the test asks for at least five.
+upload had run for 83 seconds without finishing. The job limit went to 20,
+eight above the step's, and the test now asks for at least five.
 
 The runners were slow all evening, not only on the stalled run. Both runs
 used Xcode 26.3 (17C529), as on 1 November, yet on `main` the build took
 about three minutes instead of one, the 429 tests 93 seconds of wall time
-instead of 10, and the whole job 7 minutes instead of under 3. One evening
-is not a trend: if the next runs are that slow too, a run bills about 70
-minutes rather than 20-30, and the 1,500 left for CI buys about 20 of them.
+instead of 10, and the whole job 7 minutes instead of under 3.
+
+It was not one evening. The run for 7eb7884 on 21 November passed in 8
+minutes with a `Test` step of 7 minutes 38 seconds, which left the
+12-minute step limit only about 1.6 times a healthy run. The step limit
+is now 15 and the job's 22, still seven minutes apart. A run bills about
+80 minutes rather than 20-30, so the 1,500 left for CI buys about 18.
 
 ## Standing facts worth not rediscovering
 
