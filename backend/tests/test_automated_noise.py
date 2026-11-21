@@ -432,3 +432,31 @@ async def test_noise_never_reaches_triage_or_the_script(tmp_path):
     assert "PR #87" not in prompts
     assert "Run failed" not in prompts
     assert "restricted" not in prompts
+
+
+def test_a_lowercase_subject_header_is_still_read():
+    """Review of #87: `headers.get("Subject")` missed a lowercase header and
+    the subject became "(no subject)", out of reach of the exemptions."""
+    raw = {
+        "id": "m-lower",
+        "threadId": "t1",
+        "payload": {
+            "mimeType": "text/plain",
+            "headers": [
+                {"name": "from", "value": "A Colleague <colleague@example.test>"},
+                {"name": "to", "value": USER},
+                {"name": "subject", "value": "Budget sign-off"},
+            ],
+            "body": {"data": ""},
+        },
+        "internalDate": "1795233600000",
+    }
+    item = message_to_item(raw, USER)
+    assert item.title == "Budget sign-off"
+    assert item.author == "colleague@example.test"
+
+
+def test_the_ci_signal_does_not_carry_subject_text():
+    """Review of #87: the signal is logged, so it names the rule only."""
+    item = _item(*[p.values for p in THE_NOISE if p.id == "self-hosted-ci-subject"][0])
+    assert item.raw["noise_signal"] == "ci subject"

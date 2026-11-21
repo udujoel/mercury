@@ -684,7 +684,9 @@ def detect_automated_noise(
     if local_part in _CI_SENDER_LOCAL_PARTS:
         match = _CI_SUBJECT_RE.search(subject or "")
         if match:
-            return True, f"ci subject ({match.group(0).lower()})"
+            # A fixed category, not the matched text: this string reaches
+            # the INFO log, and subjects do not belong there.
+            return True, "ci subject"
 
     return False, None
 
@@ -886,8 +888,11 @@ def message_to_item(raw: dict[str, Any], user_email: str) -> Item:
         raise ValueError(f"message {raw.get('id')} has no payload")
 
     headers = header_dict(payload)
-    subject = headers.get("Subject", "(no subject)")
-    from_header = headers.get("From", "unknown@unknown")
+    # Case-insensitive, like every detector below: a lowercase "subject"
+    # header otherwise became "(no subject)" and hid an account alert from
+    # the exemptions that read it.
+    subject = _header(headers, "Subject") or "(no subject)"
+    from_header = _header(headers, "From") or "unknown@unknown"
     sender_name, sender_email = parse_sender(from_header)
     to_addresses = [a.strip() for a in headers.get("To", "").split(",") if a.strip()]
 
