@@ -2009,6 +2009,32 @@ largest text size and a Home-button iPhone are still unchecked.
 private inbox items. The backup voice note is on Thursday's card in the new
 shot, so the note above still holds.
 
+## 2026-11-21 - the macOS timeout met its first real hang, and kept nothing
+
+On 12 November the `ios` run for #82's merge of `main` stalled. The build
+finished at 22:47:31 and then nothing was printed for ten minutes: the
+tests never started. The `Test` step's 12-minute limit fired and failed
+the step as designed, and the job stopped at its limit rather than running
+GitHub's default of six hours, about 170 billed minutes instead of up to
+3,600. It was not this PR's code. The same app code had passed on `main`
+seven minutes earlier, and the diff only changes timeouts and comments.
+
+What did not work was the reason the step limit exists. The upload of the
+result bundle started at 22:57:34 and the job's 15-minute limit cancelled
+it at 22:59:11, so the one run worth diagnosing left nothing. #82 sized
+the gap between the two limits at three minutes and its test asked for
+two, on the assumption that the steps before `Test` took seconds. That
+day they took 50, the timed-out step took 8 more to give way, and the
+upload had run for 83 seconds without finishing. The job limit is now 20,
+eight above the step's, and the test asks for at least five.
+
+The runners were slow all evening, not only on the stalled run. Both runs
+used Xcode 26.3 (17C529), as on 1 November, yet on `main` the build took
+about three minutes instead of one, the 429 tests 93 seconds of wall time
+instead of 10, and the whole job 7 minutes instead of under 3. One evening
+is not a trend: if the next runs are that slow too, a run bills about 70
+minutes rather than 20-30, and the 1,500 left for CI buys about 20 of them.
+
 ## Standing facts worth not rediscovering
 
 - **The Worker has no CI deploy.** Merging is not shipping. A route on `main`

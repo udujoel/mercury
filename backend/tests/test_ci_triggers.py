@@ -272,12 +272,18 @@ def test_a_hung_ios_test_step_still_keeps_its_result_bundle():
     """A job that reaches its timeout is CANCELLED, and `failure()` is false
     for a cancelled job, so the xcresult upload would be skipped on exactly
     the run that hung. A step that reaches its own timeout FAILS instead, so
-    the Test step's limit sits below the job's, with time left to upload."""
+    the Test step's limit sits below the job's, with time left to upload.
+
+    How much time was measured, not guessed. On 2026-11-12 the Test step
+    stalled and timed out at 12 minutes under a 15-minute job limit. The
+    steps before it had taken 50 seconds, and the upload had run for 83 when
+    the job limit cancelled it, so no bundle was kept. Five minutes is the
+    floor."""
     job_timeout = _spec("ios.yml")["jobs"]["test"]["timeout-minutes"]
     test_step = next(s for s in _ios_steps() if s.get("name") == "Test")
     upload = _step("Keep the result bundle")
 
-    assert job_timeout - test_step.get("timeout-minutes", job_timeout) >= 2
+    assert job_timeout - test_step.get("timeout-minutes", job_timeout) >= 5
     assert upload["if"] == "failure()"
 
 
