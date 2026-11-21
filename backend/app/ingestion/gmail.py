@@ -24,6 +24,7 @@ import logging
 import re
 import sys
 from datetime import UTC, datetime
+from email.utils import parseaddr
 from pathlib import Path
 from typing import Any
 
@@ -192,14 +193,14 @@ NEWSLETTER_SENDER_PATTERNS = [
 def detect_newsletter(headers: dict[str, str]) -> tuple[bool, str | None]:
     """Returns (is_newsletter, signal) where signal names which heuristic
     fired, so the classification is debuggable rather than a black box."""
-    if headers.get("List-Unsubscribe"):
+    if _header(headers, "List-Unsubscribe"):
         return True, "List-Unsubscribe header"
-    if headers.get("Precedence", "").lower() == "bulk":
+    if _header(headers, "Precedence").lower() == "bulk":
         return True, "Precedence: bulk"
-    if headers.get("List-Id"):
+    if _header(headers, "List-Id"):
         return True, "List-Id header"
 
-    sender = headers.get("From", "").lower()
+    sender = _header(headers, "From").lower()
     for pattern in NEWSLETTER_SENDER_PATTERNS:
         if pattern in sender:
             return True, f"sender heuristic ({pattern})"
@@ -339,7 +340,7 @@ def detect_transactional(
     loud" can both be true of one bank alert.
     """
     haystack = (subject or "").lower()
-    sender = headers.get("From", "").lower()
+    sender = _header(headers, "From").lower()
 
     # Financial senders first, so the signal string names the tier that
     # `detect_urgent` keys on rather than whichever rule happened to match.
@@ -355,6 +356,199 @@ def detect_transactional(
     return False, None
 
 
+# ──────────────────────────────────────────────────────────────
+# Private mail (ROADMAP task 62, owner's rule 2026-11-21)
+# ──────────────────────────────────────────────────────────────
+
+# "Also filter out private emails, like from banks or money apps, finance or
+# other personal stuff." This REVERSES an earlier rule. Until now a bank's
+# account warning was lifted past the newsletter floor into the segment the
+# hosts introduce as needing attention (task 27). The owner now wants none
+# of it in the briefing: the briefing is audio, played aloud, stored in R2,
+# and its script is written by a model that sees the mail. Private mail is
+# dropped before triage, so its body never reaches Jev or Gemini either.
+#
+# `FINANCIAL_SENDER_DOMAINS` stays as it is and is included here, so that
+# list keeps meaning "holds the reader's money" for `detect_urgent`. These
+# are the extra senders that are private without being banks.
+PRIVATE_SENDER_DOMAINS: list[str] = [
+    *FINANCIAL_SENDER_DOMAINS,
+    # Banks and money apps beyond the alert list.
+    "@kuda.com",
+    "@opay-inc.com",
+    "@moniepoint.com",
+    "@accessbankplc.com",
+    "@zenithbank.com",
+    "@firstbanknigeria.com",
+    "@ubagroup.com",
+    "@millenniumbcp.pt",
+    "@cgd.pt",
+    "@activobank.pt",
+    "@novobanco.pt",
+    "@n26.com",
+    "@klarna.com",
+    "@venmo.com",
+    "@cash.app",
+    "@squareup.com",
+    "@coinbase.com",
+    "@binance.com",
+    "@kraken.com",
+    "@robinhood.com",
+    "@chase.com",
+    "@barclays.co.uk",
+    "@hsbc.co.uk",
+    # Personal accounts: identity, tax, payroll.
+    "@id.apple.com",
+    "@email.apple.com",
+    "@portaldasfinancas.gov.pt",
+    "@hmrc.gov.uk",
+    "@irs.gov",
+    "@deel.com",
+    "@remote.com",
+]
+
+# Subjects that can only be about the reader's own money or accounts. The
+# money-shaped subset of `TRANSACTIONAL_SUBJECT_SIGNALS` plus account and
+# payroll phrases, anchored on a possessive or a completed action for the
+# reason that list records: a headline about the world does not have one.
+PRIVATE_SUBJECT_SIGNALS: list[str] = [
+    "transaction notification",
+    "transaction alert",
+    "debit alert",
+    "credit alert",
+    "deposit successful",
+    "withdrawal request",
+    "withdrawal successful",
+    "payment received",
+    "payment successful",
+    "money received",
+    "your receipt",
+    "your invoice",
+    "invoice #",
+    "your statement",
+    "statement is ready",
+    "account statement",
+    "your payslip",
+    "your pay slip",
+    "your salary",
+    "your tax return",
+    "your balance",
+    # "Overdue" alone is not here and not in `_ACCOUNT_ALERT_RE`: a
+    # colleague asking about "the overdue Q4 budget" is exactly the mail the
+    # owner wants (review of #87). Only the payment-shaped phrases.
+    "overdue payment",
+    "payment overdue",
+    "payment is overdue",
+    "payment is past due",
+    "past due balance",
+    "past due payment",
+    "password reset",
+    "reset your password",
+    "verification code",
+    "one-time code",
+    "one-time password",
+    "your otp",
+]
+
+
+PRIVATE_BODY_PAYMENT_PHRASES: tuple[str, ...] = (
+    "overdue payment",
+    "payment overdue",
+    "payment is overdue",
+    "payment is past due",
+    "past due balance",
+    "past due payment",
+    "outstanding balance",
+)
+
+
+def detect_private(
+    headers: dict[str, str], subject: str, body: str = ""
+) -> tuple[bool, str | None]:
+    """Is this about the reader's own money or personal accounts?
+
+    Returns `(is_private, signal)`, the signal naming the rule, the same
+    contract as every other detector in this file.
+
+    Deliberately ignores urgency. An account-restriction warning is the
+    most private mail there is, and the owner's rule is that private mail
+    stays out of the briefing whatever it says. Gmail is where it gets read.
+
+    Account-security alerts from any sender count too ("Unusual sign-in to
+    your account"), matched on the subject and first screen of the body
+    like `detect_urgent`, but never for bulk mail, where those words are
+    reporting someone else's breach.
+    """
+    # Matched on the parsed HOST, the domain or any subdomain of it at a dot
+    # boundary. A substring match on "@trading212.com" missed
+    # no-reply@info.trading212.com (review of #87), and a bare suffix match
+    # would let "notgtbank.com" through.
+    # parseaddr, not `parse_sender`: RFC 5322 allows a trailing comment,
+    # "updates@trading212.com (Trading 212)", which `parse_sender` returns
+    # whole, leaving a host that matches nothing (review of #87).
+    _, address = parseaddr(_header(headers, "From"))
+    host = address.strip().lower().rpartition("@")[2] if "@" in address else ""
+    for domain in PRIVATE_SENDER_DOMAINS:
+        bare = domain.lstrip("@")
+        if host == bare or host.endswith("." + bare):
+            return True, f"sender ({domain})"
+    haystack = (subject or "").lower()
+    for signal in PRIVATE_SUBJECT_SIGNALS:
+        if signal in haystack:
+            return True, f"subject ({signal})"
+    is_bulk, _ = detect_newsletter(headers)
+    text = subject or ""
+    if not is_bulk:
+        text = f"{text}\n{(body or '')[:URGENT_BODY_CHARS]}"
+    match = _ACCOUNT_ALERT_RE.search(text)
+    # The pattern alone is not enough, for any mail. It must also be about
+    # the reader's OWN account: the text says "your account", "your card"
+    # and the like, or (for bulk mail) the sender is a service the reader
+    # holds an account with (a dev-tool domain). A colleague's "Payment
+    # failed in the staging environment" is engineering, not their bank
+    # (review of #87); "Why payment failed rates matter" is a newsletter
+    # headline; a code host's "[GitHub] Verify your email" from noreply@ is
+    # still the reader's own account.
+    sender = _header(headers, "From").lower()
+    # A real mailing list announces itself with list headers. Mail that is
+    # "bulk" only because it comes from noreply@ is usually a service writing
+    # to the reader about their own account ("Verify your email"), so it gets
+    # the ordinary ownership rule (review of #87).
+    is_list = bool(
+        _header(headers, "List-Unsubscribe")
+        or _header(headers, "List-Id")
+        or _header(headers, "Precedence").lower() == "bulk"
+    )
+    if is_list:
+        # Stricter for lists: "How to verify your identity online" is a
+        # newsletter headline that names a "your" and is about nobody.
+        # A notice LEADS with the alert ("Verify your email", "[Acme] Your
+        # card was declined"); a headline wraps it ("How to verify your
+        # identity online"). List-Unsubscribe is not proof of journalism, so
+        # a subject that opens with the alert counts too (review of #87).
+        lead = _SUBJECT_TAG_RE.sub("", subject or "", count=1)
+        owned = (
+            "your account" in text.lower()
+            or any(d in sender for d in DEV_NOISE_SENDER_DOMAINS)
+            or bool(_ACCOUNT_ALERT_RE.match(lead))
+        )
+    else:
+        owned = bool(_OWNERSHIP_RE.search(text))
+    if match and not owned:
+        match = None
+    if match:
+        return True, f"account alert ({match.group(0).lower()})"
+    # A bill can say what it is in the body under a bland subject ("Action
+    # required"). Only the payment-shaped phrases, and only for mail written
+    # to the reader, so a bare "overdue" in a colleague's ask still survives.
+    if not is_bulk:
+        lowered = (body or "")[:URGENT_BODY_CHARS].lower()
+        for phrase in PRIVATE_BODY_PAYMENT_PHRASES:
+            if phrase in lowered:
+                return True, f"body ({phrase})"
+    return False, None
+
+
 def is_financial_sender(headers: dict[str, str]) -> bool:
     """Is this from a provider that holds the reader's money or account?
 
@@ -364,8 +558,216 @@ def is_financial_sender(headers: dict[str, str]) -> bool:
     newsletter floor into the segment the hosts introduce as needing
     attention — so it is an explicit list of providers, never a keyword.
     """
-    sender = headers.get("From", "").lower()
+    sender = _header(headers, "From").lower()
     return any(domain in sender for domain in FINANCIAL_SENDER_DOMAINS)
+
+
+# ──────────────────────────────────────────────────────────────
+# Automated developer noise (ROADMAP task 62)
+# ──────────────────────────────────────────────────────────────
+
+# The owner's rule, 2026-11-21: GitHub issues, pull requests and build
+# results are not briefing material. What belongs in the email segment is
+# newsletters and mail that needs the owner's attention.
+#
+# Why a deterministic gate rather than another line in the Jev prompt. A
+# GitHub review request is, read literally, "a specific person is waiting
+# for the recipient", which is exactly what `awaiting_reply` is asked to
+# find, and a failed deploy reads as a consequence. Both kept reaching the
+# spoken inbox through triage. These senders announce themselves in their
+# headers, so asking a model to rediscover that on every run spends the
+# judgment budget the semantic quality gates need (task 47) to learn
+# something the headers already say for free.
+#
+# Noise is NOT the same thing as transactional. Transactional costs a
+# message its place on the browse desk; noise costs it its place in the
+# briefing entirely. Every noise message is also marked transactional (it
+# is certainly not journalism), but not the other way round: a bank receipt
+# is transactional and still gets spoken if triage thinks it matters.
+
+# Header names that only a code host or CI system sets. Their presence is
+# the strongest signal there is, stronger than the sender, because GitHub
+# also sends from addresses that look personal when a reply comes in by mail.
+DEV_NOISE_HEADERS: list[str] = [
+    "X-GitHub-Reason",
+    "X-GitHub-Sender",
+    "X-GitLab-Project",
+    "X-GitLab-NotificationReason",
+    "X-GitLab-Pipeline-Id",
+]
+
+# `List-Id` values a code host uses for its per-repository lists, e.g.
+# "udujoel/mercury <mercury.udujoel.github.com>".
+DEV_NOISE_LIST_IDS: list[str] = [
+    ".github.com>",
+    ".gitlab.com>",
+]
+
+# Sender domains whose mail is about repositories, builds and deploys.
+# Matched against the whole From header like `FINANCIAL_SENDER_DOMAINS`, so
+# "@github.com" covers notifications@, noreply@ and the per-thread reply
+# addresses alike.
+DEV_NOISE_SENDER_DOMAINS: list[str] = [
+    "@github.com",
+    "@gitlab.com",
+    "@bitbucket.org",
+    "@circleci.com",
+    "@travis-ci.com",
+    "@buildkite.com",
+    "@vercel.com",
+    "@netlify.com",
+    "@codecov.io",
+]
+
+# A build or deploy result. Only counted when the sender is ALSO a machine
+# (see `_CI_SENDER_LOCAL_PARTS`), because "Why our build failed" is a
+# perfectly good newsletter headline and the guard against journalism being
+# gated by a news word is a lesson #55 already paid for.
+_CI_SUBJECT_RE = re.compile(
+    r"\b(?:build|pipeline|workflow|deploy(?:ment)?|run|job|check)s?\b"
+    r"[^\n]{0,40}?\b(?:failed|failing|passed|succeeded|successful|fixed|"
+    r"broken|cancell?ed|errored|recovered)\b",
+    re.I,
+)
+
+# Mailbox local parts a CI or deploy system sends from, matched EXACTLY
+# against the parsed address. Two things review of #87 caught in the first
+# cut: a substring match made "ci@" fire on marci@, and counting `noreply@`
+# as a machine dropped "Why the CrowdStrike deploy failed" from
+# noreply@medium.com. `noreply` means bulk, which publications are too (see
+# the note above `TRANSACTIONAL_SENDER_SIGNALS`), so it is not evidence of a
+# build system and is not here.
+_CI_SENDER_LOCAL_PARTS: frozenset[str] = frozenset(
+    {
+        "builds",
+        "build",
+        "ci",
+        "jenkins",
+        "deploy",
+        "deploys",
+        *(s.rstrip("@") for s in TRANSACTIONAL_SENDER_SIGNALS),
+    }
+)
+
+# The subjects that exempt a dev-tool sender's mail from the domain rule:
+# the owner's own account or money, never a repository. Deliberately NOT
+# the whole `URGENT_PATTERNS`: "action required" and "expires soon" are what
+# a failed-deploy or token-expiry notice says too, and review of #87 found
+# "Action required: Deployment failed" from Vercel slipping through on them.
+_ACCOUNT_ALERT_RE = re.compile(
+    "|".join(
+        f"({p})"
+        for p in (
+            r"unusual (?:sign[- ]?in|login|activity)",
+            r"suspicious (?:activity|sign[- ]?in|login)",
+            r"account (?:has been |was |is |been )?"
+            r"(?:restricted|suspended|locked|disabled)",
+            r"(?:un)?authoriz?ed (?:access|transaction|login)",
+            r"payment (?:has )?(?:failed|declined)",
+            r"(?:card|transaction) (?:was )?declined",
+            r"verify your (?:account|identity|email)",
+            r"confirm your identity",
+            r"security alert (?:for|on) your",
+            r"new (?:device|sign[- ]?in) (?:on|to) your account",
+        )
+    ),
+    re.I,
+)
+
+
+# What makes an account alert the reader's own. Checked with the alert
+# pattern in `detect_private`, never on its own.
+_OWNERSHIP_RE = re.compile(
+    r"\byour (?:account|card|payment|bank|wallet|transaction|login|"
+    r"sign[- ]?in|password|identity|email|subscription|balance)\b",
+    re.I,
+)
+
+
+# A leading "[Brand]" tag, "Re:"/"Fwd:" prefix and a possessive "Your",
+# stripped before asking whether a subject opens with an account alert.
+_SUBJECT_TAG_RE = re.compile(r"^\s*(?:(?:\[[^\]]*\]|re:|fwd?:)\s*)*(?:your\s+)?", re.I)
+
+
+def _header(headers: dict[str, str], name: str) -> str:
+    """Case-insensitive header lookup. Gmail returns names as the sender
+    wrote them, and "X-Github-Reason" and "X-GitHub-Reason" are both seen."""
+    wanted = name.lower()
+    for key, value in headers.items():
+        if key.lower() == wanted:
+            return value
+    return ""
+
+
+def detect_automated_noise(
+    headers: dict[str, str],
+    subject: str,
+    *,
+    is_urgent: bool = False,
+    is_financial: bool = False,
+) -> tuple[bool, str | None]:
+    """Is this a code-host, CI or auto-reply message nobody needs to hear?
+
+    Returns `(is_noise, signal)`, the signal naming which rule fired, the
+    same debuggability contract as `detect_newsletter`.
+
+    The checks run strongest evidence first, and the exemptions sit between
+    them on purpose:
+
+    1. **Financial mail is never noise.** An explicit provider list, the
+       owner's own rule.
+    2. **Explicit automation markers beat urgency.** A repository header,
+       a code-host List-Id or `Auto-Submitted: auto-replied` says outright
+       that software wrote the message. `detect_urgent` reads the subject
+       as fresh text, so an out-of-office that quotes "Action required:
+       approve Q4 budget" would otherwise be urgent and spoken. Review of
+       #87.
+    3. **Urgent mail survives the weaker rules.** Past this point the only
+       evidence is who sent it or what the subject says, and
+       `detect_urgent` has already decided the message is worth saying out
+       loud.
+    """
+    if is_financial:
+        return False, None
+
+    for name in DEV_NOISE_HEADERS:
+        if _header(headers, name):
+            return True, f"header ({name})"
+
+    list_id = _header(headers, "List-Id").lower()
+    for marker in DEV_NOISE_LIST_IDS:
+        if marker in list_id:
+            return True, f"list-id ({marker})"
+
+    # Out-of-office and other auto-replies (RFC 3834). Only `auto-replied`:
+    # `auto-generated` is also what a bank's alert system sets.
+    if _header(headers, "Auto-Submitted").lower().startswith("auto-replied"):
+        return True, "auto-reply (Auto-Submitted)"
+
+    if is_urgent:
+        return False, None
+
+    # Nothing past here says the message is about a REPOSITORY, only that a
+    # dev tool sent it. So an account subject wins even when `detect_urgent`
+    # refused it: "noreply@" makes a code host's "Unusual sign-in activity
+    # on your account" a newsletter, and newsletters are never urgent.
+    sender = _header(headers, "From").lower()
+    for domain in DEV_NOISE_SENDER_DOMAINS:
+        if domain in sender:
+            if _ACCOUNT_ALERT_RE.search(subject or ""):
+                return False, None
+            return True, f"sender ({domain})"
+
+    _, address = parse_sender(_header(headers, "From"))
+    local_part = address.lower().rsplit("@", 1)[0] if "@" in address else ""
+    if local_part in _CI_SENDER_LOCAL_PARTS:
+        match = _CI_SUBJECT_RE.search(subject or "")
+        if match:
+            # A fixed category, not the matched text: this string reaches
+            # the INFO log, and subjects do not belong there.
+            return True, "ci subject"
+
+    return False, None
 
 
 # ──────────────────────────────────────────────────────────────
@@ -565,8 +967,11 @@ def message_to_item(raw: dict[str, Any], user_email: str) -> Item:
         raise ValueError(f"message {raw.get('id')} has no payload")
 
     headers = header_dict(payload)
-    subject = headers.get("Subject", "(no subject)")
-    from_header = headers.get("From", "unknown@unknown")
+    # Case-insensitive, like every detector below: a lowercase "subject"
+    # header otherwise became "(no subject)" and hid an account alert from
+    # the exemptions that read it.
+    subject = _header(headers, "Subject") or "(no subject)"
+    from_header = _header(headers, "From") or "unknown@unknown"
     sender_name, sender_email = parse_sender(from_header)
     to_addresses = [a.strip() for a in headers.get("To", "").split(",") if a.strip()]
 
@@ -588,6 +993,22 @@ def message_to_item(raw: dict[str, Any], user_email: str) -> Item:
         to_addresses=to_addresses,
         user_email=user_email,
     )
+    is_noise, noise_signal = detect_automated_noise(
+        headers,
+        subject,
+        is_urgent=is_urgent,
+        is_financial=is_financial_sender(headers),
+    )
+    is_private, private_signal = detect_private(headers, subject, body)
+    if is_private and not is_transactional:
+        is_transactional, transactional_signal = True, f"private ({private_signal})"
+    if is_noise:
+        # LOW and no reply owed, so anything that reads priority before the
+        # pipeline drops the message still ranks it last. And transactional,
+        # so the desk and the newsletter extractor refuse it as well.
+        priority, requires_response = Priority.LOW, False
+        if not is_transactional:
+            is_transactional, transactional_signal = True, f"noise ({noise_signal})"
 
     date_str = headers.get("Date")
     timestamp = _parse_date(date_str, raw.get("internalDate"))
@@ -610,6 +1031,10 @@ def message_to_item(raw: dict[str, Any], user_email: str) -> Item:
             "transactional_signal": transactional_signal,
             "is_urgent": is_urgent,
             "urgent_signal": urgent_signal,
+            "is_noise": is_noise,
+            "noise_signal": noise_signal,
+            "is_private": is_private,
+            "private_signal": private_signal,
             "to": to_addresses,
         },
     )
