@@ -596,3 +596,19 @@ def test_a_payment_failure_on_the_readers_own_card_is_private():
         "Your payment failed because your card was declined.",
     )
     assert item.raw["is_private"] is True
+
+
+def test_account_verification_from_a_noreply_service_is_private():
+    """Review of #87: noreply@ makes mail "bulk", and the newsletter guard
+    then let a non-dev-tool service's "Verify your email" through."""
+    item = _item("Some Service <noreply@service.example.test>", "Verify your email")
+    assert item.raw["is_private"] is True
+
+
+def test_a_newsletter_headline_with_list_headers_stays_public():
+    item = _item(
+        "The Markup <hello@themarkup.example>",
+        "How to verify your identity online",
+        extra={"List-Unsubscribe": "<https://themarkup.example/u>"},
+    )
+    assert item.raw["is_private"] is False

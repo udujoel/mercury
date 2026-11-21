@@ -510,8 +510,17 @@ def detect_private(
     # headline; a code host's "[GitHub] Verify your email" from noreply@ is
     # still the reader's own account.
     sender = _header(headers, "From").lower()
-    if is_bulk:
-        # Stricter for bulk: "How to verify your identity online" is a
+    # A real mailing list announces itself with list headers. Mail that is
+    # "bulk" only because it comes from noreply@ is usually a service writing
+    # to the reader about their own account ("Verify your email"), so it gets
+    # the ordinary ownership rule (review of #87).
+    is_list = bool(
+        _header(headers, "List-Unsubscribe")
+        or _header(headers, "List-Id")
+        or _header(headers, "Precedence").lower() == "bulk"
+    )
+    if is_list:
+        # Stricter for lists: "How to verify your identity online" is a
         # newsletter headline that names a "your" and is about nobody.
         owned = "your account" in text.lower() or any(
             d in sender for d in DEV_NOISE_SENDER_DOMAINS
