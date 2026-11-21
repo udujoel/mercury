@@ -522,8 +522,15 @@ def detect_private(
     if is_list:
         # Stricter for lists: "How to verify your identity online" is a
         # newsletter headline that names a "your" and is about nobody.
-        owned = "your account" in text.lower() or any(
-            d in sender for d in DEV_NOISE_SENDER_DOMAINS
+        # A notice LEADS with the alert ("Verify your email", "[Acme] Your
+        # card was declined"); a headline wraps it ("How to verify your
+        # identity online"). List-Unsubscribe is not proof of journalism, so
+        # a subject that opens with the alert counts too (review of #87).
+        lead = _SUBJECT_TAG_RE.sub("", subject or "", count=1)
+        owned = (
+            "your account" in text.lower()
+            or any(d in sender for d in DEV_NOISE_SENDER_DOMAINS)
+            or bool(_ACCOUNT_ALERT_RE.match(lead))
         )
     else:
         owned = bool(_OWNERSHIP_RE.search(text))
@@ -675,6 +682,11 @@ _OWNERSHIP_RE = re.compile(
     r"sign[- ]?in|password|identity|email|subscription|balance)\b",
     re.I,
 )
+
+
+# A leading "[Brand]" tag or "Re:"/"Fwd:" prefix, stripped before asking
+# whether a subject opens with an account alert.
+_SUBJECT_TAG_RE = re.compile(r"^\s*(?:(?:\[[^\]]*\]|re:|fwd?:)\s*)*", re.I)
 
 
 def _header(headers: dict[str, str], name: str) -> str:

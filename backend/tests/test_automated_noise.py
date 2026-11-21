@@ -612,3 +612,14 @@ def test_a_newsletter_headline_with_list_headers_stays_public():
         extra={"List-Unsubscribe": "<https://themarkup.example/u>"},
     )
     assert item.raw["is_private"] is False
+
+
+def test_account_verification_with_list_headers_is_still_private():
+    """Review of #87: List-Unsubscribe is not proof of journalism. A notice
+    leads with the alert; a headline wraps it."""
+    item = _item(
+        "Some Service <noreply@service.example.test>",
+        "Verify your email",
+        extra={"List-Unsubscribe": "<https://service.example.test/u>"},
+    )
+    assert item.raw["is_private"] is True
