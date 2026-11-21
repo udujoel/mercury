@@ -192,14 +192,14 @@ NEWSLETTER_SENDER_PATTERNS = [
 def detect_newsletter(headers: dict[str, str]) -> tuple[bool, str | None]:
     """Returns (is_newsletter, signal) where signal names which heuristic
     fired, so the classification is debuggable rather than a black box."""
-    if headers.get("List-Unsubscribe"):
+    if _header(headers, "List-Unsubscribe"):
         return True, "List-Unsubscribe header"
-    if headers.get("Precedence", "").lower() == "bulk":
+    if _header(headers, "Precedence").lower() == "bulk":
         return True, "Precedence: bulk"
-    if headers.get("List-Id"):
+    if _header(headers, "List-Id"):
         return True, "List-Id header"
 
-    sender = headers.get("From", "").lower()
+    sender = _header(headers, "From").lower()
     for pattern in NEWSLETTER_SENDER_PATTERNS:
         if pattern in sender:
             return True, f"sender heuristic ({pattern})"
@@ -339,7 +339,7 @@ def detect_transactional(
     loud" can both be true of one bank alert.
     """
     haystack = (subject or "").lower()
-    sender = headers.get("From", "").lower()
+    sender = _header(headers, "From").lower()
 
     # Financial senders first, so the signal string names the tier that
     # `detect_urgent` keys on rather than whichever rule happened to match.
@@ -514,7 +514,7 @@ def is_financial_sender(headers: dict[str, str]) -> bool:
     newsletter floor into the segment the hosts introduce as needing
     attention — so it is an explicit list of providers, never a keyword.
     """
-    sender = headers.get("From", "").lower()
+    sender = _header(headers, "From").lower()
     return any(domain in sender for domain in FINANCIAL_SENDER_DOMAINS)
 
 

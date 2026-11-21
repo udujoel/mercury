@@ -500,3 +500,52 @@ def test_the_ci_signal_does_not_carry_subject_text():
     """Review of #87: the signal is logged, so it names the rule only."""
     item = _item(*[p.values for p in THE_NOISE if p.id == "self-hosted-ci-subject"][0])
     assert item.raw["noise_signal"] == "ci subject"
+
+
+def _lowercase_message(msg_id: str, headers: dict[str, str]) -> dict:
+    return {
+        "id": msg_id,
+        "threadId": "t1",
+        "payload": {
+            "mimeType": "text/plain",
+            "headers": [{"name": k, "value": v} for k, v in headers.items()],
+            "body": {"data": ""},
+        },
+        "internalDate": "1795233600000",
+    }
+
+
+def test_a_lowercase_bank_header_keeps_the_financial_exemption():
+    """Review of #87: `is_financial_sender` read `From` case-sensitively, so a
+    bank message with a lowercase `from` lost its exemption and an
+    auto-reply header was enough to call it developer noise."""
+    raw = _lowercase_message(
+        "m-bank-lower",
+        {
+            "from": "GTBank <alerts@gtbank.com>",
+            "to": USER,
+            "subject": "About your request",
+            "auto-submitted": "auto-replied",
+        },
+    )
+    item = message_to_item(raw, USER)
+    assert item.raw["is_noise"] is False
+    assert item.raw["is_private"] is True
+
+
+def test_a_lowercase_newsletter_header_is_still_bulk():
+    """Review of #87: `detect_newsletter` read `List-Unsubscribe`
+    case-sensitively, so a newsletter with lowercase headers was not bulk and
+    an account-alert phrase in its headline marked it private."""
+    raw = _lowercase_message(
+        "m-news-lower",
+        {
+            "from": "Fintech Weekly <editor@fintechweekly.example>",
+            "to": USER,
+            "subject": "Why payment failed rates matter",
+            "list-unsubscribe": "<https://fintechweekly.example/u>",
+        },
+    )
+    item = message_to_item(raw, USER)
+    assert item.raw["is_newsletter"] is True
+    assert item.raw["is_private"] is False
