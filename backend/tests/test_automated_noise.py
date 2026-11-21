@@ -576,3 +576,23 @@ def test_a_colleagues_overdue_ask_in_the_body_survives():
         "Can you approve the overdue Q4 budget by Thursday?",
     )
     assert item.raw["is_private"] is False
+
+
+def test_a_colleagues_staging_payment_failure_survives():
+    """Review of #87: "payment failed" in a person's body is engineering
+    unless it is about the reader's own account."""
+    item = _item(
+        "A Colleague <colleague@example.test>",
+        "Can you take a look?",
+        "Payment failed in the staging environment. Can you investigate?",
+    )
+    assert item.raw["is_private"] is False
+
+
+def test_a_payment_failure_on_the_readers_own_card_is_private():
+    item = _item(
+        "Some Shop <orders@shop.example.test>",
+        "Problem with your order",
+        "Your payment failed because your card was declined.",
+    )
+    assert item.raw["is_private"] is True

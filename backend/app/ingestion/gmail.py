@@ -501,19 +501,24 @@ def detect_private(
     if not is_bulk:
         text = f"{text}\n{(body or '')[:URGENT_BODY_CHARS]}"
     match = _ACCOUNT_ALERT_RE.search(text)
-    # Bulk mail needs more than the pattern: either the subject says "your
-    # account", or the sender is a service the reader holds an account with
-    # (a dev-tool domain). A code host's "[GitHub] Verify your email" from
-    # noreply@ counts as bulk and is still the reader's own account (review
-    # of #87); "Why payment failed rates matter" is a newsletter headline
-    # that matches the pattern and is about nobody's account.
+    # The pattern alone is not enough, for any mail. It must also be about
+    # the reader's OWN account: the text says "your account", "your card"
+    # and the like, or (for bulk mail) the sender is a service the reader
+    # holds an account with (a dev-tool domain). A colleague's "Payment
+    # failed in the staging environment" is engineering, not their bank
+    # (review of #87); "Why payment failed rates matter" is a newsletter
+    # headline; a code host's "[GitHub] Verify your email" from noreply@ is
+    # still the reader's own account.
     sender = _header(headers, "From").lower()
-    if (
-        match
-        and is_bulk
-        and "your account" not in text.lower()
-        and not any(d in sender for d in DEV_NOISE_SENDER_DOMAINS)
-    ):
+    if is_bulk:
+        # Stricter for bulk: "How to verify your identity online" is a
+        # newsletter headline that names a "your" and is about nobody.
+        owned = "your account" in text.lower() or any(
+            d in sender for d in DEV_NOISE_SENDER_DOMAINS
+        )
+    else:
+        owned = bool(_OWNERSHIP_RE.search(text))
+    if match and not owned:
         match = None
     if match:
         return True, f"account alert ({match.group(0).lower()})"
@@ -650,6 +655,15 @@ _ACCOUNT_ALERT_RE = re.compile(
             r"new (?:device|sign[- ]?in) (?:on|to) your account",
         )
     ),
+    re.I,
+)
+
+
+# What makes an account alert the reader's own. Checked with the alert
+# pattern in `detect_private`, never on its own.
+_OWNERSHIP_RE = re.compile(
+    r"\byour (?:account|card|payment|bank|wallet|transaction|login|"
+    r"sign[- ]?in|password|identity|email|subscription|balance)\b",
     re.I,
 )
 
