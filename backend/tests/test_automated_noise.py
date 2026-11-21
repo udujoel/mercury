@@ -549,3 +549,30 @@ def test_a_lowercase_newsletter_header_is_still_bulk():
     item = message_to_item(raw, USER)
     assert item.raw["is_newsletter"] is True
     assert item.raw["is_private"] is False
+
+
+def test_a_sender_with_a_trailing_comment_is_still_matched():
+    """Review of #87: "updates@trading212.com (Trading 212)" is valid RFC 5322
+    and `parse_sender` returned it whole, so the host matched no domain."""
+    item = _item("updates@trading212.com (Trading 212)", "Portfolio update")
+    assert item.raw["is_private"] is True
+
+
+def test_a_bill_under_a_bland_subject_is_private():
+    """Review of #87: the subject said nothing and the body was a bill."""
+    item = _item(
+        "Billing <billing@service.example.test>",
+        "Action required",
+        "Your payment is overdue. Outstanding balance: EUR 420.",
+    )
+    assert item.raw["is_private"] is True
+
+
+def test_a_colleagues_overdue_ask_in_the_body_survives():
+    """Bare "overdue" in a person's message is not a bill."""
+    item = _item(
+        "A Colleague <colleague@example.test>",
+        "Quick one",
+        "Can you approve the overdue Q4 budget by Thursday?",
+    )
+    assert item.raw["is_private"] is False

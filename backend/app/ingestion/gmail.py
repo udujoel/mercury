@@ -24,6 +24,7 @@ import logging
 import re
 import sys
 from datetime import UTC, datetime
+from email.utils import parseaddr
 from pathlib import Path
 from typing import Any
 
@@ -450,6 +451,17 @@ PRIVATE_SUBJECT_SIGNALS: list[str] = [
 ]
 
 
+PRIVATE_BODY_PAYMENT_PHRASES: tuple[str, ...] = (
+    "overdue payment",
+    "payment overdue",
+    "payment is overdue",
+    "payment is past due",
+    "past due balance",
+    "past due payment",
+    "outstanding balance",
+)
+
+
 def detect_private(
     headers: dict[str, str], subject: str, body: str = ""
 ) -> tuple[bool, str | None]:
@@ -471,8 +483,11 @@ def detect_private(
     # boundary. A substring match on "@trading212.com" missed
     # no-reply@info.trading212.com (review of #87), and a bare suffix match
     # would let "notgtbank.com" through.
-    _, address = parse_sender(_header(headers, "From"))
-    host = address.lower().rpartition("@")[2] if "@" in address else ""
+    # parseaddr, not `parse_sender`: RFC 5322 allows a trailing comment,
+    # "updates@trading212.com (Trading 212)", which `parse_sender` returns
+    # whole, leaving a host that matches nothing (review of #87).
+    _, address = parseaddr(_header(headers, "From"))
+    host = address.strip().lower().rpartition("@")[2] if "@" in address else ""
     for domain in PRIVATE_SENDER_DOMAINS:
         bare = domain.lstrip("@")
         if host == bare or host.endswith("." + bare):
@@ -502,6 +517,14 @@ def detect_private(
         match = None
     if match:
         return True, f"account alert ({match.group(0).lower()})"
+    # A bill can say what it is in the body under a bland subject ("Action
+    # required"). Only the payment-shaped phrases, and only for mail written
+    # to the reader, so a bare "overdue" in a colleague's ask still survives.
+    if not is_bulk:
+        lowered = (body or "")[:URGENT_BODY_CHARS].lower()
+        for phrase in PRIVATE_BODY_PAYMENT_PHRASES:
+            if phrase in lowered:
+                return True, f"body ({phrase})"
     return False, None
 
 
