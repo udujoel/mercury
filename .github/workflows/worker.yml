@@ -39,6 +39,10 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # Every run so far took 9-13 seconds. Without this a hang runs for
+    # GitHub's default of 360 minutes, 18% of the 2,000 a month that the
+    # briefing is generated out of. See backend/tests/test_ci_triggers.py.
+    timeout-minutes: 5
     defaults:
       run:
         working-directory: worker

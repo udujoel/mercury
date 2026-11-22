@@ -7,12 +7,18 @@ name: ios
 # nothing runs at all — had no line in the roadmap until task 23.
 #
 # COST, stated plainly because it is not free. macOS runners bill at 10x the
-# Linux rate, and a private repo gets 2000 minutes a month. A ~5 minute run
-# is therefore ~50 charged minutes, against a budget the briefing cron
-# already spends ~60 of. The path filter below is what keeps that
-# affordable: this runs only when iOS or this file changes, not on every
+# Linux rate, and a private repo gets 2,000 minutes a month. Every successful
+# run from September to early November 2026 took 1.4-2.9 minutes, and GitHub
+# rounds each job up to a whole minute before multiplying, so a run billed
+# 20-30 minutes. On 12 and 21 November the same Xcode took 7 and 8 minutes,
+# so a run now bills about 80. The same budget pays for generation, which
+# since #81 is two briefing runs a day at about 7 billed minutes each,
+# roughly 430 a month and
+# about 500 with the watchdog (docs/DEPLOYMENT.md, Cost). That leaves about
+# 1,500 for all CI. The path filter below is what keeps this suite
+# affordable: it runs only when iOS or this file changes, not on every
 # backend commit. If the budget becomes a problem, narrow it further or move
-# to a self-hosted runner — do not silently delete it and go back to hoping
+# to a self-hosted runner. Do not silently delete it and go back to hoping
 # someone remembers.
 on:
   push:
@@ -41,6 +47,17 @@ concurrency:
 jobs:
   test:
     runs-on: macos-15
+    # Without this a hung job runs for GitHub's default of 360 minutes, which
+    # at the 10x rate bills about 3,600, more than the whole month.
+    # Twenty-two caps a hang at about 240 billed minutes, counting the cleanup
+    # that runs after the limit. A healthy run took under three minutes until
+    # November and seven or eight since 12 November. The seven minutes
+    # between this and the Test step's fifteen are for keeping the result
+    # bundle: on 12 November the steps before Test took 50 seconds, and the
+    # upload had run for 83 when a fifteen-minute limit here cancelled it.
+    # Raise it if the suite grows into it, but not past thirty, where one
+    # hang spends 15% of the month. See backend/tests/test_ci_triggers.py.
+    timeout-minutes: 22
     defaults:
       run:
         working-directory: ios/Mercury
@@ -123,7 +140,15 @@ jobs:
       # fallback to a bare run, which would have executed the ENTIRE suite a
       # second time on any machine where xcbeautify was missing — paying
       # twice, at the 10x rate, to pretty-print nothing.
+      #
+      # Fifteen minutes, seven under the job's twenty-two. A healthy Test step
+      # took about two minutes until November, almost six on 12 November and
+      # seven and a half on 21 November. A job that reaches its timeout is
+      # cancelled, and `failure()` is false for a cancelled job, so the upload
+      # below would be skipped on the one run that most needs it. A step that
+      # reaches its own timeout fails instead, and the upload runs.
       - name: Test
+        timeout-minutes: 15
         run: |
           xcodebuild test \
             -project Mercury.xcodeproj \

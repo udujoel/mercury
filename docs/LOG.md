@@ -1950,6 +1950,37 @@ Transparency and Increase Contrast on, and:
 - the bottom gap on a Home-button iPhone, where there is no home indicator
   and the bar sits 8pt above the screen edge.
 
+## 2026-11-01 - a timeout for the macOS job, and its cost comment corrected
+
+After #81, `ios.yml` was the last test suite with no job timeout, so a hang
+would run GitHub's default of 360 minutes and bill about 3,600 at the 10x
+macOS rate. It was left alone in October because the edit runs the macOS
+suite itself, 20-30 billed minutes, when about 140 were left for the last
+six days and generation needed them. It waited for the 1 November reset.
+
+The "~5 minute run" its cost comment priced had never been measured. All 36
+successful runs, from the first on 13 September to the last on 11 October,
+took 1.4-2.9 minutes of wall time, and the four since #77 moved CI to Xcode
+26 took 1.7-2.6, about two of which is the `Test` step. So the timeout is 15
+rather than the 20-30 the task first suggested: five times the slowest run
+is room for a cold simulator or a slower image, and every extra minute of
+timeout is ten billed ones on the day it hangs. `test_ci_triggers.py` now
+fails if any macOS job has no timeout or one above 30.
+
+Review of #82 added two things. `worker.yml` had no timeout either, and
+even on Linux a hang at the default spends 18% of the month; all 22 of
+its runs took 9-13 seconds, so it stops at 5, and the test now requires a
+timeout on every job in every workflow, with the ceiling of 30 for
+macOS. And a job that reaches its timeout is cancelled, which skips an
+`if: failure()` step, so the xcresult upload would have been lost on the
+very run that hung. The `Test` step now has its own 12-minute limit,
+because a step that times out fails rather than being cancelled.
+
+Review also claimed an iOS run bills about 40 minutes, from October's 480
+over the "12 iOS runs" in `test_ci_triggers.py`'s docstring. That 12 was
+a partial count taken for #73. October had 23 iOS runs, and rounding each
+up to a minute at 10x gives exactly 480, about 21 a run.
+
 ## 2026-11-15 - screenshots, and what they show against the glass checklist
 
 Four screenshots from an iPhone in dark mode are now in `docs/screenshots/`
@@ -2043,6 +2074,36 @@ defeating the sender check.
 production log line `filtered N of M emails out of the briefing` is the
 evidence; a count of zero on a weekday would mean the headers are not
 arriving as expected.
+
+## 2026-11-21 - the macOS timeout met its first real hang, and kept nothing
+
+On 12 November the `ios` run for #82's merge of `main` stalled. The build
+finished at 22:47:31 and then nothing was printed for ten minutes: the
+tests never started. The `Test` step's 12-minute limit fired and failed
+the step as designed, and the job stopped at its limit rather than running
+GitHub's default of six hours, about 170 billed minutes instead of up to
+3,600. It was not this PR's code. The same app code had passed on `main`
+seven minutes earlier, and the diff only changes timeouts and comments.
+
+What did not work was the reason the step limit exists. The upload of the
+result bundle started at 22:57:34 and the job's 15-minute limit cancelled
+it at 22:59:11, so the one run worth diagnosing left nothing. #82 sized
+the gap between the two limits at three minutes and its test asked for
+two, on the assumption that the steps before `Test` took seconds. That
+day they took 50, the timed-out step took 8 more to give way, and the
+upload had run for 83 seconds without finishing. The job limit went to 20,
+eight above the step's, and the test now asks for at least five.
+
+The runners were slow all evening, not only on the stalled run. Both runs
+used Xcode 26.3 (17C529), as on 1 November, yet on `main` the build took
+about three minutes instead of one, the 429 tests 93 seconds of wall time
+instead of 10, and the whole job 7 minutes instead of under 3.
+
+It was not one evening. The run for 7eb7884 on 21 November passed in 8
+minutes with a `Test` step of 7 minutes 38 seconds, which left the
+12-minute step limit only about 1.6 times a healthy run. The step limit
+is now 15 and the job's 22, still seven minutes apart. A run bills about
+80 minutes rather than 20-30, so the 1,500 left for CI buys about 18.
 
 ## Standing facts worth not rediscovering
 

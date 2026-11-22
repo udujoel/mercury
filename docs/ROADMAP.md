@@ -704,7 +704,7 @@ produced, ranked by what they buy per hour spent.
       subject line, a digest mentions someone else's breach in paragraph
       three.
 
-- [~] 28. **Two briefings a day, and count what they cost.** HALF DONE (2026-10-25, owner's call): the Worker's 03:40 morning and GitHub's `10:12`, nothing else; the push-trigger guard landed in #73; `briefing.yml`'s cost comment is corrected and the watchdog's freshness floor resized to 16h for the new cadence. Still to do: sum `len(turn.text)` per run and log it, and correct `ios.yml`'s cost comment, which was left alone because any edit to that file runs the macOS suite at 10x. Four a day put
+- [~] 28. **Two briefings a day, and count what they cost.** MOSTLY DONE (2026-10-25, owner's call): the Worker's 03:40 morning and GitHub's `10:12`, nothing else; the push-trigger guard landed in #73; `briefing.yml`'s cost comment is corrected and the watchdog's freshness floor resized to 16h for the new cadence. On 2026-11-01, after the month's reset, `ios.yml`'s cost comment was corrected and every workflow job given a timeout (#82). It waited for the reset because any edit to `ios.yml` runs the macOS suite at 10x. Still to do: sum `len(turn.text)` per run and log it. Four a day put
       Google TTS at ~88% of its million free characters and Actions at ~82%
       heading to the 2,000 cap, quadrupled publisher blocking, and multiplied
       the repetition — with the digest carrying 209 stories and the audio
